@@ -22,6 +22,9 @@ if not settings.auth0_issuer or not settings.auth0_audience:
 
 mcp = FastMCP(
     "Santa Rita Escolar",
+    host=settings.mcp_host,
+    port=settings.mcp_port,
+    streamable_http_path="/mcp",
     instructions=(
         "Integra Google Classroom y SieWeb de Santa Rita de Casia. Para lecturas usa los "
         "identificadores estables devueltos por las herramientas. Antes de escribir notas, "
@@ -371,8 +374,4 @@ def sieweb_save_descriptive_conclusion(
 
 
 if __name__ == "__main__":
-    mcp.run(
-        transport="streamable-http",
-        host=settings.mcp_host,
-        port=settings.mcp_port,
-    )
+    mcp.run(transport="streamable-http")
