@@ -27,7 +27,7 @@ class SieWebClient:
         self.session.headers.update(
             {
                 "Accept": "application/json, text/plain, */*",
-                "User-Agent": "Mozilla/5.0 Santa-Rita-Escolar-MCP/0.3.1",
+                "User-Agent": "Mozilla/5.0 Santa-Rita-Escolar-MCP/0.3.2",
                 "X-Requested-With": "XMLHttpRequest",
                 "Cache-Control": "no-cache",
                 "Pragma": "no-cache",
@@ -255,6 +255,17 @@ class SieWebClient:
         "S5A": 524,
     }
 
+    # Períodos observados en 2026. Se usa solo como respaldo cuando una herramienta
+    # recibe IDs crudos en vez de resolver primero sección+período.
+    _KNOWN_PREVIOUS_PERIOD_2026 = {
+        6304: 0,
+        6305: 6304,
+        6306: 6305,
+        6550: 0,
+        6551: 6550,
+        6552: 6551,
+    }
+
     @staticmethod
     def _normalize_text(value: str) -> str:
         value = unicodedata.normalize("NFKD", str(value or ""))
@@ -329,6 +340,13 @@ class SieWebClient:
         )
         if not selected_period:
             raise SieWebError(f"No existe el período {period} para ID_CLASE={class_id}.")
+        previous_period = None
+        earlier = [
+            row for row in periods
+            if int(row.get("PERIODO") or 0) < int(selected_period.get("PERIODO") or 0)
+        ]
+        if earlier:
+            previous_period = max(earlier, key=lambda row: int(row.get("PERIODO") or 0))
         return {
             "section": section_code,
             "idAmbito": ambito,
@@ -338,6 +356,7 @@ class SieWebClient:
             "idClasePeriodo": int(selected_period["ID_CLASE_PERIODO"]),
             "idContenido": int(selected_period["ID_CONTENIDO"]),
             "periodo": int(selected_period["PERIODO"]),
+            "idPeriodoAnt": (int(previous_period["ID_CLASE_PERIODO"]) if previous_period else 0),
         }
 
     # ---------- Directorio y mensajes nuevos ----------
@@ -476,13 +495,24 @@ class SieWebClient:
         root_content_id: int,
         extra_params: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        """Lee el Registro de Notas con la ruta y parámetros observados en SieWeb.
+
+        La interfaz real usa HyoClasePeriodo/obtRegistroNotas, no HyoClasenota.
+        Para 2.º A y 5.º A de 2026 se puede inferir el período anterior cuando la
+        herramienta recibe solo los IDs. extra_params siempre puede sobreescribirlo.
+        """
+        previous_id = self._KNOWN_PREVIOUS_PERIOD_2026.get(int(class_period_id), 0)
         params: dict[str, Any] = {
-            "idClasePeriodo": class_period_id,
-            "idContenido": root_content_id,
+            "idClasePeriodo": int(class_period_id),
+            "idContenido": int(root_content_id),
+            "permisoMenu": 3,
+            "idPeriodoAnt": int(previous_id),
+            "objInfoRegIndividual[alucod]": False,
+            "chkNotFRET": False,
         }
         params.update(extra_params or {})
         return self._request(
-            "GET", "/lms/api/HyoClasenota/obtRegistroNotas", params=params
+            "GET", "/lms/api/HyoClasePeriodo/obtRegistroNotas", params=params
         )
 
     # ---------- Criterios / desempeños ----------

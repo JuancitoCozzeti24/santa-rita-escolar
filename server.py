@@ -464,6 +464,7 @@ def sieweb_gradebook_by_section(section: str, period: int, course_code: str = "0
     """Lee el registro usando nombres naturales de sección/período; 05=Matemática."""
     ctx = sieweb.resolve_class_context(section=section, period=period, course_code=course_code, id_ambito=id_ambito)
     extra = json.loads(extra_params_json or "{}")
+    extra.setdefault("idPeriodoAnt", ctx.get("idPeriodoAnt", 0))
     gradebook = sieweb.get_gradebook(
         class_period_id=ctx["idClasePeriodo"],
         root_content_id=ctx["idContenido"],
@@ -586,6 +587,7 @@ def workflow_missing_classroom_to_sieweb_recipients(course_id: str, course_work_
     ctx = sieweb.resolve_class_context(section=section, period=period, course_code=course_code)
     extra = json.loads(extra_params_json or "{}")
     missing = classroom.missing_students(course_id, course_work_id)
+    extra.setdefault("idPeriodoAnt", ctx.get("idPeriodoAnt", 0))
     summary = sieweb.get_gradebook_summary(
         class_period_id=ctx["idClasePeriodo"], root_content_id=ctx["idContenido"], extra_params=extra
     )

@@ -1,4 +1,4 @@
-# Santa Rita Escolar v0.3.1 integral
+# Santa Rita Escolar v0.3.2 integral
 
 Añade a v0.3.0 los endpoints confirmados el 13/08/2026:
 
@@ -22,3 +22,9 @@ La selección siempre debe verificarse por nombre/tipo antes de enviar.
 
 ## Seguridad
 Las herramientas de escritura exigen `confirmed=true`. No se incluyen secretos ni `.env` reales.
+## Corrección v0.3.2
+
+- Corrige la ruta real del Registro de Notas a `HyoClasePeriodo/obtRegistroNotas`.
+- Añade los parámetros observados por SieWeb: `permisoMenu=3`, `idPeriodoAnt`, `objInfoRegIndividual[alucod]=false` y `chkNotFRET=false`.
+- Resuelve automáticamente el período anterior cuando se usa sección + período, y mantiene respaldo para 2.º A y 5.º A de 2026.
+
