@@ -4,7 +4,7 @@ services:
     runtime: python
     plan: free
     buildCommand: pip install -r requirements.txt
-    startCommand: python -m app.server
+    startCommand: python server.py
     envVars:
       - key: AUTH0_ISSUER
         sync: false

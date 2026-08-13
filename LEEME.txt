@@ -1,0 +1,20 @@
+REPARACION v0.2.1 - Render
+
+El error "No module named app" ocurre porque la carpeta app/ no quedó en GitHub.
+Esta reparación deja los módulos Python directamente en la raíz del repositorio.
+
+1. Sube TODOS estos archivos a la raíz de GitHub:
+   auth.py
+   classroom.py
+   config.py
+   sieweb.py
+   server.py
+   render.yaml
+
+2. En Render cambia Start Command a:
+   python server.py
+
+3. Deja Build Command como:
+   pip install -r requirements.txt
+
+No contiene credenciales, cookies, tokens ni archivos .env.
