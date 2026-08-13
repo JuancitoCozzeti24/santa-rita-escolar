@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: santa-rita-escolar
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m app.server
+    envVars:
+      - key: AUTH0_ISSUER
+        sync: false
+      - key: AUTH0_AUDIENCE
+        sync: false
+      - key: AUTH0_REQUIRED_SCOPE
+        value: santa:use
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: GOOGLE_REFRESH_TOKEN
+        sync: false
+      - key: SIEWEB_BASE_URL
+        value: https://santaritadecasia.sieweb.com.pe
+      - key: SIEWEB_USER
+        sync: false
+      - key: SIEWEB_PASSWORD
+        sync: false
