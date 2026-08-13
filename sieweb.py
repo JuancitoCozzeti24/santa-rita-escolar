@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import unicodedata
 import uuid
 from typing import Any
 
@@ -25,7 +27,7 @@ class SieWebClient:
         self.session.headers.update(
             {
                 "Accept": "application/json, text/plain, */*",
-                "User-Agent": "Mozilla/5.0 Santa-Rita-Escolar-MCP/0.2",
+                "User-Agent": "Mozilla/5.0 Santa-Rita-Escolar-MCP/0.3.1",
                 "X-Requested-With": "XMLHttpRequest",
                 "Cache-Control": "no-cache",
                 "Pragma": "no-cache",
@@ -246,6 +248,192 @@ class SieWebClient:
         return self._request(
             "POST", "/lms/api/HyoMensajeria/enviarMensaje", json=payload
         )
+
+    # ---------- Descubrimiento de clases / periodos ----------
+    _KNOWN_SECTIONS_2026 = {
+        "S2A": 518,
+        "S5A": 524,
+    }
+
+    @staticmethod
+    def _normalize_text(value: str) -> str:
+        value = unicodedata.normalize("NFKD", str(value or ""))
+        value = "".join(ch for ch in value if not unicodedata.combining(ch))
+        return " ".join(value.upper().strip().split())
+
+    @classmethod
+    def _normalize_section(cls, section: str) -> str:
+        q = cls._normalize_text(section).replace(".", "").replace("º", "").replace("°", "")
+        compact = q.replace(" ", "").replace("-", "")
+        aliases = {
+            "S2A": "S2A", "2A": "S2A", "2DOA": "S2A", "2DOANOA": "S2A",
+            "2GRADOA": "S2A", "SEGUNDOA": "S2A", "SEGUNDOGRADOA": "S2A",
+            "S5A": "S5A", "5A": "S5A", "5TOA": "S5A", "5TOANOA": "S5A",
+            "5GRADOA": "S5A", "QUINTOA": "S5A", "QUINTOGRADOA": "S5A",
+        }
+        return aliases.get(compact, compact)
+
+    def list_classes(self, *, id_ambito: int, validar_permisos: bool = True) -> dict[str, Any]:
+        """Lista cursos/clases disponibles para un ámbito (salón) de SieWeb."""
+        packed = json.dumps(
+            {"id_ambito": int(id_ambito), "validarPermisos": bool(validar_permisos)},
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        return self._request(
+            "GET", "/lms/api/HyoClase/obtListar", params={"params": packed}
+        )
+
+    def list_class_periods(self, *, class_id: int) -> dict[str, Any]:
+        """Lista los períodos disponibles de una clase SieWeb."""
+        return self._request(
+            "GET", "/lms/api/HyoClase/obtClasePeriodo", params={"idClase": int(class_id)}
+        )
+
+    def resolve_class_context(
+        self,
+        *,
+        section: str,
+        period: int,
+        course_code: str = "05",
+        id_ambito: int | None = None,
+    ) -> dict[str, Any]:
+        """Resuelve sección+curso+período a los IDs internos observados en SieWeb.
+
+        Para 2026 se conocen S2A=518 y S5A=524. Si SieWeb cambia esos ámbitos en
+        otro año, se puede pasar id_ambito explícitamente hasta mapear el listado de salones.
+        """
+        section_code = self._normalize_section(section)
+        ambito = int(id_ambito) if id_ambito is not None else self._KNOWN_SECTIONS_2026.get(section_code)
+        if ambito is None:
+            raise SieWebError(
+                "Sección no mapeada. Actualmente se conocen 2.º A/S2A y 5.º A/S5A; "
+                "pasa id_ambito explícitamente para otra sección."
+            )
+        classes_payload = self.list_classes(id_ambito=ambito)
+        classes = (classes_payload.get("json") or []) if isinstance(classes_payload, dict) else []
+        selected = next(
+            (row for row in classes if str(row.get("CURSOCOD") or "").strip() == str(course_code).strip()),
+            None,
+        )
+        if not selected:
+            raise SieWebError(
+                f"No se encontró el curso {course_code} para la sección {section_code} (id_ambito={ambito})."
+            )
+        class_id = int(selected["ID_CLASE"])
+        periods_payload = self.list_class_periods(class_id=class_id)
+        periods = (periods_payload.get("json") or []) if isinstance(periods_payload, dict) else []
+        selected_period = next(
+            (row for row in periods if int(row.get("PERIODO") or 0) == int(period)),
+            None,
+        )
+        if not selected_period:
+            raise SieWebError(f"No existe el período {period} para ID_CLASE={class_id}.")
+        return {
+            "section": section_code,
+            "idAmbito": ambito,
+            "course": selected,
+            "period": selected_period,
+            "idClase": class_id,
+            "idClasePeriodo": int(selected_period["ID_CLASE_PERIODO"]),
+            "idContenido": int(selected_period["ID_CONTENIDO"]),
+            "periodo": int(selected_period["PERIODO"]),
+        }
+
+    # ---------- Directorio y mensajes nuevos ----------
+    def list_messaging_users(self) -> dict[str, Any]:
+        """Obtiene el directorio usado por Mensajería de SieWeb."""
+        return self._request(
+            "GET",
+            "/lms/api/HyoUsuario/obtListaUsuariosIntranet",
+            params={"isMensajeria": "true"},
+        )
+
+    def search_messaging_users(
+        self,
+        *,
+        query: str,
+        recipient_type: str = "any",
+        ngs: str = "",
+        limit: int = 30,
+    ) -> list[dict[str, Any]]:
+        """Busca destinatarios por nombre/código y deduplica por USUCOD.
+
+        Según el directorio observado: 004=familia, 005=alumno, 006=docente.
+        Si hay dos filas del mismo USUCOD, se prefiere la que incluye NGS.
+        """
+        raw = self.list_messaging_users()
+        rows = (raw.get("json") or []) if isinstance(raw, dict) else []
+        type_map = {
+            "family": "004", "familia": "004", "parent": "004", "apoderado": "004",
+            "student": "005", "alumno": "005", "estudiante": "005",
+            "teacher": "006", "docente": "006", "profesor": "006",
+        }
+        wanted_type = type_map.get(self._normalize_text(recipient_type).lower(), "")
+        # El lookup anterior usa .lower() sobre texto ya normalizado; resolver también directo.
+        direct = str(recipient_type or "").strip().lower()
+        wanted_type = type_map.get(direct, wanted_type)
+        q = self._normalize_text(query)
+        wanted_ngs = self._normalize_text(ngs).replace(" ", "")
+        by_code: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            code = str(row.get("USUCOD") or "").strip()
+            if not code:
+                continue
+            hay = self._normalize_text(f"{row.get('USUNOM','')} {code}")
+            if q and q not in hay:
+                continue
+            if wanted_type and str(row.get("TIPCOD") or "") != wanted_type:
+                continue
+            row_ngs = self._normalize_text(row.get("NGS") or "").replace(" ", "")
+            if wanted_ngs and row_ngs and row_ngs != wanted_ngs:
+                continue
+            if wanted_ngs and not row_ngs:
+                # Podría existir una fila duplicada con NGS; esperar a esa fila.
+                pass
+            previous = by_code.get(code)
+            if previous is None or (row.get("NGS") and not previous.get("NGS")):
+                by_code[code] = dict(row)
+        out = list(by_code.values())
+        if wanted_ngs:
+            with_ngs = [r for r in out if self._normalize_text(r.get("NGS") or "").replace(" ", "") == wanted_ngs]
+            if with_ngs:
+                out = with_ngs
+        out.sort(key=lambda r: self._normalize_text(r.get("USUNOM") or ""))
+        return out[: max(1, min(int(limit), 100))]
+
+    def find_student_messaging_user(self, *, alucod: str) -> dict[str, Any] | None:
+        """Busca el usuario de mensajería del alumno. Solo usa A+alucod si existe realmente."""
+        expected = "A" + str(alucod or "").strip().lstrip("A")
+        candidates = self.search_messaging_users(query=expected, recipient_type="student", limit=10)
+        return next((r for r in candidates if str(r.get("USUCOD") or "") == expected), None)
+
+    def send_message(
+        self,
+        *,
+        recipient_codes: list[str],
+        subject: str,
+        html_message: str,
+    ) -> dict[str, Any]:
+        """Envía un mensaje NUEVO con el payload observado en la interfaz de SieWeb."""
+        clean_codes = [str(c).strip() for c in recipient_codes if str(c).strip()]
+        if not clean_codes:
+            raise SieWebError("El mensaje necesita al menos un destinatario USUCOD.")
+        payload = {
+            "adjunto": [],
+            "asunto": subject,
+            "fh_programado": "1970-01-01T00:00:00.000Z",
+            "mensaje": html_message,
+            "para": clean_codes,
+            "programado": False,
+        }
+        result = self._request(
+            "POST", "/lms/api/HyoMensajeria/enviarMensaje", json=payload
+        )
+        body = result.get("json") or {}
+        if body.get("estado") != 1:
+            raise SieWebError(f"SieWeb no confirmó el envío del mensaje: {result}")
+        return result
 
     # ---------- Calificaciones ----------
     def update_grades(

@@ -453,6 +453,38 @@ def classroom_batch_grade(course_id: str, course_work_id: str, grades_json: str,
         return _ok({"requires_confirmation": True, "preview": {"course_id": course_id, "course_work_id": course_work_id, "return_to_student": return_to_student, "grades": grades}})
     return _ok(classroom.batch_grade(course_id, course_work_id, grades, return_to_student=return_to_student))
 
+@mcp.tool()
+def sieweb_resolve_class_context(section: str, period: int, course_code: str = "05", id_ambito: int | None = None) -> str:
+    """Resuelve 2.º A/5.º A + período a ID_CLASE, ID_CLASE_PERIODO e ID_CONTENIDO de SieWeb."""
+    return _ok(sieweb.resolve_class_context(section=section, period=period, course_code=course_code, id_ambito=id_ambito))
+
+@mcp.tool()
+def sieweb_gradebook_by_section(section: str, period: int, course_code: str = "05", id_ambito: int | None = None,
+                                extra_params_json: str = "{}") -> str:
+    """Lee el registro usando nombres naturales de sección/período; 05=Matemática."""
+    ctx = sieweb.resolve_class_context(section=section, period=period, course_code=course_code, id_ambito=id_ambito)
+    extra = json.loads(extra_params_json or "{}")
+    gradebook = sieweb.get_gradebook(
+        class_period_id=ctx["idClasePeriodo"],
+        root_content_id=ctx["idContenido"],
+        extra_params=extra,
+    )
+    return _ok({"context": ctx, "gradebook": sieweb.summarize_gradebook(gradebook)})
+
+@mcp.tool()
+def sieweb_search_recipients(query: str, recipient_type: str = "any", ngs: str = "", limit: int = 30) -> str:
+    """Busca destinatarios de Mensajería. recipient_type: student/alumno, family/familia, teacher/docente o any."""
+    return _ok(sieweb.search_messaging_users(query=query, recipient_type=recipient_type, ngs=ngs, limit=limit))
+
+@mcp.tool()
+def sieweb_send_message(recipient_codes: list[str], subject: str, html_message: str,
+                        confirmed: bool = False) -> str:
+    """Envía un mensaje NUEVO en SieWeb. Requiere confirmed=true tras mostrar destinatarios, asunto y texto."""
+    preview = {"recipient_codes": recipient_codes, "subject": subject, "html_message": html_message}
+    if not confirmed:
+        return _ok({"requires_confirmation": True, "preview": preview})
+    return _ok(sieweb.send_message(recipient_codes=recipient_codes, subject=subject, html_message=html_message))
+
 # ---------------- SieWeb ampliado ----------------
 @mcp.tool()
 def sieweb_gradebook_summary(class_period_id: int, root_content_id: int, extra_params_json: str = "{}") -> str:
@@ -543,6 +575,44 @@ def workflow_missing_classroom_with_sieweb_ids(course_id: str, course_work_id: s
         sw = s_by_code.get(code)
         out.append({"code": code, "classroom": cs, "sieweb": ({k: sw.get(k) for k in ("idPersona","alucod","nomcomp","ngs","nemo","numord")} if sw else None)})
     return _ok({"missing": out, "count": len(out), "matched_to_sieweb": sum(1 for x in out if x["sieweb"])})
+
+
+@mcp.tool()
+def workflow_missing_classroom_to_sieweb_recipients(course_id: str, course_work_id: str,
+                                                     section: str, period: int,
+                                                     course_code: str = "05",
+                                                     extra_params_json: str = "{}") -> str:
+    """Cruza pendientes de Classroom con el registro y el USUCOD de mensajería del alumno en SieWeb."""
+    ctx = sieweb.resolve_class_context(section=section, period=period, course_code=course_code)
+    extra = json.loads(extra_params_json or "{}")
+    missing = classroom.missing_students(course_id, course_work_id)
+    summary = sieweb.get_gradebook_summary(
+        class_period_id=ctx["idClasePeriodo"], root_content_id=ctx["idContenido"], extra_params=extra
+    )
+    s_by_code = {str(st.get("alucod") or ""): st for st in summary.get("students") or []}
+    directory = sieweb.list_messaging_users().get("json") or []
+    msg_by_code = {}
+    for row in directory:
+        code = str(row.get("USUCOD") or "")
+        if not code or str(row.get("TIPCOD") or "") != "005":
+            continue
+        prev = msg_by_code.get(code)
+        if prev is None or (row.get("NGS") and not prev.get("NGS")):
+            msg_by_code[code] = row
+    out = []
+    for cs in missing:
+        email = str(cs.get("email") or "")
+        alucod = email.split("@", 1)[0] if "@" in email else ""
+        sw = s_by_code.get(alucod)
+        recipient = msg_by_code.get("A" + alucod) if alucod else None
+        out.append({
+            "code": alucod,
+            "classroom": cs,
+            "sieweb": ({k: sw.get(k) for k in ("idPersona", "alucod", "nomcomp", "ngs", "nemo", "numord")} if sw else None),
+            "messaging_student": recipient,
+        })
+    return _ok({"context": ctx, "missing": out, "count": len(out),
+                "with_student_recipient": sum(1 for x in out if x["messaging_student"])})
 
 
 if __name__ == "__main__":

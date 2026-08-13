@@ -1,18 +1,24 @@
-# Santa Rita Escolar v0.3.0 integral
+# Santa Rita Escolar v0.3.1 integral
 
-Amplía el MCP remoto con:
+Añade a v0.3.0 los endpoints confirmados el 13/08/2026:
 
-- Classroom: cursos, docentes, alumnos, topics, anuncios, tareas, materiales, entregas completas, progreso por alumno, creación/edición/eliminación de tareas y calificación individual/lote.
-- SieWeb: login autónomo, mensajería ya mapeada, registro de notas, criterios/desempeños, conclusiones descriptivas B/C, búsqueda por alumno/criterio y operaciones por lote.
-- Cruce Classroom↔SieWeb: empareja el código del correo institucional de Classroom con `alucod` de SieWeb y puede identificar los pendientes de Classroom con sus IDs de SieWeb.
+- Descubrimiento de clases por `HyoClase/obtListar` y periodos por `HyoClase/obtClasePeriodo`.
+- Resolución natural para Matemática 2026: 2.º A (`id_ambito=518`) y 5.º A (`id_ambito=524`).
+- Directorio de mensajería por `HyoUsuario/obtListaUsuariosIntranet?isMensajeria=true`.
+- Búsqueda de destinatarios por nombre, `USUCOD`, tipo y NGS.
+- Mensaje NUEVO por `POST HyoMensajeria/enviarMensaje`, con confirmación previa en ChatGPT.
+- Flujo Classroom -> SieWeb que agrega el `USUCOD` del alumno cuando existe.
 
-## Aún requiere mapeo adicional de SieWeb
+## Tipos observados en el directorio
+- `TIPCOD=004`: familia/apoderado.
+- `TIPCOD=005`: alumno.
+- `TIPCOD=006`: docente.
 
-Para llegar al uso 100% por nombres sin IDs y enviar mensajes NUEVOS a cualquier alumno/familia faltan capturar tres llamadas de la interfaz:
-1. listado de salones/clases/periodos del profesor;
-2. directorio de destinatarios de mensajería;
-3. payload de mensaje nuevo (no respuesta).
+La selección siempre debe verificarse por nombre/tipo antes de enviar.
 
-## Render
-Build: `pip install -r requirements.txt`
-Start: `python server.py`
+## Mapeo 2026
+- S2A: `id_ambito=518`; Matemática `ID_CLASE=2030`; periodos 6304, 6305, 6306.
+- S5A: `id_ambito=524`; Matemática `ID_CLASE=2112`; periodos 6550, 6551, 6552.
+
+## Seguridad
+Las herramientas de escritura exigen `confirmed=true`. No se incluyen secretos ni `.env` reales.
