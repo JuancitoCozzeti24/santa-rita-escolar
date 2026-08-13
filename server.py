@@ -27,9 +27,16 @@ mcp = FastMCP(
     streamable_http_path="/mcp",
     instructions=(
         "Integra Google Classroom y SieWeb de Santa Rita de Casia. Para lecturas usa los "
-        "identificadores estables devueltos por las herramientas. Antes de escribir notas, "
-        "criterios, conclusiones o mensajes, resume exactamente el cambio al usuario y solo "
-        "ejecuta la herramienta de escritura cuando el usuario haya autorizado ese cambio."
+        "identificadores estables devueltos por las herramientas. En Classroom distingue TAREA "
+        "(courseWork) de MATERIAL DE CLASE (courseWorkMaterial): nunca sustituyas un material por "
+        "una tarea. Puedes crear y publicar tareas, materiales y anuncios, y adjuntar archivos de "
+        "Google Drive mediante su ID/URL o enlaces web. Si el usuario nombra un archivo de Drive sin "
+        "dar ID/URL, usa el conector Google Drive de ChatGPT para resolverlo y después llama a la "
+        "herramienta Classroom correspondiente. Para CALIFICACIONES distingue draftGrade (provisional) de assignedGrade "
+        "(visible al alumno); devolver una entrega no finaliza automáticamente la nota en la API, así que usa las herramientas "
+        "de finalización/devolución. Antes de cualquier escritura o acción destructiva, resume exactamente el cambio al usuario "
+        "y solo ejecuta cuando haya autorizado ese cambio. Los comentarios privados de entregas no existen en la API oficial: "
+        "no simules esa acción con anuncios ni otros recursos."
     ),
     token_verifier=Auth0TokenVerifier(
         issuer=settings.auth0_issuer, audience=settings.auth0_audience
@@ -49,106 +56,340 @@ def _ok(data: Any) -> str:
     return json.dumps(data, ensure_ascii=False, default=str)
 
 
-# ---------------- Google Classroom ----------------
+# ---------------- Google Classroom v0.5.0 ----------------
+def _confirmation(preview: dict[str, Any], confirmed: bool, *, destructive: bool = False) -> str | None:
+    if confirmed:
+        return None
+    return _ok({"requires_confirmation": True, "destructive": destructive, "preview": preview})
+
+
+def _json_obj(raw: str, default: Any) -> Any:
+    if raw is None or raw == "":
+        return default
+    value = json.loads(raw)
+    return value
+
+
+def _require_confirm(action: str, payload: dict[str, Any], confirmed: bool, *, destructive_actions: set[str], write_actions: set[str]) -> str | None:
+    if action not in write_actions:
+        return None
+    return _confirmation({"action": action, **payload}, confirmed, destructive=action in destructive_actions)
+
+
+@mcp.tool()
+def classroom_capabilities() -> str:
+    """Resume el control práctico de Classroom expuesto por este conector y los límites de la API oficial."""
+    return _ok({
+        "version": "0.5.0",
+        "tool_design": "Acciones agrupadas por recurso para reducir errores de selección de herramienta.",
+        "implemented": {
+            "courses": ["list/get/create/update/delete", "aliases", "gradebookSettings", "gradingPeriodSettings"],
+            "roster": ["students", "teachers", "invitations"],
+            "topics": ["list/create/update/delete"],
+            "announcements": ["list/get/create/publish/schedule/update/modifyAssignees/delete", "Drive/link attachments on create"],
+            "coursework": [
+                "assignments", "short-answer questions", "multiple-choice questions",
+                "list/get/create/publish/schedule/update/modifyAssignees/delete",
+                "due date/time", "max points", "topic", "grading period", "submission modification mode",
+                "Drive/link attachments on create", "associatedWithDeveloper diagnostics",
+            ],
+            "materials": ["list/get/create/publish/schedule/update/delete", "Drive/link attachments on create"],
+            "submissions": ["list/get", "state", "late", "draft/assigned grades", "rubric grades", "history", "missing/progress"],
+            "grading": [
+                "set draft grade", "set final grade", "grade and return", "batch grade", "return one/many",
+                "attempt safe grade clearing", "diagnose write eligibility",
+            ],
+            "rubrics": ["list/get/create/update/delete", "read criterion grades from submissions"],
+            "student_groups": ["list/create/update/delete", "list/add/remove members"],
+            "profiles_guardians": ["user profile", "capability checks", "guardians list/get/delete", "guardian invitations list/get/create/cancel"],
+        },
+        "official_api_limits": {
+            "private_submission_comments": "No hay endpoint oficial para leer o escribir comentarios privados de una entrega.",
+            "overall_course_grade": "La API no expone la nota global calculada como campo editable; puede calcularse localmente con datos disponibles.",
+            "rubric_criterion_scores": "Los puntajes por criterio pueden leerse en StudentSubmission, pero no escribirse mediante la API.",
+            "associated_project_rule": "Editar/eliminar CourseWork y modificar/devolver StudentSubmissions puede exigir que el trabajo haya sido creado por el mismo proyecto OAuth.",
+            "normal_material_attachments_after_creation": "Los adjuntos normales de CourseWork no forman parte de los campos patchables de la API estable.",
+            "grade_clear": "Google documenta actualización de draftGrade/assignedGrade, no un ejemplo explícito de borrado; el conector intenta FieldMask y si falla lo reporta sin inventar una alternativa.",
+            "push_notifications": "La API soporta registrations hacia Google Cloud Pub/Sub, pero este paquete no activa ese flujo porque requiere configurar un topic Pub/Sub y un consumidor adicional.",
+            "classroom_addon_attachments": "Los AddOnAttachments son una arquitectura de Classroom Add-ons distinta de los adjuntos Drive/link normales y requieren scopes/tokens específicos; no se habilitan en este MCP general.",
+        },
+    })
+
+
+@mcp.tool()
+def classroom_google_auth_status() -> str:
+    """Verifica scopes OAuth actuales sin exponer access/refresh tokens."""
+    return _ok(classroom.oauth_scope_status())
+
+
+@mcp.tool()
+def classroom_courses(action: str, course_id: str = "", payload_json: str = "{}", confirmed: bool = False) -> str:
+    """Cursos. action: list|get|gradebook_settings|create|update|delete|list_aliases|create_alias|delete_alias|get_grading_periods|update_grading_periods. payload_json lleva parámetros adicionales."""
+    action = action.strip().lower()
+    p = _json_obj(payload_json, {})
+    writes = {"create", "update", "delete", "create_alias", "delete_alias", "update_grading_periods"}
+    destructive = {"delete", "delete_alias"}
+    pending = _require_confirm(action, {"course_id": course_id, "payload": p}, confirmed, destructive_actions=destructive, write_actions=writes)
+    if pending: return pending
+    if action == "list": return _ok(classroom.list_courses(active_only=bool(p.get("active_only", True))))
+    if action == "get": return _ok(classroom.get_course(course_id))
+    if action == "gradebook_settings":
+        c = classroom.get_course(course_id); return _ok({"course_id": course_id, "gradebookSettings": c.get("gradebookSettings")})
+    if action == "create": return _ok(classroom.create_course(
+        name=p["name"], owner_id=p.get("owner_id", "me"), section=p.get("section", ""),
+        description_heading=p.get("description_heading", ""), description=p.get("description", ""),
+        room=p.get("room", ""), subject=p.get("subject", ""), course_state=p.get("course_state")))
+    if action == "update": return _ok(classroom.update_course(course_id, p.get("updates", {}), clear_fields=p.get("clear_fields", [])))
+    if action == "delete": return _ok(classroom.delete_course(course_id))
+    if action == "list_aliases": return _ok(classroom.list_aliases(course_id))
+    if action == "create_alias": return _ok(classroom.create_alias(course_id, p["alias"]))
+    if action == "delete_alias": return _ok(classroom.delete_alias(course_id, p["alias"]))
+    if action == "get_grading_periods": return _ok(classroom.get_grading_period_settings(course_id))
+    if action == "update_grading_periods": return _ok(classroom.update_grading_period_settings(
+        course_id, p.get("settings", p), update_mask=p.get("update_mask", "gradingPeriods,applyToExistingCoursework")))
+    raise ValueError(f"Acción de cursos no soportada: {action}")
+
+
+@mcp.tool()
+def classroom_roster(action: str, course_id: str = "", user_id: str = "", invitation_id: str = "", payload_json: str = "{}", confirmed: bool = False) -> str:
+    """Personas e invitaciones. action: list/get/add/remove_student|list/get/add/remove_teacher|get/list/create/delete/accept_invitation."""
+    action = action.strip().lower(); p = _json_obj(payload_json, {})
+    writes = {"add_student", "remove_student", "add_teacher", "remove_teacher", "create_invitation", "delete_invitation", "accept_invitation"}
+    destructive = {"remove_student", "remove_teacher", "delete_invitation"}
+    pending = _require_confirm(action, {"course_id": course_id, "user_id": user_id, "invitation_id": invitation_id, "payload": p}, confirmed, destructive_actions=destructive, write_actions=writes)
+    if pending: return pending
+    if action == "list_students": return _ok(classroom.list_students(course_id))
+    if action == "get_student": return _ok(classroom.get_student(course_id, user_id))
+    if action == "add_student": return _ok(classroom.add_student(course_id, user_id, p.get("enrollment_code")))
+    if action == "remove_student": return _ok(classroom.remove_student(course_id, user_id))
+    if action == "list_teachers": return _ok(classroom.list_teachers(course_id))
+    if action == "get_teacher": return _ok(classroom.get_teacher(course_id, user_id))
+    if action == "add_teacher": return _ok(classroom.add_teacher(course_id, user_id))
+    if action == "remove_teacher": return _ok(classroom.remove_teacher(course_id, user_id))
+    if action == "get_invitation": return _ok(classroom.get_invitation(invitation_id))
+    if action == "list_invitations": return _ok(classroom.list_invitations(course_id=course_id or p.get("course_id"), user_id=user_id or p.get("user_id")))
+    if action == "create_invitation": return _ok(classroom.create_invitation(course_id, user_id, p["role"]))
+    if action == "delete_invitation": return _ok(classroom.delete_invitation(invitation_id))
+    if action == "accept_invitation": return _ok(classroom.accept_invitation(invitation_id))
+    raise ValueError(f"Acción de roster no soportada: {action}")
+
+
+@mcp.tool()
+def classroom_topics(action: str, course_id: str, topic_id: str = "", payload_json: str = "{}", confirmed: bool = False) -> str:
+    """Temas. action: list|get|create|update|delete. payload_json usa name para create/update."""
+    action = action.strip().lower(); p = _json_obj(payload_json, {})
+    writes = {"create", "update", "delete"}; destructive = {"delete"}
+    pending = _require_confirm(action, {"course_id": course_id, "topic_id": topic_id, "payload": p}, confirmed, destructive_actions=destructive, write_actions=writes)
+    if pending: return pending
+    if action == "list": return _ok(classroom.list_topics(course_id))
+    if action == "get": return _ok(classroom.get_topic(course_id, topic_id))
+    if action == "create": return _ok(classroom.create_topic(course_id, p["name"]))
+    if action == "update": return _ok(classroom.update_topic(course_id, topic_id, p["name"]))
+    if action == "delete": return _ok(classroom.delete_topic(course_id, topic_id))
+    raise ValueError(f"Acción de topics no soportada: {action}")
+
+
+@mcp.tool()
+def classroom_announcements(action: str, course_id: str, announcement_id: str = "", payload_json: str = "{}", confirmed: bool = False) -> str:
+    """Anuncios. action: list|get|create|update|modify_assignees|delete. create admite text,publish,materials,scheduled_time,student_ids."""
+    action = action.strip().lower(); p = _json_obj(payload_json, {})
+    writes = {"create", "update", "modify_assignees", "delete"}; destructive = {"delete"}
+    pending = _require_confirm(action, {"course_id": course_id, "announcement_id": announcement_id, "payload": p}, confirmed, destructive_actions=destructive, write_actions=writes)
+    if pending: return pending
+    if action == "list": return _ok(classroom.list_announcements(course_id, include_drafts=bool(p.get("include_drafts", True))))
+    if action == "get": return _ok(classroom.get_announcement(course_id, announcement_id))
+    if action == "create": return _ok(classroom.create_announcement(
+        course_id, text=p["text"], publish=bool(p.get("publish", False)), materials=p.get("materials", []),
+        scheduled_time=p.get("scheduled_time"), student_ids=p.get("student_ids", [])))
+    if action == "update": return _ok(classroom.patch_announcement(course_id, announcement_id, p.get("updates", {}), clear_fields=p.get("clear_fields", [])))
+    if action == "modify_assignees": return _ok(classroom.modify_announcement_assignees(
+        course_id, announcement_id, assignee_mode=p.get("assignee_mode", "ALL_STUDENTS"),
+        add_student_ids=p.get("add_student_ids", []), remove_student_ids=p.get("remove_student_ids", [])))
+    if action == "delete": return _ok(classroom.delete_announcement(course_id, announcement_id))
+    raise ValueError(f"Acción de anuncios no soportada: {action}")
+
+
+@mcp.tool()
+def classroom_coursework(action: str, course_id: str, course_work_id: str = "", payload_json: str = "{}", confirmed: bool = False) -> str:
+    """Tareas/preguntas. action: list|get|diagnose|create|update|modify_assignees|delete. create soporta ASSIGNMENT, SHORT_ANSWER_QUESTION y MULTIPLE_CHOICE_QUESTION, adjuntos, tema, fecha, puntos y publicación/programación."""
+    action = action.strip().lower(); p = _json_obj(payload_json, {})
+    writes = {"create", "update", "modify_assignees", "delete"}; destructive = {"delete"}
+    pending = _require_confirm(action, {"course_id": course_id, "course_work_id": course_work_id, "payload": p}, confirmed, destructive_actions=destructive, write_actions=writes)
+    if pending: return pending
+    if action == "list": return _ok(classroom.list_coursework(course_id, include_drafts=bool(p.get("include_drafts", True))))
+    if action == "get": return _ok(classroom.get_coursework(course_id, course_work_id))
+    if action == "diagnose": return _ok(classroom.diagnose_coursework_control(course_id, course_work_id))
+    if action == "create":
+        due_date = date.fromisoformat(p["due_date"]) if p.get("due_date") else None
+        due_time = time.fromisoformat(p["due_time"]) if p.get("due_time") else None
+        return _ok(classroom.create_coursework_item(
+            course_id, title=p["title"], description=p.get("description", ""), work_type=p.get("work_type", "ASSIGNMENT"),
+            max_points=p.get("max_points"), due_date=due_date, due_time=due_time, topic_id=p.get("topic_id"),
+            publish=bool(p.get("publish", False)), materials=p.get("materials", []), scheduled_time=p.get("scheduled_time"),
+            student_ids=p.get("student_ids", []), multiple_choice_choices=p.get("multiple_choice_choices", []),
+            submission_modification_mode=p.get("submission_modification_mode"), grading_period_id=p.get("grading_period_id")))
+    if action == "update": return _ok(classroom.patch_coursework(course_id, course_work_id, p.get("updates", {}), clear_fields=p.get("clear_fields", [])))
+    if action == "modify_assignees": return _ok(classroom.modify_coursework_assignees(
+        course_id, course_work_id, assignee_mode=p.get("assignee_mode", "ALL_STUDENTS"),
+        add_student_ids=p.get("add_student_ids", []), remove_student_ids=p.get("remove_student_ids", [])))
+    if action == "delete": return _ok(classroom.delete_coursework(course_id, course_work_id))
+    raise ValueError(f"Acción de coursework no soportada: {action}")
+
+
+@mcp.tool()
+def classroom_materials(action: str, course_id: str, material_id: str = "", payload_json: str = "{}", confirmed: bool = False) -> str:
+    """Material de clase. action: list|get|create|update|delete. create admite title,description,materials(Drive/link),topic_id,publish,scheduled_time,student_ids."""
+    action = action.strip().lower(); p = _json_obj(payload_json, {})
+    writes = {"create", "update", "delete"}; destructive = {"delete"}
+    pending = _require_confirm(action, {"course_id": course_id, "material_id": material_id, "payload": p}, confirmed, destructive_actions=destructive, write_actions=writes)
+    if pending: return pending
+    if action == "list": return _ok(classroom.list_coursework_materials(course_id, include_drafts=bool(p.get("include_drafts", True))))
+    if action == "get": return _ok(classroom.get_coursework_material(course_id, material_id))
+    if action == "create": return _ok(classroom.create_coursework_material(
+        course_id, title=p["title"], description=p.get("description", ""), materials=p.get("materials", []),
+        topic_id=p.get("topic_id"), publish=bool(p.get("publish", False)), scheduled_time=p.get("scheduled_time"),
+        student_ids=p.get("student_ids", [])))
+    if action == "update": return _ok(classroom.patch_coursework_material(course_id, material_id, p.get("updates", {}), clear_fields=p.get("clear_fields", [])))
+    if action == "delete": return _ok(classroom.delete_coursework_material(course_id, material_id))
+    raise ValueError(f"Acción de materiales no soportada: {action}")
+
+
+@mcp.tool()
+def classroom_submissions(action: str, course_id: str, course_work_id: str = "", submission_id: str = "", payload_json: str = "{}") -> str:
+    """Lectura/diagnóstico de entregas. action: list|get|missing|course_progress|diagnose. Incluye estado, retraso, notas provisional/final, rúbrica e historial cuando Google lo devuelve."""
+    action = action.strip().lower(); p = _json_obj(payload_json, {})
+    if action == "list": return _ok(classroom.list_submissions(course_id, course_work_id))
+    if action == "get": return _ok(classroom.get_submission(course_id, course_work_id, submission_id))
+    if action == "missing": return _ok(classroom.missing_students(course_id, course_work_id))
+    if action == "course_progress": return _ok(classroom.course_progress(course_id, include_drafts=bool(p.get("include_drafts", False))))
+    if action == "diagnose": return _ok(classroom.diagnose_coursework_control(course_id, course_work_id))
+    raise ValueError(f"Acción de entregas no soportada: {action}")
+
+
+@mcp.tool()
+def classroom_grades(action: str, course_id: str, course_work_id: str, submission_id: str = "", payload_json: str = "{}", confirmed: bool = False) -> str:
+    """Calificaciones y devoluciones. action: set_draft|set_final|grade_and_return|clear|return|batch_grade|batch_return. Siempre confirma antes de escribir."""
+    action = action.strip().lower(); p = _json_obj(payload_json, {})
+    writes = {"set_draft", "set_final", "grade_and_return", "clear", "return", "batch_grade", "batch_return"}
+    destructive = {"clear"}
+    pending = _require_confirm(action, {"course_id": course_id, "course_work_id": course_work_id, "submission_id": submission_id, "payload": p}, confirmed, destructive_actions=destructive, write_actions=writes)
+    if pending: return pending
+    if action == "set_draft": return _ok(classroom.patch_submission_grades(course_id, course_work_id, submission_id, draft_grade=float(p["grade"])))
+    if action == "set_final": return _ok(classroom.patch_submission_grades(course_id, course_work_id, submission_id, draft_grade=float(p["grade"]), assigned_grade=float(p["grade"])))
+    if action == "grade_and_return": return _ok(classroom.grade_submission(course_id, course_work_id, submission_id, grade=float(p["grade"]), return_to_student=True))
+    if action == "clear": return _ok(classroom.clear_submission_grade(course_id, course_work_id, submission_id, which=p.get("which", "all")))
+    if action == "return": return _ok(classroom.return_submission(course_id, course_work_id, submission_id, finalize_draft=bool(p.get("finalize_draft", True))))
+    if action == "batch_grade": return _ok(classroom.batch_grade(course_id, course_work_id, p.get("grades", []), mode=p.get("mode", "final"), return_to_student=bool(p.get("return_to_student", False))))
+    if action == "batch_return": return _ok(classroom.batch_return(course_id, course_work_id, [str(x) for x in p.get("submission_ids", [])], finalize_draft=bool(p.get("finalize_draft", True))))
+    raise ValueError(f"Acción de calificaciones no soportada: {action}")
+
+
+@mcp.tool()
+def classroom_rubrics(action: str, course_id: str, course_work_id: str, rubric_id: str = "", payload_json: str = "{}", confirmed: bool = False) -> str:
+    """Rúbricas. action: list|get|create|update|delete. La API no permite escribir puntajes por criterio en la entrega."""
+    action = action.strip().lower(); p = _json_obj(payload_json, {})
+    writes = {"create", "update", "delete"}; destructive = {"delete"}
+    pending = _require_confirm(action, {"course_id": course_id, "course_work_id": course_work_id, "rubric_id": rubric_id, "payload": p}, confirmed, destructive_actions=destructive, write_actions=writes)
+    if pending: return pending
+    pv = p.get("preview_version")
+    if action == "list": return _ok(classroom.list_rubrics(course_id, course_work_id, pv))
+    if action == "get": return _ok(classroom.get_rubric(course_id, course_work_id, rubric_id, pv))
+    if action == "create": return _ok(classroom.create_rubric(course_id, course_work_id, criteria=p.get("criteria", []), preview_version=pv))
+    if action == "update": return _ok(classroom.update_rubric(course_id, course_work_id, rubric_id, criteria=p.get("criteria", []), preview_version=pv))
+    if action == "delete": return _ok(classroom.delete_rubric(course_id, course_work_id, rubric_id, pv))
+    raise ValueError(f"Acción de rúbricas no soportada: {action}")
+
+
+@mcp.tool()
+def classroom_student_groups(action: str, course_id: str, group_id: str = "", user_id: str = "", payload_json: str = "{}", confirmed: bool = False) -> str:
+    """Grupos de estudiantes. action: list|create|update|delete|list_members|add_member|remove_member."""
+    action = action.strip().lower(); p = _json_obj(payload_json, {})
+    writes = {"create", "update", "delete", "add_member", "remove_member"}; destructive = {"delete", "remove_member"}
+    pending = _require_confirm(action, {"course_id": course_id, "group_id": group_id, "user_id": user_id, "payload": p}, confirmed, destructive_actions=destructive, write_actions=writes)
+    if pending: return pending
+    pv = p.get("preview_version")
+    if action == "list": return _ok(classroom.list_student_groups(course_id, pv))
+    if action == "create": return _ok(classroom.create_student_group(course_id, p["title"], pv))
+    if action == "update": return _ok(classroom.update_student_group(course_id, group_id, p["title"], pv))
+    if action == "delete": return _ok(classroom.delete_student_group(course_id, group_id, pv))
+    if action == "list_members": return _ok(classroom.list_student_group_members(course_id, group_id, pv))
+    if action == "add_member": return _ok(classroom.add_student_group_member(course_id, group_id, user_id, pv))
+    if action == "remove_member": return _ok(classroom.remove_student_group_member(course_id, group_id, user_id, pv))
+    raise ValueError(f"Acción de grupos no soportada: {action}")
+
+
+
+@mcp.tool()
+def classroom_profiles_guardians(action: str, student_id: str = "", guardian_id: str = "", invitation_id: str = "", payload_json: str = "{}", confirmed: bool = False) -> str:
+    """Perfiles y tutores. action: get_profile|check_capability|list_guardians|get_guardian|delete_guardian|list_invitations|get_invitation|create_invitation|cancel_invitation. Para administrar tutores se necesita scope guardianlinks.students."""
+    action = action.strip().lower(); p = _json_obj(payload_json, {})
+    writes = {"delete_guardian", "create_invitation", "cancel_invitation"}; destructive = {"delete_guardian", "cancel_invitation"}
+    pending = _require_confirm(action, {"student_id": student_id, "guardian_id": guardian_id, "invitation_id": invitation_id, "payload": p}, confirmed, destructive_actions=destructive, write_actions=writes)
+    if pending: return pending
+    if action == "get_profile": return _ok(classroom.get_user_profile(p.get("user_id", student_id or "me")))
+    if action == "check_capability": return _ok(classroom.check_user_capability(
+        p["capability"], user_id=p.get("user_id", "me"), preview_version=p.get("preview_version", "V1_20240930_PREVIEW")))
+    if action == "list_guardians": return _ok(classroom.list_guardians(student_id, invited_email_address=p.get("invited_email_address")))
+    if action == "get_guardian": return _ok(classroom.get_guardian(student_id, guardian_id))
+    if action == "delete_guardian": return _ok(classroom.delete_guardian(student_id, guardian_id))
+    if action == "list_invitations": return _ok(classroom.list_guardian_invitations(
+        student_id, invited_email_address=p.get("invited_email_address"), states=p.get("states")))
+    if action == "get_invitation": return _ok(classroom.get_guardian_invitation(student_id, invitation_id))
+    if action == "create_invitation": return _ok(classroom.create_guardian_invitation(student_id, p["invited_email_address"]))
+    if action == "cancel_invitation": return _ok(classroom.cancel_guardian_invitation(student_id, invitation_id))
+    raise ValueError(f"Acción de perfiles/tutores no soportada: {action}")
+
+# ---- aliases de alta frecuencia para compatibilidad y selección robusta ----
 @mcp.tool()
 def classroom_list_courses(active_only: bool = True) -> str:
-    """Lista los cursos de Google Classroom donde la cuenta autenticada es docente."""
+    """Lista cursos activos. Alias estable de lectura."""
     return _ok(classroom.list_courses(active_only=active_only))
 
 
 @mcp.tool()
-def classroom_list_students(course_id: str) -> str:
-    """Lista estudiantes y correos de un curso de Classroom."""
-    return _ok(classroom.list_students(course_id))
+def classroom_create_assignment(course_id: str, title: str, description: str = "", max_points: float | None = None,
+                                due_date_iso: str | None = None, due_time_hhmm: str | None = None,
+                                topic_id: str | None = None, publish: bool = False, materials_json: str = "[]",
+                                confirmed: bool = False) -> str:
+    """Crea una TAREA. Permite descripción y adjuntos Drive/link. Exige confirmación."""
+    materials = _json_obj(materials_json, [])
+    preview = {"course_id": course_id, "title": title, "description": description, "max_points": max_points,
+               "due_date": due_date_iso, "due_time": due_time_hhmm, "topic_id": topic_id, "publish": publish, "materials": materials}
+    pending = _confirmation(preview, confirmed)
+    if pending: return pending
+    return _ok(classroom.create_coursework_item(
+        course_id, title=title, description=description, work_type="ASSIGNMENT", max_points=max_points,
+        due_date=date.fromisoformat(due_date_iso) if due_date_iso else None,
+        due_time=time.fromisoformat(due_time_hhmm) if due_time_hhmm else None,
+        topic_id=topic_id, publish=publish, materials=materials))
 
 
 @mcp.tool()
-def classroom_list_coursework(course_id: str, include_drafts: bool = True) -> str:
-    """Lista tareas/trabajos de clase de un curso de Classroom."""
-    return _ok(classroom.list_coursework(course_id, include_drafts=include_drafts))
+def classroom_create_material(course_id: str, title: str, description: str = "", materials_json: str = "[]",
+                              topic_id: str | None = None, publish: bool = False, confirmed: bool = False) -> str:
+    """Crea una publicación real de MATERIAL DE CLASE con descripción y adjuntos Drive/link. Exige confirmación."""
+    materials = _json_obj(materials_json, [])
+    preview = {"course_id": course_id, "title": title, "description": description, "materials": materials, "topic_id": topic_id, "publish": publish}
+    pending = _confirmation(preview, confirmed)
+    if pending: return pending
+    return _ok(classroom.create_coursework_material(course_id, title=title, description=description, materials=materials, topic_id=topic_id, publish=publish))
 
 
 @mcp.tool()
 def classroom_list_submissions(course_id: str, course_work_id: str) -> str:
-    """Lista entregas y estado de cada estudiante para una tarea de Classroom."""
+    """Lista entregas y notas de un trabajo. Alias estable de lectura."""
     return _ok(classroom.list_submissions(course_id, course_work_id))
 
 
 @mcp.tool()
-def classroom_missing_students(course_id: str, course_work_id: str) -> str:
-    """Devuelve estudiantes cuya entrega no está TURNED_IN ni RETURNED."""
-    return _ok(classroom.missing_students(course_id, course_work_id))
-
-
-@mcp.tool()
-def classroom_create_assignment(
-    course_id: str,
-    title: str,
-    description: str = "",
-    max_points: float | None = None,
-    due_date_iso: str | None = None,
-    due_time_hhmm: str | None = None,
-    topic_id: str | None = None,
-    publish: bool = False,
-    confirmed: bool = False,
-) -> str:
-    """Crea una tarea. Requiere confirmed=true después de que el usuario confirme el resumen."""
-    preview = {
-        "course_id": course_id,
-        "title": title,
-        "description": description,
-        "max_points": max_points,
-        "due_date": due_date_iso,
-        "due_time": due_time_hhmm,
-        "topic_id": topic_id,
-        "state": "PUBLISHED" if publish else "DRAFT",
-    }
-    if not confirmed:
-        return _ok({"requires_confirmation": True, "preview": preview})
-    due_date = date.fromisoformat(due_date_iso) if due_date_iso else None
-    due_time = time.fromisoformat(due_time_hhmm) if due_time_hhmm else None
-    return _ok(
-        classroom.create_coursework(
-            course_id,
-            title=title,
-            description=description,
-            max_points=max_points,
-            due_date=due_date,
-            due_time=due_time,
-            topic_id=topic_id,
-            publish=publish,
-        )
-    )
-
-
-@mcp.tool()
-def classroom_grade_submission(
-    course_id: str,
-    course_work_id: str,
-    submission_id: str,
-    grade: float,
-    return_to_student: bool = False,
-    confirmed: bool = False,
-) -> str:
-    """Asigna nota a una entrega. Requiere confirmed=true tras confirmación del usuario."""
-    preview = {
-        "course_id": course_id,
-        "course_work_id": course_work_id,
-        "submission_id": submission_id,
-        "grade": grade,
-        "return_to_student": return_to_student,
-    }
-    if not confirmed:
-        return _ok({"requires_confirmation": True, "preview": preview})
-    return _ok(
-        classroom.grade_submission(
-            course_id,
-            course_work_id,
-            submission_id,
-            grade=grade,
-            return_to_student=return_to_student,
-        )
-    )
+def classroom_grade_submission(course_id: str, course_work_id: str, submission_id: str, grade: float,
+                               return_to_student: bool = False, confirmed: bool = False) -> str:
+    """Pone nota final (draftGrade+assignedGrade) y opcionalmente devuelve la entrega. Exige confirmación."""
+    preview = {"course_id": course_id, "course_work_id": course_work_id, "submission_id": submission_id,
+               "grade": grade, "return_to_student": return_to_student}
+    pending = _confirmation(preview, confirmed)
+    if pending: return pending
+    return _ok(classroom.grade_submission(course_id, course_work_id, submission_id, grade=grade, return_to_student=return_to_student))
 
 
 # ---------------- SieWeb ----------------
@@ -371,87 +612,6 @@ def sieweb_save_descriptive_conclusion(
             comment2="",
         )
     )
-
-
-# ---------------- Classroom ampliado ----------------
-@mcp.tool()
-def classroom_get_course(course_id: str) -> str:
-    """Obtiene el detalle de un curso de Classroom."""
-    return _ok(classroom.get_course(course_id))
-
-@mcp.tool()
-def classroom_list_teachers(course_id: str) -> str:
-    """Lista docentes de un curso de Classroom."""
-    return _ok(classroom.list_teachers(course_id))
-
-@mcp.tool()
-def classroom_list_topics(course_id: str) -> str:
-    """Lista temas/topics de un curso de Classroom."""
-    return _ok(classroom.list_topics(course_id))
-
-@mcp.tool()
-def classroom_create_topic(course_id: str, name: str, confirmed: bool = False) -> str:
-    """Crea un tema en Classroom. Requiere confirmed=true."""
-    if not confirmed:
-        return _ok({"requires_confirmation": True, "preview": {"course_id": course_id, "name": name}})
-    return _ok(classroom.create_topic(course_id, name))
-
-@mcp.tool()
-def classroom_list_announcements(course_id: str, include_drafts: bool = True) -> str:
-    """Lista anuncios de Classroom."""
-    return _ok(classroom.list_announcements(course_id, include_drafts=include_drafts))
-
-@mcp.tool()
-def classroom_create_announcement(course_id: str, text: str, publish: bool = False, confirmed: bool = False) -> str:
-    """Crea un anuncio en Classroom; por defecto queda borrador. Requiere confirmación."""
-    preview = {"course_id": course_id, "text": text, "state": "PUBLISHED" if publish else "DRAFT"}
-    if not confirmed:
-        return _ok({"requires_confirmation": True, "preview": preview})
-    return _ok(classroom.create_announcement(course_id, text=text, publish=publish))
-
-@mcp.tool()
-def classroom_get_coursework(course_id: str, course_work_id: str) -> str:
-    """Lee una tarea completa de Classroom, incluidos materiales y configuración."""
-    return _ok(classroom.get_coursework(course_id, course_work_id))
-
-@mcp.tool()
-def classroom_list_materials(course_id: str, include_drafts: bool = True) -> str:
-    """Lista materiales publicados o borradores de un curso."""
-    return _ok(classroom.list_coursework_materials(course_id, include_drafts=include_drafts))
-
-@mcp.tool()
-def classroom_get_submission(course_id: str, course_work_id: str, submission_id: str) -> str:
-    """Lee una entrega completa, incluidos adjuntos e historial cuando la API los expone."""
-    return _ok(classroom.get_submission(course_id, course_work_id, submission_id))
-
-@mcp.tool()
-def classroom_course_progress(course_id: str, include_drafts: bool = False) -> str:
-    """Resume por alumno entregadas, devueltas, pendientes, tardías y calificadas en un curso."""
-    return _ok(classroom.course_progress(course_id, include_drafts=include_drafts))
-
-@mcp.tool()
-def classroom_update_assignment(course_id: str, course_work_id: str, updates_json: str, confirmed: bool = False) -> str:
-    """Edita una tarea creada por esta integración. Requiere confirmación."""
-    updates = json.loads(updates_json or "{}")
-    if not confirmed:
-        return _ok({"requires_confirmation": True, "preview": {"course_id": course_id, "course_work_id": course_work_id, "updates": updates}})
-    return _ok(classroom.patch_coursework(course_id, course_work_id, updates))
-
-@mcp.tool()
-def classroom_delete_assignment(course_id: str, course_work_id: str, confirmed: bool = False) -> str:
-    """Elimina una tarea creada por esta integración. Acción destructiva; requiere confirmación."""
-    if not confirmed:
-        return _ok({"requires_confirmation": True, "destructive": True, "preview": {"course_id": course_id, "course_work_id": course_work_id}})
-    return _ok(classroom.delete_coursework(course_id, course_work_id))
-
-@mcp.tool()
-def classroom_batch_grade(course_id: str, course_work_id: str, grades_json: str,
-                          return_to_student: bool = False, confirmed: bool = False) -> str:
-    """Califica varias entregas. grades_json: [{submission_id o user_id, grade}]. Requiere confirmación."""
-    grades = json.loads(grades_json or "[]")
-    if not confirmed:
-        return _ok({"requires_confirmation": True, "preview": {"course_id": course_id, "course_work_id": course_work_id, "return_to_student": return_to_student, "grades": grades}})
-    return _ok(classroom.batch_grade(course_id, course_work_id, grades, return_to_student=return_to_student))
 
 @mcp.tool()
 def sieweb_resolve_class_context(section: str, period: int, course_code: str = "05", id_ambito: int | None = None) -> str:
