@@ -373,3 +373,122 @@ class SieWebClient:
         if ((result.get("json") or {}).get("estado")) != 1:
             raise SieWebError(f"SieWeb no confirmó la conclusión descriptiva: {result}")
         return result
+
+
+    # ---------- Utilidades integrales sobre el registro ----------
+    @staticmethod
+    def _unwrap(payload: dict[str, Any]) -> dict[str, Any]:
+        return (payload.get("json") or payload) if isinstance(payload, dict) else {}
+
+    def summarize_gradebook(self, gradebook: dict[str, Any]) -> dict[str, Any]:
+        data = self._unwrap(gradebook)
+        info = data.get("infoClasePeriodo") or {}
+        headers = []
+        for h in data.get("cabeceraNotas") or []:
+            inf = h.get("info") or {}
+            headers.append({
+                "id": h.get("id"),
+                "idpadre": h.get("idpadre"),
+                "idClaseContenido": h.get("idClaseContenido"),
+                "desc": h.get("desc"),
+                "abreviatura": h.get("abreviatura"),
+                "programa": inf.get("programa"),
+                "descripcion": inf.get("descComp"),
+                "peso": inf.get("peso"),
+                "nivelEva": h.get("nivelEva"),
+                "esAgrupador": h.get("esAgrupador"),
+                "mostrarConclusion": h.get("mostrarConclusion"),
+                "addConclDescrp": h.get("addConclDescrp"),
+            })
+        students = []
+        for row in data.get("dataAlumno") or []:
+            d = row.get("datos") or {}
+            notes = row.get("notas") or {}
+            students.append({
+                "idPersona": d.get("idPersona"), "alucod": d.get("alucod"),
+                "nomcomp": d.get("nomcomp"), "ngs": d.get("ngs"), "nemo": d.get("nemo"),
+                "numord": d.get("numord"), "estadoAnual": d.get("estadoAnual"),
+                "notas": notes,
+            })
+        return {
+            "class": {
+                "idClasePeriodo": info.get("idClasePeriodo"), "idClase": info.get("idClase"),
+                "idCurso": info.get("idCurso"), "idContenidoPrin": info.get("idContenidoPrin"),
+                "ano": info.get("ano"), "cursocod": info.get("cursocod"), "cursonom": info.get("cursonom"),
+                "periodo": info.get("periodo"), "nomSalon": info.get("nomSalon"), "arrNGS": info.get("arrNGS"),
+                "arrNemo": info.get("arrNemo"), "nomProfesor": info.get("nomProfesor"),
+            },
+            "permissions": data.get("dataPermisoRegistro") or {},
+            "criteria": headers,
+            "students": students,
+        }
+
+    def get_gradebook_summary(self, *, class_period_id: int, root_content_id: int,
+                              extra_params: dict[str, Any] | None = None) -> dict[str, Any]:
+        return self.summarize_gradebook(self.get_gradebook(class_period_id=class_period_id, root_content_id=root_content_id, extra_params=extra_params))
+
+    def find_students_in_gradebook(self, summary: dict[str, Any], query: str) -> list[dict[str, Any]]:
+        q = (query or "").strip().lower()
+        out = []
+        for s in summary.get("students") or []:
+            if not q or q in str(s.get("alucod") or "").lower() or q in str(s.get("nomcomp") or "").lower():
+                out.append(s)
+        return out
+
+    def find_criteria_in_gradebook(self, summary: dict[str, Any], query: str) -> list[dict[str, Any]]:
+        q = (query or "").strip().lower()
+        out = []
+        for c in summary.get("criteria") or []:
+            hay = " ".join(str(c.get(k) or "") for k in ("id","idClaseContenido","desc","abreviatura","programa","descripcion")).lower()
+            if not q or q in hay:
+                out.append(c)
+        return out
+
+    def get_conclusions_batch(self, targets: list[dict[str, Any]]) -> dict[str, Any]:
+        results, errors = [], []
+        for t in targets:
+            try:
+                result = self.get_conclusion(person_id=int(t["person_id"]), class_content_id=int(t["class_content_id"]), ng=str(t["ng"]))
+                results.append({"target": t, "result": result})
+            except Exception as exc:
+                errors.append({"target": t, "error": str(exc)})
+        return {"results": results, "errors": errors}
+
+    def update_conclusions_batch(self, records: list[dict[str, Any]]) -> dict[str, Any]:
+        results, errors = [], []
+        for r in records:
+            try:
+                grade = str(r.get("grade") or "").strip().upper()
+                if grade not in {"B", "C"}:
+                    raise SieWebError("Conclusión omitida: solo se permite B o C.")
+                comment = str(r.get("comment") or "").strip()
+                if not comment:
+                    raise SieWebError("Conclusión vacía.")
+                if len(comment) > 500:
+                    raise SieWebError("La conclusión supera 500 caracteres.")
+                result = self.update_conclusion(person_id=int(r["person_id"]), class_content_id=int(r["class_content_id"]), comment=comment, comment2=str(r.get("comment2") or ""))
+                results.append({"record": r, "result": result})
+            except Exception as exc:
+                errors.append({"record": r, "error": str(exc)})
+        return {"updated": results, "errors": errors, "count_updated": len(results), "count_errors": len(errors)}
+
+    def build_grade_records(self, summary: dict[str, Any], *, header_id: int,
+                            grades_by_student_code: dict[str, str]) -> list[dict[str, Any]]:
+        records = []
+        for s in summary.get("students") or []:
+            code = str(s.get("alucod") or "")
+            if code not in grades_by_student_code:
+                continue
+            note = str(grades_by_student_code[code]).strip().upper()
+            note_obj = (s.get("notas") or {}).get(str(header_id)) or {}
+            if not note_obj:
+                continue
+            records.append({
+                "idNota": note_obj.get("idNota"),
+                "notaNue": note,
+                "nivelEva": note_obj.get("nivelEva"),
+                "idPersona": s.get("idPersona"),
+                "alucod": code,
+                "nemo": s.get("nemo"),
+            })
+        return records

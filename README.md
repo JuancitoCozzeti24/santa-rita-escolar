@@ -1,25 +1,18 @@
-# Santa Rita Escolar MCP
+# Santa Rita Escolar v0.3.0 integral
 
-Servidor MCP privado para integrar ChatGPT con Google Classroom y SieWeb.
+Amplía el MCP remoto con:
 
-## Seguridad
+- Classroom: cursos, docentes, alumnos, topics, anuncios, tareas, materiales, entregas completas, progreso por alumno, creación/edición/eliminación de tareas y calificación individual/lote.
+- SieWeb: login autónomo, mensajería ya mapeada, registro de notas, criterios/desempeños, conclusiones descriptivas B/C, búsqueda por alumno/criterio y operaciones por lote.
+- Cruce Classroom↔SieWeb: empareja el código del correo institucional de Classroom con `alucod` de SieWeb y puede identificar los pendientes de Classroom con sus IDs de SieWeb.
 
-- No contiene credenciales, cookies ni tokens.
-- Se niega a iniciar en remoto si no se configuran `AUTH0_ISSUER` y `AUTH0_AUDIENCE`.
-- Los secretos de Google y SieWeb se cargan solo como variables de entorno en Render.
-- Las operaciones de escritura exigen confirmación lógica (`confirmed=true`) además de la confirmación de ChatGPT.
+## Aún requiere mapeo adicional de SieWeb
+
+Para llegar al uso 100% por nombres sin IDs y enviar mensajes NUEVOS a cualquier alumno/familia faltan capturar tres llamadas de la interfaz:
+1. listado de salones/clases/periodos del profesor;
+2. directorio de destinatarios de mensajería;
+3. payload de mensaje nuevo (no respuesta).
 
 ## Render
-
-- Runtime: Python 3
-- Build command: `pip install -r requirements.txt`
-- Start command: `python -m app.server`
-- Endpoint MCP: `https://<servicio>.onrender.com/mcp`
-
-## Funciones principales
-
-Google Classroom: cursos, estudiantes, tareas, entregas, pendientes, creación de tareas y calificación.
-
-SieWeb: login automático, mensajes, respuestas, registro de notas, calificaciones, criterios/desempeños y conclusiones descriptivas.
-
-Conclusiones descriptivas: solo B/C, máximo 500 caracteres y con estructura de logro, mejora y sugerencia.
+Build: `pip install -r requirements.txt`
+Start: `python server.py`

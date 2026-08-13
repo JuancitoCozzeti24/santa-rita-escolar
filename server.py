@@ -373,5 +373,177 @@ def sieweb_save_descriptive_conclusion(
     )
 
 
+# ---------------- Classroom ampliado ----------------
+@mcp.tool()
+def classroom_get_course(course_id: str) -> str:
+    """Obtiene el detalle de un curso de Classroom."""
+    return _ok(classroom.get_course(course_id))
+
+@mcp.tool()
+def classroom_list_teachers(course_id: str) -> str:
+    """Lista docentes de un curso de Classroom."""
+    return _ok(classroom.list_teachers(course_id))
+
+@mcp.tool()
+def classroom_list_topics(course_id: str) -> str:
+    """Lista temas/topics de un curso de Classroom."""
+    return _ok(classroom.list_topics(course_id))
+
+@mcp.tool()
+def classroom_create_topic(course_id: str, name: str, confirmed: bool = False) -> str:
+    """Crea un tema en Classroom. Requiere confirmed=true."""
+    if not confirmed:
+        return _ok({"requires_confirmation": True, "preview": {"course_id": course_id, "name": name}})
+    return _ok(classroom.create_topic(course_id, name))
+
+@mcp.tool()
+def classroom_list_announcements(course_id: str, include_drafts: bool = True) -> str:
+    """Lista anuncios de Classroom."""
+    return _ok(classroom.list_announcements(course_id, include_drafts=include_drafts))
+
+@mcp.tool()
+def classroom_create_announcement(course_id: str, text: str, publish: bool = False, confirmed: bool = False) -> str:
+    """Crea un anuncio en Classroom; por defecto queda borrador. Requiere confirmación."""
+    preview = {"course_id": course_id, "text": text, "state": "PUBLISHED" if publish else "DRAFT"}
+    if not confirmed:
+        return _ok({"requires_confirmation": True, "preview": preview})
+    return _ok(classroom.create_announcement(course_id, text=text, publish=publish))
+
+@mcp.tool()
+def classroom_get_coursework(course_id: str, course_work_id: str) -> str:
+    """Lee una tarea completa de Classroom, incluidos materiales y configuración."""
+    return _ok(classroom.get_coursework(course_id, course_work_id))
+
+@mcp.tool()
+def classroom_list_materials(course_id: str, include_drafts: bool = True) -> str:
+    """Lista materiales publicados o borradores de un curso."""
+    return _ok(classroom.list_coursework_materials(course_id, include_drafts=include_drafts))
+
+@mcp.tool()
+def classroom_get_submission(course_id: str, course_work_id: str, submission_id: str) -> str:
+    """Lee una entrega completa, incluidos adjuntos e historial cuando la API los expone."""
+    return _ok(classroom.get_submission(course_id, course_work_id, submission_id))
+
+@mcp.tool()
+def classroom_course_progress(course_id: str, include_drafts: bool = False) -> str:
+    """Resume por alumno entregadas, devueltas, pendientes, tardías y calificadas en un curso."""
+    return _ok(classroom.course_progress(course_id, include_drafts=include_drafts))
+
+@mcp.tool()
+def classroom_update_assignment(course_id: str, course_work_id: str, updates_json: str, confirmed: bool = False) -> str:
+    """Edita una tarea creada por esta integración. Requiere confirmación."""
+    updates = json.loads(updates_json or "{}")
+    if not confirmed:
+        return _ok({"requires_confirmation": True, "preview": {"course_id": course_id, "course_work_id": course_work_id, "updates": updates}})
+    return _ok(classroom.patch_coursework(course_id, course_work_id, updates))
+
+@mcp.tool()
+def classroom_delete_assignment(course_id: str, course_work_id: str, confirmed: bool = False) -> str:
+    """Elimina una tarea creada por esta integración. Acción destructiva; requiere confirmación."""
+    if not confirmed:
+        return _ok({"requires_confirmation": True, "destructive": True, "preview": {"course_id": course_id, "course_work_id": course_work_id}})
+    return _ok(classroom.delete_coursework(course_id, course_work_id))
+
+@mcp.tool()
+def classroom_batch_grade(course_id: str, course_work_id: str, grades_json: str,
+                          return_to_student: bool = False, confirmed: bool = False) -> str:
+    """Califica varias entregas. grades_json: [{submission_id o user_id, grade}]. Requiere confirmación."""
+    grades = json.loads(grades_json or "[]")
+    if not confirmed:
+        return _ok({"requires_confirmation": True, "preview": {"course_id": course_id, "course_work_id": course_work_id, "return_to_student": return_to_student, "grades": grades}})
+    return _ok(classroom.batch_grade(course_id, course_work_id, grades, return_to_student=return_to_student))
+
+# ---------------- SieWeb ampliado ----------------
+@mcp.tool()
+def sieweb_gradebook_summary(class_period_id: int, root_content_id: int, extra_params_json: str = "{}") -> str:
+    """Devuelve contexto de clase, alumnos, criterios, IDs y notas en una forma compacta."""
+    extra = json.loads(extra_params_json or "{}")
+    return _ok(sieweb.get_gradebook_summary(class_period_id=class_period_id, root_content_id=root_content_id, extra_params=extra))
+
+@mcp.tool()
+def sieweb_find_students(class_period_id: int, root_content_id: int, query: str, extra_params_json: str = "{}") -> str:
+    """Busca alumnos en el registro de SieWeb por nombre o código."""
+    extra = json.loads(extra_params_json or "{}")
+    summary = sieweb.get_gradebook_summary(class_period_id=class_period_id, root_content_id=root_content_id, extra_params=extra)
+    return _ok(sieweb.find_students_in_gradebook(summary, query))
+
+@mcp.tool()
+def sieweb_find_criteria(class_period_id: int, root_content_id: int, query: str, extra_params_json: str = "{}") -> str:
+    """Busca competencias/capacidades/desempeños por texto o ID dentro del registro."""
+    extra = json.loads(extra_params_json or "{}")
+    summary = sieweb.get_gradebook_summary(class_period_id=class_period_id, root_content_id=root_content_id, extra_params=extra)
+    return _ok(sieweb.find_criteria_in_gradebook(summary, query))
+
+@mcp.tool()
+def sieweb_get_conclusions_batch(targets_json: str) -> str:
+    """Lee conclusiones de varios alumnos/criterios. targets=[{person_id,class_content_id,ng}]."""
+    return _ok(sieweb.get_conclusions_batch(json.loads(targets_json or "[]")))
+
+@mcp.tool()
+def sieweb_save_conclusions_batch(records_json: str, confirmed: bool = False) -> str:
+    """Guarda varias conclusiones B/C; cada record incluye comment ya estructurado. Requiere confirmación."""
+    records = json.loads(records_json or "[]")
+    # validación previa de estructura mínima
+    bad = []
+    for r in records:
+        grade = str(r.get("grade") or "").upper()
+        comment = str(r.get("comment") or "")
+        if grade not in {"B","C"} or not comment or len(comment) > 500:
+            bad.append({"record": r, "reason": "grade debe ser B/C y comment debe tener 1-500 caracteres"})
+    if bad:
+        return _ok({"error": "Hay conclusiones inválidas.", "invalid": bad})
+    if not confirmed:
+        return _ok({"requires_confirmation": True, "preview": records})
+    return _ok(sieweb.update_conclusions_batch(records))
+
+@mcp.tool()
+def sieweb_build_grade_records(class_period_id: int, root_content_id: int, header_id: int,
+                               grades_by_student_code_json: str, extra_params_json: str = "{}") -> str:
+    """Construye registros de HyoClasenota/actualizar desde {codigoAlumno: nota}, sin escribir todavía."""
+    extra = json.loads(extra_params_json or "{}")
+    grade_map = json.loads(grades_by_student_code_json or "{}")
+    summary = sieweb.get_gradebook_summary(class_period_id=class_period_id, root_content_id=root_content_id, extra_params=extra)
+    return _ok(sieweb.build_grade_records(summary, header_id=header_id, grades_by_student_code={str(k): str(v) for k,v in grade_map.items()}))
+
+# ---------------- Flujos Classroom <-> SieWeb ----------------
+@mcp.tool()
+def workflow_match_classroom_sieweb_roster(course_id: str, class_period_id: int, root_content_id: int,
+                                           extra_params_json: str = "{}") -> str:
+    """Cruza alumnos de Classroom con SieWeb por el código del correo institucional (antes de @) vs alucod."""
+    extra = json.loads(extra_params_json or "{}")
+    c_students = classroom.list_students(course_id)
+    summary = sieweb.get_gradebook_summary(class_period_id=class_period_id, root_content_id=root_content_id, extra_params=extra)
+    s_by_code = {str(s.get("alucod") or ""): s for s in summary.get("students") or []}
+    matched, unmatched_classroom = [], []
+    for cs in c_students:
+        email = str(cs.get("email") or "")
+        code = email.split("@", 1)[0] if "@" in email else ""
+        sw = s_by_code.get(code)
+        if sw:
+            matched.append({"code": code, "classroom": cs, "sieweb": {k: sw.get(k) for k in ("idPersona","alucod","nomcomp","ngs","nemo","numord")}})
+        else:
+            unmatched_classroom.append(cs)
+    matched_codes = {m["code"] for m in matched}
+    unmatched_sieweb = [{k:s.get(k) for k in ("idPersona","alucod","nomcomp","ngs","nemo","numord")} for s in summary.get("students") or [] if str(s.get("alucod") or "") not in matched_codes]
+    return _ok({"matched": matched, "unmatched_classroom": unmatched_classroom, "unmatched_sieweb": unmatched_sieweb, "counts": {"matched": len(matched), "classroom_only": len(unmatched_classroom), "sieweb_only": len(unmatched_sieweb)}})
+
+@mcp.tool()
+def workflow_missing_classroom_with_sieweb_ids(course_id: str, course_work_id: str,
+                                               class_period_id: int, root_content_id: int,
+                                               extra_params_json: str = "{}") -> str:
+    """Devuelve quienes no entregaron en Classroom y, cuando se puede, su idPersona/alucod/ngs de SieWeb."""
+    extra = json.loads(extra_params_json or "{}")
+    missing = classroom.missing_students(course_id, course_work_id)
+    summary = sieweb.get_gradebook_summary(class_period_id=class_period_id, root_content_id=root_content_id, extra_params=extra)
+    s_by_code = {str(s.get("alucod") or ""): s for s in summary.get("students") or []}
+    out = []
+    for cs in missing:
+        email = str(cs.get("email") or "")
+        code = email.split("@", 1)[0] if "@" in email else ""
+        sw = s_by_code.get(code)
+        out.append({"code": code, "classroom": cs, "sieweb": ({k: sw.get(k) for k in ("idPersona","alucod","nomcomp","ngs","nemo","numord")} if sw else None)})
+    return _ok({"missing": out, "count": len(out), "matched_to_sieweb": sum(1 for x in out if x["sieweb"])})
+
+
 if __name__ == "__main__":
     mcp.run(transport="streamable-http")
