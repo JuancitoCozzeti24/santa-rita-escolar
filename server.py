@@ -35,8 +35,8 @@ mcp = FastMCP(
         "herramienta Classroom correspondiente. Para CALIFICACIONES distingue draftGrade (provisional) de assignedGrade "
         "(visible al alumno); devolver una entrega no finaliza automáticamente la nota en la API, así que usa las herramientas "
         "de finalización/devolución. Para CIEWEB/SIEWEB, sí puedes CREAR CORREOS NUEVOS y ENVIARLOS sin que exista un hilo previo: "
-        "usa sieweb_create_email para componer/resolver destinatarios y sieweb_send_new_email para el envío real mediante "
-        "HyoMensajeria/enviarMensaje. No confundas un correo nuevo con sieweb_reply_message. Antes de cualquier escritura o acción destructiva, "
+        "usa sieweb_messaging con action=compose_new para preparar y action=send_new para el envío real mediante "
+        "HyoMensajeria/enviarMensaje. Para responder un hilo existente usa action=reply. No confundas correo nuevo con respuesta. Antes de cualquier escritura o acción destructiva, "
         "resume exactamente el cambio al usuario y solo ejecuta cuando haya autorizado ese cambio. Los comentarios privados de entregas no existen en la API oficial: "
         "no simules esa acción con anuncios ni otros recursos."
     ),
@@ -58,7 +58,7 @@ def _ok(data: Any) -> str:
     return json.dumps(data, ensure_ascii=False, default=str)
 
 
-# ---------------- Google Classroom v0.6.1 ----------------
+# ---------------- Google Classroom v0.6.2 ----------------
 def _confirmation(preview: dict[str, Any], confirmed: bool, *, destructive: bool = False) -> str | None:
     if confirmed:
         return None
@@ -82,7 +82,7 @@ def _require_confirm(action: str, payload: dict[str, Any], confirmed: bool, *, d
 def classroom_capabilities() -> str:
     """Resume el control práctico de Classroom expuesto por este conector y los límites de la API oficial."""
     return _ok({
-        "version": "0.6.1",
+        "version": "0.6.2",
         "tool_design": "Acciones agrupadas por recurso para reducir errores de selección de herramienta.",
         "implemented": {
             "courses": ["list/get/create/update/delete", "aliases", "gradebookSettings", "gradingPeriodSettings"],
@@ -111,7 +111,7 @@ def classroom_capabilities() -> str:
             "profiles_guardians": ["user profile", "capability checks", "guardians list/get/delete", "guardian invitations list/get/create/cancel"],
         },
         "official_api_limits": {
-            "private_submission_comments": "No hay endpoint oficial para leer o escribir comentarios privados nativos de una entrega. v0.6.1 ofrece comentarios en el archivo de Drive como canal de retroalimentación alternativo.",
+            "private_submission_comments": "No hay endpoint oficial para leer o escribir comentarios privados nativos de una entrega. v0.6.2 ofrece comentarios en el archivo de Drive como canal de retroalimentación alternativo.",
             "stream_announcement_comments": "No hay endpoint oficial de Classroom para leer/escribir comentarios del tablón/anuncios. Sí se pueden crear, editar, programar y borrar anuncios.",
             "overall_course_grade": "La API no expone la nota global calculada como campo editable; puede calcularse localmente con datos disponibles.",
             "rubric_criterion_scores": "Los puntajes por criterio pueden leerse en StudentSubmission, pero no escribirse mediante la API.",
@@ -264,14 +264,35 @@ def classroom_materials(action: str, course_id: str, material_id: str = "", payl
 
 
 @mcp.tool()
-def classroom_submissions(action: str, course_id: str, course_work_id: str = "", submission_id: str = "", payload_json: str = "{}") -> str:
-    """Lectura/diagnóstico de entregas. action: list|get|missing|course_progress|diagnose. Incluye estado, retraso, notas provisional/final, rúbrica e historial cuando Google lo devuelve."""
+def classroom_submissions(action: str, course_id: str, course_work_id: str = "", submission_id: str = "", payload_json: str = "{}", confirmed: bool = False) -> str:
+    """Entregas y archivos enviados. action: list|get|missing|course_progress|diagnose|files_list|inspect_text|comment_file|list_file_comments|reply_file_comment|resolve_file_comment. Para una foto/PDF visual usa classroom_attachment_image."""
     action = action.strip().lower(); p = _json_obj(payload_json, {})
     if action == "list": return _ok(classroom.list_submissions(course_id, course_work_id))
     if action == "get": return _ok(classroom.get_submission(course_id, course_work_id, submission_id))
     if action == "missing": return _ok(classroom.missing_students(course_id, course_work_id))
     if action == "course_progress": return _ok(classroom.course_progress(course_id, include_drafts=bool(p.get("include_drafts", False))))
     if action == "diagnose": return _ok(classroom.diagnose_coursework_control(course_id, course_work_id))
+
+    file_action_map = {
+        "files_list": "list",
+        "inspect_text": "inspect_text",
+        "comment_file": "comment",
+        "list_file_comments": "list_comments",
+        "reply_file_comment": "reply_comment",
+        "resolve_file_comment": "resolve_comment",
+    }
+    if action in file_action_map:
+        if not submission_id:
+            raise ValueError("submission_id es obligatorio para revisar archivos entregados.")
+        return classroom_submission_files(
+            file_action_map[action],
+            course_id,
+            course_work_id,
+            submission_id,
+            attachment_index=int(p.get("attachment_index", 0)),
+            payload_json=json.dumps(p, ensure_ascii=False),
+            confirmed=confirmed,
+        )
     raise ValueError(f"Acción de entregas no soportada: {action}")
 
 
@@ -350,7 +371,6 @@ def classroom_profiles_guardians(action: str, student_id: str = "", guardian_id:
 
 # ---- aliases de alta frecuencia para compatibilidad y selección robusta ----
 
-@mcp.tool()
 def classroom_create_announcement(
     course_id: str,
     text: str,
@@ -384,7 +404,6 @@ def classroom_create_announcement(
     ))
 
 
-@mcp.tool()
 def classroom_submission_files(
     action: str,
     course_id: str,
@@ -458,13 +477,11 @@ def classroom_attachment_image(
     )
     return (_ok(info), Image(data=png, format="png"))
 
-@mcp.tool()
 def classroom_list_courses(active_only: bool = True) -> str:
     """Lista cursos activos. Alias estable de lectura."""
     return _ok(classroom.list_courses(active_only=active_only))
 
 
-@mcp.tool()
 def classroom_create_assignment(course_id: str, title: str, description: str = "", max_points: float | None = None,
                                 due_date_iso: str | None = None, due_time_hhmm: str | None = None,
                                 topic_id: str | None = None, publish: bool = False, materials_json: str = "[]",
@@ -482,7 +499,6 @@ def classroom_create_assignment(course_id: str, title: str, description: str = "
         topic_id=topic_id, publish=publish, materials=materials))
 
 
-@mcp.tool()
 def classroom_create_material(course_id: str, title: str, description: str = "", materials_json: str = "[]",
                               topic_id: str | None = None, publish: bool = False, confirmed: bool = False) -> str:
     """Crea una publicación real de MATERIAL DE CLASE con descripción y adjuntos Drive/link. Exige confirmación."""
@@ -493,13 +509,11 @@ def classroom_create_material(course_id: str, title: str, description: str = "",
     return _ok(classroom.create_coursework_material(course_id, title=title, description=description, materials=materials, topic_id=topic_id, publish=publish))
 
 
-@mcp.tool()
 def classroom_list_submissions(course_id: str, course_work_id: str) -> str:
     """Lista entregas y notas de un trabajo. Alias estable de lectura."""
     return _ok(classroom.list_submissions(course_id, course_work_id))
 
 
-@mcp.tool()
 def classroom_grade_submission(course_id: str, course_work_id: str, submission_id: str, grade: float,
                                return_to_student: bool = False, confirmed: bool = False) -> str:
     """Pone nota final (draftGrade+assignedGrade) y opcionalmente devuelve la entrega. Exige confirmación."""
@@ -511,19 +525,123 @@ def classroom_grade_submission(course_id: str, course_work_id: str, submission_i
 
 
 # ---------------- SieWeb ----------------
+
 @mcp.tool()
+def sieweb_messaging(action: str, payload_json: str = "{}", confirmed: bool = False) -> str:
+    """Mensajería completa de SieWeb. action: capabilities|list|read|search_recipients|compose_new|send_new|reply. send_new CREA Y ENVÍA un correo nuevo sin hilo previo; reply responde uno existente. Escrituras requieren confirmed=true."""
+    action = action.strip().lower(); p = _json_obj(payload_json, {})
+    if action == "capabilities":
+        return _ok({
+            "version": "0.6.2",
+            "list_inbox": True, "read_message": True, "reply_existing_message": True,
+            "search_recipients": True, "compose_new_email": True, "send_new_email": True,
+            "new_email_requires_existing_thread": False,
+            "endpoint": "/lms/api/HyoMensajeria/enviarMensaje",
+            "note": "send_new no usa idEdition ni response; crea y envía un mensaje nuevo de SieWeb."
+        })
+    if action == "list":
+        return _ok(sieweb.list_messages(folder_id=int(p.get("folder_id", 1)), search=str(p.get("search", ""))))
+    if action == "read":
+        return _ok(sieweb.get_message(int(p["message_id"]), folder_id=int(p.get("folder_id", 1))))
+    if action == "search_recipients":
+        return _ok(sieweb.search_messaging_users(
+            query=str(p.get("query", "")),
+            recipient_type=str(p.get("recipient_type", "any")),
+            ngs=str(p.get("ngs", "")),
+            limit=int(p.get("limit", 30)),
+        ))
+
+    if action in {"compose_new", "send_new"}:
+        codes, resolved, problem = _resolve_sieweb_email_recipients(
+            p.get("recipient_codes") or [],
+            str(p.get("recipient_query", "")),
+            str(p.get("recipient_type", "any")),
+            str(p.get("ngs", "")),
+        )
+        if problem: return _ok(problem)
+        subject = str(p.get("subject", ""))
+        message = str(p.get("message", p.get("html_message", "")))
+        message_is_html = bool(p.get("message_is_html", bool(p.get("html_message"))))
+        draft = sieweb.compose_message(
+            recipient_codes=codes, subject=subject,
+            html_message=message if message_is_html else "",
+            plain_text="" if message_is_html else message,
+        )
+        if action == "compose_new":
+            return _ok({
+                "created": True, "sent": False, "type": "new_sieweb_email",
+                "resolved_recipients": resolved, "draft": draft,
+                "next_action": "Llama sieweb_messaging action=send_new con confirmed=true tras aprobación."
+            })
+        preview = {
+            "type": "new_sieweb_email", "recipient_codes": codes,
+            "resolved_recipients": resolved, "subject": draft["asunto"], "html_message": draft["mensaje"]
+        }
+        if not confirmed: return _ok({"requires_confirmation": True, "preview": preview})
+        return _ok(sieweb.send_message(
+            recipient_codes=codes, subject=subject,
+            html_message=message if message_is_html else "",
+            plain_text="" if message_is_html else message,
+        ))
+
+    if action == "reply":
+        codes = [str(x).strip() for x in (p.get("recipient_codes") or []) if str(x).strip()]
+        if not codes: raise ValueError("recipient_codes es obligatorio para responder un mensaje existente.")
+        preview = {
+            "recipient_codes": codes, "subject": str(p.get("subject", "")),
+            "reply_to_message_id": int(p["reply_to_message_id"]),
+            "html_message": str(p.get("html_message", p.get("message", ""))),
+        }
+        if not confirmed: return _ok({"requires_confirmation": True, "preview": preview})
+        return _ok(sieweb.send_reply(
+            recipient_codes=codes, subject=preview["subject"],
+            html_message=preview["html_message"], reply_to_message_id=preview["reply_to_message_id"]
+        ))
+    raise ValueError(f"Acción de mensajería SieWeb no soportada: {action}")
+
+
+@mcp.tool()
+def sieweb_academics(action: str, payload_json: str = "{}", confirmed: bool = False) -> str:
+    """Registro académico de SieWeb agrupado. action: login_status|resolve_class_context|gradebook|gradebook_by_section|gradebook_summary|find_students|find_criteria|get_criteria|upsert_criteria|update_grades|build_grade_records|get_conclusion|get_conclusions_batch|save_conclusion|save_conclusions_batch."""
+    action = action.strip().lower(); p = _json_obj(payload_json, {})
+    if action == "login_status": return sieweb_login_status()
+    if action == "resolve_class_context": return sieweb_resolve_class_context(str(p["section"]), int(p["period"]), str(p.get("course_code", "05")), p.get("id_ambito"))
+    if action == "gradebook": return sieweb_get_gradebook(int(p["class_period_id"]), int(p["root_content_id"]), json.dumps(p.get("extra_params", {}), ensure_ascii=False))
+    if action == "gradebook_by_section": return sieweb_gradebook_by_section(str(p["section"]), int(p["period"]), str(p.get("course_code", "05")), p.get("id_ambito"), json.dumps(p.get("extra_params", {}), ensure_ascii=False))
+    if action == "gradebook_summary": return sieweb_gradebook_summary(int(p["class_period_id"]), int(p["root_content_id"]), json.dumps(p.get("extra_params", {}), ensure_ascii=False))
+    if action == "find_students": return sieweb_find_students(int(p["class_period_id"]), int(p["root_content_id"]), str(p["query"]), json.dumps(p.get("extra_params", {}), ensure_ascii=False))
+    if action == "find_criteria": return sieweb_find_criteria(int(p["class_period_id"]), int(p["root_content_id"]), str(p["query"]), json.dumps(p.get("extra_params", {}), ensure_ascii=False))
+    if action == "get_criteria": return sieweb_get_criteria(int(p["class_id"]), int(p["class_period_id"]), int(p["root_content_id"]), int(p.get("id_ambito", 518)), json.dumps(p.get("extra_params", {}), ensure_ascii=False))
+    if action == "upsert_criteria": return sieweb_upsert_criteria(int(p["class_id"]), json.dumps(p.get("records", []), ensure_ascii=False), json.dumps(p.get("replica", {}), ensure_ascii=False), confirmed)
+    if action == "update_grades": return sieweb_update_grades(str(p["year"]), str(p["course_code"]), int(p["class_period_id"]), int(p["period"]), json.dumps(p["section_ng"], ensure_ascii=False), json.dumps(p.get("records", []), ensure_ascii=False), str(p.get("class_name", "")), confirmed)
+    if action == "build_grade_records": return sieweb_build_grade_records(int(p["class_period_id"]), int(p["root_content_id"]), int(p["header_id"]), json.dumps(p.get("grades_by_student_code", {}), ensure_ascii=False), json.dumps(p.get("extra_params", {}), ensure_ascii=False))
+    if action == "get_conclusion": return sieweb_get_conclusion(int(p["person_id"]), int(p["class_content_id"]), str(p["ng"]))
+    if action == "get_conclusions_batch": return sieweb_get_conclusions_batch(json.dumps(p.get("targets", []), ensure_ascii=False))
+    if action == "save_conclusion": return sieweb_save_descriptive_conclusion(int(p["person_id"]), int(p["class_content_id"]), str(p["grade"]), str(p["did_well"]), str(p["needs_improvement"]), str(p["suggestion"]), confirmed)
+    if action == "save_conclusions_batch": return sieweb_save_conclusions_batch(json.dumps(p.get("records", []), ensure_ascii=False), confirmed)
+    raise ValueError(f"Acción académica SieWeb no soportada: {action}")
+
+
+@mcp.tool()
+def workflow_school(action: str, payload_json: str = "{}") -> str:
+    """Flujos Classroom↔SieWeb. action: match_roster|missing_with_sieweb_ids|missing_to_sieweb_recipients."""
+    action = action.strip().lower(); p = _json_obj(payload_json, {})
+    extra = json.dumps(p.get("extra_params", {}), ensure_ascii=False)
+    if action == "match_roster": return workflow_match_classroom_sieweb_roster(str(p["course_id"]), int(p["class_period_id"]), int(p["root_content_id"]), extra)
+    if action == "missing_with_sieweb_ids": return workflow_missing_classroom_with_sieweb_ids(str(p["course_id"]), str(p["course_work_id"]), int(p["class_period_id"]), int(p["root_content_id"]), extra)
+    if action == "missing_to_sieweb_recipients": return workflow_missing_classroom_to_sieweb_recipients(str(p["course_id"]), str(p["course_work_id"]), str(p["section"]), int(p["period"]), str(p.get("course_code", "05")), extra)
+    raise ValueError(f"Flujo escolar no soportado: {action}")
+
 def sieweb_list_messages(folder_id: int = 1, search: str = "") -> str:
     """Lista mensajes de SieWeb. folder_id=1 corresponde a la bandeja observada."""
     return _ok(sieweb.list_messages(folder_id=folder_id, search=search))
 
 
-@mcp.tool()
 def sieweb_read_message(message_id: int, folder_id: int = 1) -> str:
     """Lee el detalle completo de un mensaje de SieWeb por ID."""
     return _ok(sieweb.get_message(message_id, folder_id=folder_id))
 
 
-@mcp.tool()
 def sieweb_reply_message(
     recipient_codes: list[str],
     subject: str,
@@ -550,7 +668,6 @@ def sieweb_reply_message(
     )
 
 
-@mcp.tool()
 def sieweb_get_gradebook(
     class_period_id: int,
     root_content_id: int,
@@ -567,7 +684,6 @@ def sieweb_get_gradebook(
     )
 
 
-@mcp.tool()
 def sieweb_update_grades(
     year: str,
     course_code: str,
@@ -606,7 +722,6 @@ def sieweb_update_grades(
     )
 
 
-@mcp.tool()
 def sieweb_get_criteria(
     class_id: int,
     class_period_id: int,
@@ -627,7 +742,6 @@ def sieweb_get_criteria(
     )
 
 
-@mcp.tool()
 def sieweb_upsert_criteria(
     class_id: int,
     records_json: str,
@@ -643,13 +757,11 @@ def sieweb_upsert_criteria(
     return _ok(sieweb.upsert_criteria(class_id=class_id, records=records, replica=replica))
 
 
-@mcp.tool()
 def sieweb_login_status() -> str:
     """Inicia/valida la sesión de SieWeb y devuelve un resumen seguro sin tokens."""
     return _ok(sieweb.login())
 
 
-@mcp.tool()
 def sieweb_get_conclusion(
     person_id: int,
     class_content_id: int,
@@ -665,7 +777,6 @@ def sieweb_get_conclusion(
     )
 
 
-@mcp.tool()
 def sieweb_save_descriptive_conclusion(
     person_id: int,
     class_content_id: int,
@@ -731,12 +842,10 @@ def sieweb_save_descriptive_conclusion(
         )
     )
 
-@mcp.tool()
 def sieweb_resolve_class_context(section: str, period: int, course_code: str = "05", id_ambito: int | None = None) -> str:
     """Resuelve 2.º A/5.º A + período a ID_CLASE, ID_CLASE_PERIODO e ID_CONTENIDO de SieWeb."""
     return _ok(sieweb.resolve_class_context(section=section, period=period, course_code=course_code, id_ambito=id_ambito))
 
-@mcp.tool()
 def sieweb_gradebook_by_section(section: str, period: int, course_code: str = "05", id_ambito: int | None = None,
                                 extra_params_json: str = "{}") -> str:
     """Lee el registro usando nombres naturales de sección/período; 05=Matemática."""
@@ -750,11 +859,10 @@ def sieweb_gradebook_by_section(section: str, period: int, course_code: str = "0
     )
     return _ok({"context": ctx, "gradebook": sieweb.summarize_gradebook(gradebook)})
 
-@mcp.tool()
 def sieweb_capabilities() -> str:
     """Indica explícitamente las capacidades de CIEWEB/SIEWEB disponibles en esta versión."""
     return _ok({
-        "version": "0.6.1",
+        "version": "0.6.2",
         "messaging": {
             "list_inbox": True,
             "read_message": True,
@@ -797,7 +905,6 @@ def _resolve_sieweb_email_recipients(
     return [str(resolved[0].get("USUCOD") or "")], resolved, None
 
 
-@mcp.tool()
 def sieweb_create_email(
     subject: str,
     message: str,
@@ -829,7 +936,6 @@ def sieweb_create_email(
     })
 
 
-@mcp.tool()
 def sieweb_send_new_email(
     subject: str,
     message: str,
@@ -869,12 +975,10 @@ def sieweb_send_new_email(
     ))
 
 
-@mcp.tool()
 def sieweb_search_recipients(query: str, recipient_type: str = "any", ngs: str = "", limit: int = 30) -> str:
     """Busca destinatarios de Mensajería. recipient_type: student/alumno, family/familia, teacher/docente o any."""
     return _ok(sieweb.search_messaging_users(query=query, recipient_type=recipient_type, ngs=ngs, limit=limit))
 
-@mcp.tool()
 def sieweb_send_message(recipient_codes: list[str], subject: str, html_message: str,
                         confirmed: bool = False) -> str:
     """Compatibilidad: envía un mensaje NUEVO en SieWeb. Preferir sieweb_send_new_email para nuevos correos."""
@@ -884,7 +988,6 @@ def sieweb_send_message(recipient_codes: list[str], subject: str, html_message: 
     return _ok(sieweb.send_message(recipient_codes=recipient_codes, subject=subject, html_message=html_message))
 
 
-@mcp.tool()
 def sieweb_new_message(
     subject: str,
     html_message: str,
@@ -925,32 +1028,27 @@ def sieweb_new_message(
     return _ok(sieweb.send_message(recipient_codes=codes, subject=subject, html_message=html_message))
 
 # ---------------- SieWeb ampliado ----------------
-@mcp.tool()
 def sieweb_gradebook_summary(class_period_id: int, root_content_id: int, extra_params_json: str = "{}") -> str:
     """Devuelve contexto de clase, alumnos, criterios, IDs y notas en una forma compacta."""
     extra = json.loads(extra_params_json or "{}")
     return _ok(sieweb.get_gradebook_summary(class_period_id=class_period_id, root_content_id=root_content_id, extra_params=extra))
 
-@mcp.tool()
 def sieweb_find_students(class_period_id: int, root_content_id: int, query: str, extra_params_json: str = "{}") -> str:
     """Busca alumnos en el registro de SieWeb por nombre o código."""
     extra = json.loads(extra_params_json or "{}")
     summary = sieweb.get_gradebook_summary(class_period_id=class_period_id, root_content_id=root_content_id, extra_params=extra)
     return _ok(sieweb.find_students_in_gradebook(summary, query))
 
-@mcp.tool()
 def sieweb_find_criteria(class_period_id: int, root_content_id: int, query: str, extra_params_json: str = "{}") -> str:
     """Busca competencias/capacidades/desempeños por texto o ID dentro del registro."""
     extra = json.loads(extra_params_json or "{}")
     summary = sieweb.get_gradebook_summary(class_period_id=class_period_id, root_content_id=root_content_id, extra_params=extra)
     return _ok(sieweb.find_criteria_in_gradebook(summary, query))
 
-@mcp.tool()
 def sieweb_get_conclusions_batch(targets_json: str) -> str:
     """Lee conclusiones de varios alumnos/criterios. targets=[{person_id,class_content_id,ng}]."""
     return _ok(sieweb.get_conclusions_batch(json.loads(targets_json or "[]")))
 
-@mcp.tool()
 def sieweb_save_conclusions_batch(records_json: str, confirmed: bool = False) -> str:
     """Guarda varias conclusiones B/C; cada record incluye comment ya estructurado. Requiere confirmación."""
     records = json.loads(records_json or "[]")
@@ -967,7 +1065,6 @@ def sieweb_save_conclusions_batch(records_json: str, confirmed: bool = False) ->
         return _ok({"requires_confirmation": True, "preview": records})
     return _ok(sieweb.update_conclusions_batch(records))
 
-@mcp.tool()
 def sieweb_build_grade_records(class_period_id: int, root_content_id: int, header_id: int,
                                grades_by_student_code_json: str, extra_params_json: str = "{}") -> str:
     """Construye registros de HyoClasenota/actualizar desde {codigoAlumno: nota}, sin escribir todavía."""
@@ -977,7 +1074,6 @@ def sieweb_build_grade_records(class_period_id: int, root_content_id: int, heade
     return _ok(sieweb.build_grade_records(summary, header_id=header_id, grades_by_student_code={str(k): str(v) for k,v in grade_map.items()}))
 
 # ---------------- Flujos Classroom <-> SieWeb ----------------
-@mcp.tool()
 def workflow_match_classroom_sieweb_roster(course_id: str, class_period_id: int, root_content_id: int,
                                            extra_params_json: str = "{}") -> str:
     """Cruza alumnos de Classroom con SieWeb por el código del correo institucional (antes de @) vs alucod."""
@@ -998,7 +1094,6 @@ def workflow_match_classroom_sieweb_roster(course_id: str, class_period_id: int,
     unmatched_sieweb = [{k:s.get(k) for k in ("idPersona","alucod","nomcomp","ngs","nemo","numord")} for s in summary.get("students") or [] if str(s.get("alucod") or "") not in matched_codes]
     return _ok({"matched": matched, "unmatched_classroom": unmatched_classroom, "unmatched_sieweb": unmatched_sieweb, "counts": {"matched": len(matched), "classroom_only": len(unmatched_classroom), "sieweb_only": len(unmatched_sieweb)}})
 
-@mcp.tool()
 def workflow_missing_classroom_with_sieweb_ids(course_id: str, course_work_id: str,
                                                class_period_id: int, root_content_id: int,
                                                extra_params_json: str = "{}") -> str:
@@ -1016,7 +1111,6 @@ def workflow_missing_classroom_with_sieweb_ids(course_id: str, course_work_id: s
     return _ok({"missing": out, "count": len(out), "matched_to_sieweb": sum(1 for x in out if x["sieweb"])})
 
 
-@mcp.tool()
 def workflow_missing_classroom_to_sieweb_recipients(course_id: str, course_work_id: str,
                                                      section: str, period: int,
                                                      course_code: str = "05",
