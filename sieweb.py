@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html as html_lib
 import json
 import unicodedata
 import uuid
@@ -27,7 +28,7 @@ class SieWebClient:
         self.session.headers.update(
             {
                 "Accept": "application/json, text/plain, */*",
-                "User-Agent": "Mozilla/5.0 Santa-Rita-Escolar-MCP/0.6.0",
+                "User-Agent": "Mozilla/5.0 Santa-Rita-Escolar-MCP/0.6.1",
                 "X-Requested-With": "XMLHttpRequest",
                 "Cache-Control": "no-cache",
                 "Pragma": "no-cache",
@@ -427,32 +428,84 @@ class SieWebClient:
         candidates = self.search_messaging_users(query=expected, recipient_type="student", limit=10)
         return next((r for r in candidates if str(r.get("USUCOD") or "") == expected), None)
 
+    @staticmethod
+    def _plain_text_to_html(text: str) -> str:
+        """Convierte texto plano a HTML simple y seguro para el editor de SieWeb."""
+        escaped = html_lib.escape(str(text or ""))
+        paragraphs = [part.strip() for part in escaped.replace("\r\n", "\n").split("\n\n") if part.strip()]
+        if not paragraphs:
+            return "<p></p>"
+        return "\n".join(f"<p>{p.replace(chr(10), '<br>')}</p>" for p in paragraphs)
+
+    def compose_message(
+        self,
+        *,
+        recipient_codes: list[str],
+        subject: str,
+        html_message: str = "",
+        plain_text: str = "",
+    ) -> dict[str, Any]:
+        """Construye un correo NUEVO con el payload real observado en SieWeb.
+
+        No necesita idEdition ni response porque no es una respuesta a un hilo.
+        SieWeb crea el registro definitivo cuando se llama a enviarMensaje.
+        """
+        clean_codes = []
+        seen = set()
+        for code in recipient_codes:
+            c = str(code or "").strip()
+            if c and c not in seen:
+                clean_codes.append(c)
+                seen.add(c)
+        clean_subject = str(subject or "").strip()
+        if not clean_codes:
+            raise SieWebError("El correo nuevo necesita al menos un destinatario USUCOD.")
+        if not clean_subject:
+            raise SieWebError("El correo nuevo necesita un asunto.")
+        body_html = str(html_message or "").strip()
+        if not body_html:
+            body_html = self._plain_text_to_html(plain_text)
+        if not body_html.strip():
+            raise SieWebError("El correo nuevo necesita contenido.")
+        return {
+            "adjunto": [],
+            "asunto": clean_subject,
+            "fh_programado": "1970-01-01T00:00:00.000Z",
+            "mensaje": body_html,
+            "para": clean_codes,
+            "programado": False,
+        }
+
     def send_message(
         self,
         *,
         recipient_codes: list[str],
         subject: str,
-        html_message: str,
+        html_message: str = "",
+        plain_text: str = "",
     ) -> dict[str, Any]:
-        """Envía un mensaje NUEVO con el payload observado en la interfaz de SieWeb."""
-        clean_codes = [str(c).strip() for c in recipient_codes if str(c).strip()]
-        if not clean_codes:
-            raise SieWebError("El mensaje necesita al menos un destinatario USUCOD.")
-        payload = {
-            "adjunto": [],
-            "asunto": subject,
-            "fh_programado": "1970-01-01T00:00:00.000Z",
-            "mensaje": html_message,
-            "para": clean_codes,
-            "programado": False,
-        }
+        """Crea y envía un mensaje NUEVO usando HyoMensajeria/enviarMensaje."""
+        payload = self.compose_message(
+            recipient_codes=recipient_codes,
+            subject=subject,
+            html_message=html_message,
+            plain_text=plain_text,
+        )
         result = self._request(
             "POST", "/lms/api/HyoMensajeria/enviarMensaje", json=payload
         )
         body = result.get("json") or {}
         if body.get("estado") != 1:
-            raise SieWebError(f"SieWeb no confirmó el envío del mensaje: {result}")
-        return result
+            raise SieWebError(f"SieWeb no confirmó el envío del correo nuevo: {result}")
+        return {
+            "sent": True,
+            "message_id": body.get("idMensaje"),
+            "status_code": body.get("estado"),
+            "provider_message": body.get("mensaje"),
+            "recipients": payload["para"],
+            "subject": payload["asunto"],
+            "raw": result,
+        }
 
     # ---------- Calificaciones ----------
     def update_grades(

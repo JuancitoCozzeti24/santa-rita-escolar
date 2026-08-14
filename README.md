@@ -1,6 +1,36 @@
-# Santa Rita Escolar v0.6.0
+# Santa Rita Escolar v0.6.1
 
-Servidor MCP remoto para **Google Classroom + SieWeb**. Esta versión extiende la v0.5.0 para revisar archivos entregados por estudiantes, dar retroalimentación sobre esos archivos, publicar anuncios y hacer más visible el envío de mensajes nuevos por SieWeb.
+Servidor MCP remoto para **Google Classroom + SieWeb**. Esta versión extiende la v0.6.0 para revisar archivos entregados por estudiantes, dar retroalimentación sobre esos archivos, publicar anuncios y hacer más visible el envío de mensajes nuevos por SieWeb.
+
+## Correos NUEVOS en CIEWEB/SIEWEB — v0.6.1
+
+Se reforzó la mensajería para que ChatGPT no confunda **crear un correo nuevo** con **responder un hilo existente**.
+
+Herramientas explícitas:
+
+- `sieweb_capabilities`: confirma que la versión puede crear/enviar correos nuevos.
+- `sieweb_create_email`: compone un correo nuevo, resuelve destinatario por nombre/USUCOD y devuelve una vista previa sin enviarla.
+- `sieweb_send_new_email`: envía un correo nuevo real después de confirmación. No necesita `reply_to_message_id`, `idEdition` ni un hilo previo.
+
+El envío usa el endpoint observado en DevTools:
+
+`POST /lms/api/HyoMensajeria/enviarMensaje`
+
+con el payload de correo nuevo: `adjunto`, `asunto`, `fh_programado`, `mensaje`, `para`, `programado`.
+
+El directorio de destinatarios usa:
+
+`GET /lms/api/HyoUsuario/obtListaUsuariosIntranet?isMensajeria=true`
+
+Tipos observados: `004` familia, `005` alumno, `006` docente.
+
+Ejemplos:
+
+1. `Crea un correo nuevo para la familia de Sergio Caballero de 2.º A, asunto Seguimiento, con este texto. No lo envíes.`
+2. `Ahora envíalo.`
+3. `Crea y envía un correo nuevo al señor Huarachi...` (mostrará vista previa/confirmación antes de escribir).
+
+**Nota:** SieWeb no necesita una operación separada de "guardar borrador" para poder enviar un correo nuevo. El conector compone la vista previa localmente y SieWeb crea el registro definitivo al ejecutar `enviarMensaje`.
 
 ## Novedades v0.6.0
 
