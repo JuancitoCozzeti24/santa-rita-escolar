@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date, time
 from typing import Any
+from io import BytesIO
 import re
 
 import requests
@@ -15,10 +16,11 @@ class ClassroomError(RuntimeError):
 
 class ClassroomClient:
     API = "https://classroom.googleapis.com/v1"
+    DRIVE_API = "https://www.googleapis.com/drive/v3"
     TOKEN_URL = "https://oauth2.googleapis.com/token"
     TOKENINFO_URL = "https://oauth2.googleapis.com/tokeninfo"
 
-    # Conjunto suficiente para el control docente estable implementado en v0.5.0.
+    # Conjunto suficiente para el control docente estable implementado en v0.6.0.
     FULL_WRITE_SCOPES = [
         "https://www.googleapis.com/auth/classroom.courses",
         "https://www.googleapis.com/auth/classroom.rosters",
@@ -29,6 +31,8 @@ class ClassroomClient:
         "https://www.googleapis.com/auth/classroom.coursework.students",
         "https://www.googleapis.com/auth/classroom.courseworkmaterials",
         "https://www.googleapis.com/auth/classroom.guardianlinks.students",
+        # Requerido para descargar/revisar archivos entregados y crear/responder comentarios en Drive.
+        "https://www.googleapis.com/auth/drive",
     ]
 
     COURSEWORK_PATCHABLE = {
@@ -95,7 +99,7 @@ class ClassroomClient:
             "full_write_ready": all(scope in granted for scope in required),
             "note": (
                 "Crear una rúbrica desde una Google Sheet requiere además spreadsheets.readonly o spreadsheets; "
-                "v0.5.0 crea rúbricas desde criterios JSON y no exige ese scope adicional."
+                "v0.6.0 crea rúbricas desde criterios JSON y no exige ese scope adicional."
             ),
         }
 
@@ -118,6 +122,39 @@ class ClassroomClient:
             raise ClassroomError(
                 f"Classroom API {method} {path} falló ({response.status_code}): {response.text[:1600]}"
             )
+        return response.json() if response.content else {}
+
+    def _drive_response(
+        self,
+        method: str,
+        path: str,
+        *,
+        params: dict[str, Any] | None = None,
+        json: dict[str, Any] | None = None,
+    ) -> requests.Response:
+        """Llama a Google Drive usando el mismo OAuth del profesor."""
+        token = self._access_token or self._refresh_access_token()
+        headers = {"Authorization": f"Bearer {token}"}
+        url = f"{self.DRIVE_API}/{path.lstrip('/')}"
+        response = requests.request(method, url, headers=headers, params=params, json=json, timeout=60)
+        if response.status_code == 401:
+            headers["Authorization"] = f"Bearer {self._refresh_access_token()}"
+            response = requests.request(method, url, headers=headers, params=params, json=json, timeout=60)
+        if not response.ok:
+            raise ClassroomError(
+                f"Drive API {method} {path} falló ({response.status_code}): {response.text[:1600]}"
+            )
+        return response
+
+    def _drive_request(
+        self,
+        method: str,
+        path: str,
+        *,
+        params: dict[str, Any] | None = None,
+        json: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        response = self._drive_response(method, path, params=params, json=json)
         return response.json() if response.content else {}
 
     def _paginate(self, path: str, key: str, *, params: dict[str, Any] | None = None) -> list[dict[str, Any]]:
@@ -644,6 +681,311 @@ class ClassroomClient:
 
     def delete_coursework_material(self, course_id: str, material_id: str) -> dict[str, Any]:
         return self._request("DELETE", f"courses/{course_id}/courseWorkMaterials/{material_id}")
+
+    # ---------- Archivos entregados / Drive feedback ----------
+    @staticmethod
+    def _submission_attachments_from_raw(submission: dict[str, Any]) -> list[dict[str, Any]]:
+        return list((submission.get("assignmentSubmission") or {}).get("attachments") or [])
+
+    def list_submission_attachments(
+        self, course_id: str, course_work_id: str, submission_id: str, *, include_drive_metadata: bool = True
+    ) -> dict[str, Any]:
+        submission = self.get_submission(course_id, course_work_id, submission_id)
+        attachments = self._submission_attachments_from_raw(submission)
+        out: list[dict[str, Any]] = []
+        for idx, attachment in enumerate(attachments):
+            row: dict[str, Any] = {"index": idx, "attachment": attachment}
+            drive = attachment.get("driveFile") or {}
+            if drive.get("id") and include_drive_metadata:
+                try:
+                    row["drive_metadata"] = self.get_drive_file_metadata(str(drive["id"]))
+                except ClassroomError as exc:
+                    row["drive_metadata_error"] = str(exc)
+            out.append(row)
+        return {
+            "submission": self._compact_submission(submission),
+            "attachments": out,
+            "count": len(out),
+        }
+
+    def _submission_attachment(
+        self, course_id: str, course_work_id: str, submission_id: str, attachment_index: int
+    ) -> dict[str, Any]:
+        submission = self.get_submission(course_id, course_work_id, submission_id)
+        attachments = self._submission_attachments_from_raw(submission)
+        if not attachments:
+            raise ClassroomError("La entrega no tiene archivos adjuntos.")
+        if attachment_index < 0 or attachment_index >= len(attachments):
+            raise ClassroomError(
+                f"attachment_index fuera de rango. La entrega tiene {len(attachments)} adjunto(s), índices 0..{len(attachments)-1}."
+            )
+        return attachments[attachment_index]
+
+    def get_drive_file_metadata(self, file_id: str) -> dict[str, Any]:
+        return self._drive_request(
+            "GET",
+            f"files/{file_id}",
+            params={
+                "fields": (
+                    "id,name,mimeType,size,webViewLink,webContentLink,modifiedTime,createdTime,"
+                    "capabilities(canDownload,canComment,canEdit),owners(displayName,emailAddress)"
+                )
+            },
+        )
+
+    @staticmethod
+    def _google_export_mime(mime_type: str) -> str:
+        mapping = {
+            "application/vnd.google-apps.document": "text/plain",
+            "application/vnd.google-apps.spreadsheet": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "application/vnd.google-apps.presentation": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            "application/vnd.google-apps.drawing": "application/pdf",
+        }
+        return mapping.get(mime_type, "application/pdf")
+
+    def download_drive_file(self, file_id: str) -> tuple[dict[str, Any], bytes, str]:
+        meta = self.get_drive_file_metadata(file_id)
+        caps = meta.get("capabilities") or {}
+        if caps.get("canDownload") is False:
+            raise ClassroomError("Google Drive indica que este archivo no se puede descargar/exportar.")
+        mime_type = str(meta.get("mimeType") or "application/octet-stream")
+        if mime_type.startswith("application/vnd.google-apps."):
+            export_mime = self._google_export_mime(mime_type)
+            response = self._drive_response(
+                "GET", f"files/{file_id}/export", params={"mimeType": export_mime}
+            )
+            return meta, response.content, export_mime
+        response = self._drive_response("GET", f"files/{file_id}", params={"alt": "media"})
+        actual = (response.headers.get("content-type") or mime_type).split(";")[0].strip()
+        return meta, response.content, actual
+
+    @staticmethod
+    def _truncate_text(text: str, max_chars: int) -> tuple[str, bool]:
+        max_chars = max(1000, min(int(max_chars), 120000))
+        if len(text) <= max_chars:
+            return text, False
+        return text[:max_chars] + "\n\n[... contenido truncado ...]", True
+
+    def inspect_submission_attachment_text(
+        self,
+        course_id: str,
+        course_work_id: str,
+        submission_id: str,
+        attachment_index: int = 0,
+        *,
+        max_chars: int = 50000,
+    ) -> dict[str, Any]:
+        attachment = self._submission_attachment(course_id, course_work_id, submission_id, attachment_index)
+        drive = attachment.get("driveFile") or {}
+        if not drive.get("id"):
+            return {
+                "attachment_index": attachment_index,
+                "attachment": attachment,
+                "extractable": False,
+                "note": "Este adjunto no es un archivo de Google Drive; usa su URL/tipo directamente.",
+            }
+        file_id = str(drive["id"])
+        meta, data, mime_type = self.download_drive_file(file_id)
+        name = str(meta.get("name") or drive.get("title") or "")
+        text = ""
+        parser = ""
+
+        try:
+            if mime_type == "text/plain" or mime_type.startswith("text/") or mime_type in {
+                "application/json", "application/xml", "application/javascript"
+            }:
+                text = data.decode("utf-8", errors="replace")
+                parser = "text"
+            elif mime_type == "application/pdf" or name.lower().endswith(".pdf"):
+                import fitz
+                doc = fitz.open(stream=data, filetype="pdf")
+                text = "\n\n".join(page.get_text("text") for page in doc)
+                parser = "pymupdf"
+            elif mime_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document" or name.lower().endswith(".docx"):
+                from docx import Document
+                doc = Document(BytesIO(data))
+                chunks = [p.text for p in doc.paragraphs if p.text]
+                for table in doc.tables:
+                    for row in table.rows:
+                        chunks.append("\t".join(cell.text for cell in row.cells))
+                text = "\n".join(chunks)
+                parser = "python-docx"
+            elif mime_type == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" or name.lower().endswith(".xlsx"):
+                from openpyxl import load_workbook
+                wb = load_workbook(BytesIO(data), read_only=True, data_only=True)
+                chunks: list[str] = []
+                for ws in wb.worksheets:
+                    chunks.append(f"### Hoja: {ws.title}")
+                    for row in ws.iter_rows(values_only=True):
+                        vals = ["" if v is None else str(v) for v in row]
+                        if any(vals):
+                            chunks.append("\t".join(vals))
+                text = "\n".join(chunks)
+                parser = "openpyxl"
+            elif mime_type == "application/vnd.openxmlformats-officedocument.presentationml.presentation" or name.lower().endswith(".pptx"):
+                from pptx import Presentation
+                prs = Presentation(BytesIO(data))
+                chunks = []
+                for i, slide in enumerate(prs.slides, 1):
+                    chunks.append(f"### Diapositiva {i}")
+                    for shape in slide.shapes:
+                        if hasattr(shape, "text") and shape.text:
+                            chunks.append(shape.text)
+                text = "\n".join(chunks)
+                parser = "python-pptx"
+            elif mime_type.startswith("image/"):
+                return {
+                    "attachment_index": attachment_index,
+                    "file": meta,
+                    "mime_type": mime_type,
+                    "extractable": False,
+                    "visual_review_available": True,
+                    "note": "Es una imagen. Usa classroom_attachment_image para que ChatGPT la revise visualmente.",
+                }
+            else:
+                # Último intento seguro para archivos de texto desconocidos.
+                try:
+                    text = data.decode("utf-8", errors="strict")
+                    parser = "utf8-fallback"
+                except UnicodeDecodeError:
+                    return {
+                        "attachment_index": attachment_index,
+                        "file": meta,
+                        "mime_type": mime_type,
+                        "extractable": False,
+                        "note": "Formato binario no soportado para extracción de texto. Puede abrirse mediante el enlace de Drive.",
+                    }
+        except Exception as exc:
+            raise ClassroomError(f"No pude extraer el contenido de {name or file_id}: {exc}") from exc
+
+        text, truncated = self._truncate_text(text, max_chars)
+        return {
+            "attachment_index": attachment_index,
+            "file": meta,
+            "mime_type": mime_type,
+            "parser": parser,
+            "extractable": True,
+            "truncated": truncated,
+            "extracted_text": text,
+            "note": (
+                "Si el PDF es escaneado y extracted_text queda vacío, usa classroom_attachment_image por página para revisión visual."
+            ),
+        }
+
+    def render_submission_attachment_image(
+        self,
+        course_id: str,
+        course_work_id: str,
+        submission_id: str,
+        attachment_index: int = 0,
+        *,
+        page: int = 1,
+        max_side: int = 1800,
+    ) -> tuple[dict[str, Any], bytes]:
+        attachment = self._submission_attachment(course_id, course_work_id, submission_id, attachment_index)
+        drive = attachment.get("driveFile") or {}
+        if not drive.get("id"):
+            raise ClassroomError("El adjunto seleccionado no es un archivo de Drive renderizable.")
+        meta, data, mime_type = self.download_drive_file(str(drive["id"]))
+        max_side = max(400, min(int(max_side), 2400))
+        info = {
+            "attachment_index": attachment_index,
+            "file": meta,
+            "mime_type": mime_type,
+            "requested_page": page,
+        }
+
+        from PIL import Image as PILImage
+        from io import BytesIO as _BytesIO
+        out = _BytesIO()
+        if mime_type.startswith("image/"):
+            img = PILImage.open(_BytesIO(data)).convert("RGB")
+            img.thumbnail((max_side, max_side))
+            img.save(out, format="PNG", optimize=True)
+            info["rendered_page"] = 1
+            info["page_count"] = 1
+            return info, out.getvalue()
+
+        if mime_type == "application/pdf" or str(meta.get("name") or "").lower().endswith(".pdf"):
+            import fitz
+            doc = fitz.open(stream=data, filetype="pdf")
+            if page < 1 or page > doc.page_count:
+                raise ClassroomError(f"Página fuera de rango. El PDF tiene {doc.page_count} página(s).")
+            p = doc.load_page(page - 1)
+            rect = p.rect
+            scale = min(max_side / max(rect.width, rect.height), 3.0)
+            pix = p.get_pixmap(matrix=fitz.Matrix(scale, scale), alpha=False)
+            info["rendered_page"] = page
+            info["page_count"] = doc.page_count
+            return info, pix.tobytes("png")
+
+        raise ClassroomError(
+            f"El archivo {meta.get('name') or ''} ({mime_type}) no puede renderizarse directamente como imagen. "
+            "Usa inspect_text para DOCX/XLSX/PPTX o abre el enlace de Drive."
+        )
+
+    def create_drive_comment(self, file_id: str, content: str) -> dict[str, Any]:
+        content = str(content or "").strip()
+        if not content:
+            raise ClassroomError("El comentario no puede estar vacío.")
+        return self._drive_request(
+            "POST",
+            f"files/{file_id}/comments",
+            params={"fields": "id,content,htmlContent,createdTime,modifiedTime,resolved,author(displayName,photoLink)"},
+            json={"content": content},
+        )
+
+    def comment_on_submission_attachment(
+        self,
+        course_id: str,
+        course_work_id: str,
+        submission_id: str,
+        attachment_index: int,
+        content: str,
+    ) -> dict[str, Any]:
+        attachment = self._submission_attachment(course_id, course_work_id, submission_id, attachment_index)
+        drive = attachment.get("driveFile") or {}
+        if not drive.get("id"):
+            raise ClassroomError("Solo se pueden crear comentarios de Drive en adjuntos driveFile.")
+        result = self.create_drive_comment(str(drive["id"]), content)
+        return {
+            "channel": "google_drive_file_comment",
+            "not_classroom_private_comment": True,
+            "file_id": drive["id"],
+            "comment": result,
+        }
+
+    def list_drive_comments(self, file_id: str, include_deleted: bool = False) -> dict[str, Any]:
+        return self._drive_request(
+            "GET",
+            f"files/{file_id}/comments",
+            params={
+                "includeDeleted": str(bool(include_deleted)).lower(),
+                "pageSize": 100,
+                "fields": (
+                    "nextPageToken,comments(id,content,htmlContent,createdTime,modifiedTime,resolved,deleted,"
+                    "author(displayName,photoLink),replies(id,content,htmlContent,createdTime,modifiedTime,deleted,author(displayName,photoLink)))"
+                ),
+            },
+        )
+
+    def reply_drive_comment(
+        self, file_id: str, comment_id: str, content: str = "", *, resolve: bool = False
+    ) -> dict[str, Any]:
+        content = str(content or "").strip()
+        if not content and not resolve:
+            raise ClassroomError("La respuesta no puede estar vacía.")
+        body: dict[str, Any] = {}
+        if content:
+            body["content"] = content
+        if resolve:
+            body["action"] = "resolve"
+        return self._drive_request(
+            "POST",
+            f"files/{file_id}/comments/{comment_id}/replies",
+            params={"fields": "id,content,htmlContent,createdTime,modifiedTime,deleted,author(displayName,photoLink),action"},
+            json=body,
+        )
 
     # ---------- Student submissions / grading ----------
     def list_submissions(self, course_id: str, course_work_id: str) -> list[dict[str, Any]]:

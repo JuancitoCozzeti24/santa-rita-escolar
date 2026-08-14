@@ -1,125 +1,114 @@
-# Santa Rita Escolar v0.5.0
+# Santa Rita Escolar v0.6.0
 
-Servidor MCP remoto para **Google Classroom + SieWeb**. Esta versión amplía Classroom hacia un control docente integral dentro de lo que expone la API oficial y mantiene las funciones SieWeb de v0.3.2.
+Servidor MCP remoto para **Google Classroom + SieWeb**. Esta versión extiende la v0.5.0 para revisar archivos entregados por estudiantes, dar retroalimentación sobre esos archivos, publicar anuncios y hacer más visible el envío de mensajes nuevos por SieWeb.
 
-## Diseño de herramientas
+## Novedades v0.6.0
 
-La v0.5.0 agrupa acciones por recurso (`classroom_courses`, `classroom_coursework`, `classroom_grades`, etc.) para no inundar a ChatGPT con decenas de herramientas casi idénticas. Se conservan aliases de alta frecuencia como `classroom_create_assignment`, `classroom_create_material`, `classroom_list_submissions` y `classroom_grade_submission`.
+### Revisar archivos entregados por estudiantes
 
-Todas las escrituras piden confirmación antes de ejecutarse. Las eliminaciones y el borrado de nota se marcan como destructivos.
+La herramienta `classroom_submission_files` permite:
 
-## Classroom — cobertura v0.5.0
+- `list`: listar adjuntos de una entrega y metadatos de Drive;
+- `inspect_text`: extraer texto de PDF, DOCX, XLSX, PPTX y archivos de texto;
+- `comment`: crear un comentario en el archivo de Google Drive entregado;
+- `list_comments`: listar comentarios del archivo;
+- `reply_comment`: responder un comentario del archivo;
+- `resolve_comment`: responder y resolver un comentario del archivo.
 
-### Cursos y configuración
-- Listar, leer, crear, actualizar y eliminar cursos.
-- Aliases de curso.
-- Leer `gradebookSettings`.
-- Leer y actualizar períodos de calificación cuando la cuenta/licencia sea elegible.
+La herramienta `classroom_attachment_image` devuelve a ChatGPT una **imagen real** para revisión visual:
 
-### Personas
-- Listar/leer/agregar/quitar alumnos.
-- Listar/leer/agregar/quitar docentes.
-- Crear/listar/aceptar/cancelar invitaciones al curso.
-- Leer perfiles y comprobar capacidades elegibles del usuario.
-- Listar/leer/eliminar tutores (guardians).
-- Crear/listar/leer/cancelar invitaciones de tutor.
+- fotos JPG/PNG/etc.;
+- una página concreta de un PDF.
 
-### Stream / Trabajo de clase
-- Temas: listar, crear, renombrar y borrar.
-- Anuncios: listar, leer, crear/publicar/programar, editar, cambiar destinatarios y borrar.
-- Tareas y preguntas: listar, leer, crear/publicar/programar, editar, cambiar destinatarios y borrar.
-- Tipos soportados: `ASSIGNMENT`, `SHORT_ANSWER_QUESTION`, `MULTIPLE_CHOICE_QUESTION`.
-- Material de clase (`CourseWorkMaterial`): listar, leer, crear/publicar/programar, editar y borrar.
-- Adjuntos normales al crear: archivos de Google Drive y enlaces web, máximo 20 por publicación según Classroom.
-- En tareas, Drive acepta `VIEW`, `EDIT` y `STUDENT_COPY`; en anuncios/material de clase se usa `VIEW`.
+Esto permite flujos como:
 
-### Entregas y CALIFICACIONES
-- Listar y leer `StudentSubmission`.
-- Estado, retraso, fecha de actualización, historial y archivos/submisión cuando Google los devuelve.
-- Leer `draftGrade` (nota provisional, solo docente).
-- Leer `assignedGrade` (nota asignada/visible al alumno).
-- Poner/cambiar **nota provisional** sin publicarla al alumno.
-- Poner/cambiar **nota final** (`draftGrade` + `assignedGrade`).
-- **Calificar y devolver** en una sola orden.
-- **Devolver sin cambiar la nota** existente; opcionalmente finaliza primero la nota provisional para imitar el flujo de la UI.
-- Calificación por lote y devolución por lote.
-- Intento seguro de **quitar nota** usando FieldMask; si Google rechaza el vaciado, se devuelve un error explícito y no se sustituye por otra acción destructiva.
-- Detectar alumnos pendientes y generar progreso por estudiante.
-- Diagnóstico `associatedWithDeveloper` antes de intentar editar/calificar/devolver una tarea.
+1. listar entregas;
+2. seleccionar la entrega de un alumno;
+3. leer su DOCX/PDF o mirar su foto/PDF escaneado;
+4. redactar retroalimentación;
+5. colocar esa retroalimentación como comentario del archivo de Drive o enviarla por SieWeb;
+6. opcionalmente poner/cambiar la nota y devolver la entrega.
 
-### Rúbricas
-- Listar, leer, crear, editar y borrar rúbricas cuando Google/licencia/proyecto lo permitan.
-- Leer `draftRubricGrades` / `assignedRubricGrades` desde entregas.
-- La API oficial **no permite escribir los puntajes por criterio** de una rúbrica.
+### Anuncios en el tablón
 
-### Grupos de estudiantes
-- Listar, crear, renombrar y borrar grupos.
-- Listar, agregar y quitar miembros.
-- Algunas cuentas pueden requerir elegibilidad/licencia o Preview Version.
+Además de `classroom_announcements`, existe el alias explícito `classroom_create_announcement` para publicar/programar anuncios y adjuntar archivos de Drive o enlaces al crearlos.
 
-## Adjuntos: formato JSON
+### Mensajes NUEVOS en SieWeb
 
-```json
-[
-  {"type":"drive","url":"https://drive.google.com/file/d/ID/view","share_mode":"VIEW"},
-  {"type":"link","url":"https://example.com/recurso"}
-]
-```
+Además de `sieweb_send_message`, existe `sieweb_new_message`. Puede:
 
-Si el usuario nombra un archivo de Drive sin ID/URL, ChatGPT debe resolverlo primero con su conector Google Drive y pasar luego el ID/URL a Santa Rita Escolar.
+- recibir `recipient_codes` (USUCOD) directamente;
+- o buscar un destinatario por `recipient_query`, tipo y salón;
+- mostrar vista previa;
+- enviar el mensaje nuevo tras confirmación.
 
-## Scopes Google recomendados
+No necesita que exista un mensaje previo ni un hilo de respuesta.
 
-La acción `classroom_google_auth_status` comprueba estos permisos sin revelar tokens:
+## Comentarios: diferencia importante
 
-- `https://www.googleapis.com/auth/classroom.courses`
-- `https://www.googleapis.com/auth/classroom.rosters`
-- `https://www.googleapis.com/auth/classroom.profile.emails`
-- `https://www.googleapis.com/auth/classroom.profile.photos`
-- `https://www.googleapis.com/auth/classroom.topics`
-- `https://www.googleapis.com/auth/classroom.announcements`
-- `https://www.googleapis.com/auth/classroom.coursework.students`
-- `https://www.googleapis.com/auth/classroom.courseworkmaterials`
-- `https://www.googleapis.com/auth/classroom.guardianlinks.students`
+Google **no expone mediante la API oficial de Classroom**:
 
-Si el refresh token actual no contiene alguno, el diagnóstico lo mostrará y habrá que emitir un refresh token nuevo con el conjunto ampliado de scopes.
+- comentarios privados nativos de una entrega (`StudentSubmission`);
+- comentarios nativos en el tablón/anuncios.
 
-## Límites reales de la API oficial
+Por eso v0.6.0 no simula esos comentarios con otro recurso. Para retroalimentación real ofrece:
 
-1. **Comentarios privados de entregas:** Classroom no expone actualmente esos comentarios mediante la API oficial. No se simulan con anuncios ni mensajes.
-2. **Tareas creadas fuera de este proyecto OAuth:** Google puede impedir editar/eliminar el CourseWork o modificar/devolver sus StudentSubmissions. Usa `classroom_coursework(action="diagnose", ...)` antes de escribir.
-3. **Rúbricas:** los puntajes por criterio de una entrega son de solo lectura mediante API.
-4. **Nota global calculada del curso:** no se expone como un campo general editable; el conector puede calcular métricas a partir de las notas disponibles, pero no fingirá modificar una nota global inexistente en la API.
-5. **Adjuntos normales después de crear una tarea:** la lista `materials` no es un campo patchable del `CourseWork` estable. Los AddOnAttachments son otra arquitectura de Classroom Add-ons y requieren configuración/scopes específicos.
-6. **Push notifications:** Classroom soporta `registrations` hacia Google Cloud Pub/Sub, pero este paquete no activa ese subsistema porque requiere un topic Pub/Sub y un consumidor adicional.
-7. **Funciones con licencia/elegibilidad:** rúbricas, períodos de calificación y grupos pueden depender de licencia/capacidad del usuario. `classroom_profiles_guardians(action="check_capability", ...)` permite comprobar capacidades cuando el endpoint Preview esté disponible.
+- comentarios en el **archivo de Drive** entregado;
+- mensajes privados por **SieWeb**;
+- calificación/devolución mediante Classroom.
 
-## SieWeb
+Si un estudiante comenta dentro del archivo de Drive entregado, el conector sí puede listar ese comentario y responderlo. Si comenta usando el cuadro de comentarios nativo de Classroom, Google no ofrece un endpoint oficial para leer su texto o responderlo.
 
-Se conserva la integración ya capturada para:
-- login automático remoto;
-- mensajería y destinatarios;
-- registro/notas;
-- criterios/desempeños;
-- conclusiones descriptivas;
-- resolución natural de 2.º A y 5.º A 2026 y períodos;
-- flujos Classroom ↔ SieWeb existentes.
+## Scope Google adicional
+
+La revisión general de archivos entregados y los comentarios en Drive requieren que el refresh token incluya:
+
+`https://www.googleapis.com/auth/drive`
+
+La herramienta `classroom_google_auth_status` indicará si falta. Si tu refresh token actual fue creado antes de v0.6.0, probablemente debas regenerarlo una vez con este scope incluido.
+
+## Formatos de archivo revisables
+
+- PDF: extracción de texto; si es escaneado, revisión visual página por página.
+- Imágenes: revisión visual.
+- DOCX: texto y tablas.
+- XLSX: hojas y valores.
+- PPTX: texto de las diapositivas.
+- TXT/CSV/JSON/XML/HTML y otros textos UTF-8.
+
+Para archivos binarios no soportados, se devuelve el enlace/metadatos sin inventar contenido.
+
+## Classroom — otras capacidades conservadas
+
+- cursos, alumnos, docentes e invitaciones;
+- temas;
+- tareas/preguntas/materiales/anuncios;
+- adjuntos Drive/link al crear publicaciones;
+- entregas;
+- notas provisionales/finales;
+- cambio o intento seguro de quitar notas;
+- devolución individual/lote;
+- rúbricas (con límites oficiales);
+- grupos de estudiantes;
+- tutores y capacidades elegibles;
+- diagnóstico `associatedWithDeveloper`.
 
 ## Pruebas recomendadas después del deploy
 
-1. `Verifica mis scopes y capacidades de Classroom. No modifiques nada.`
-2. `Lista mis cursos activos y dime cuántos alumnos tiene cada uno. No modifiques nada.`
-3. `Diagnostica si esta tarea puede ser editada, calificada y devuelta por el complemento. No modifiques nada.`
-4. En una tarea de prueba creada por Santa Rita Escolar: poner una nota provisional, comprobarla, convertirla a final y devolverla.
-5. Crear un Material de clase con título, descripción y un archivo de Drive de prueba.
+1. `Ejecuta classroom_capabilities y dime la versión.` → debe ser `0.6.0`.
+2. `Verifica mis scopes de Google. No modifiques nada.`
+3. `Crea una vista previa de un anuncio para 2.º A; no publiques todavía.`
+4. `Lista los archivos adjuntos de la entrega de [alumno] en [tarea].`
+5. Para DOCX/PDF con texto: `Revisa el adjunto 0 y extrae su contenido.`
+6. Para foto/PDF escaneado: `Abre visualmente el adjunto 0, página 1.`
+7. Después de revisar: `Prepara un comentario para el archivo, pero no lo publiques todavía.`
+8. `Busca al alumno en SieWeb y prepara un mensaje nuevo con la retroalimentación; no lo envíes todavía.`
 
-## Referencias oficiales auditadas para v0.5.0
+## Referencias oficiales auditadas
 
 - Classroom REST: https://developers.google.com/workspace/classroom/reference/rest
-- Calificaciones: https://developers.google.com/workspace/classroom/guides/classroom-api/manage-grades
-- StudentSubmission.patch: https://developers.google.com/workspace/classroom/reference/rest/v1/courses.courseWork.studentSubmissions/patch
-- StudentSubmission.return: https://developers.google.com/workspace/classroom/reference/rest/v1/courses.courseWork.studentSubmissions/return
-- Rúbricas: https://developers.google.com/workspace/classroom/rubrics/limitations
-- Períodos de calificación: https://developers.google.com/workspace/classroom/grading-periods/manage-grading-periods
-- Tutores: https://developers.google.com/workspace/classroom/guides/manage-guardians
-- Scopes: https://developers.google.com/workspace/classroom/guides/auth
+- Flujo de tareas y límite de comentarios: https://developers.google.com/workspace/classroom/tutorials/assignment-workflows
+- StudentSubmission attachments: https://developers.google.com/workspace/classroom/reference/rest/v1/courses.courseWork.studentSubmissions
+- Announcements: https://developers.google.com/workspace/classroom/reference/rest/v1/courses.announcements
+- Drive downloads/exports: https://developers.google.com/workspace/drive/api/guides/manage-downloads
+- Drive comments/replies: https://developers.google.com/workspace/drive/api/guides/manage-comments

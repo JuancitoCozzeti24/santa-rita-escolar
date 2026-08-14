@@ -4,7 +4,7 @@ import json
 from datetime import date, time
 from typing import Any
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp import FastMCP, Image
 from mcp.server.auth.settings import AuthSettings
 from pydantic import AnyHttpUrl
 
@@ -56,7 +56,7 @@ def _ok(data: Any) -> str:
     return json.dumps(data, ensure_ascii=False, default=str)
 
 
-# ---------------- Google Classroom v0.5.0 ----------------
+# ---------------- Google Classroom v0.6.0 ----------------
 def _confirmation(preview: dict[str, Any], confirmed: bool, *, destructive: bool = False) -> str | None:
     if confirmed:
         return None
@@ -80,7 +80,7 @@ def _require_confirm(action: str, payload: dict[str, Any], confirmed: bool, *, d
 def classroom_capabilities() -> str:
     """Resume el control práctico de Classroom expuesto por este conector y los límites de la API oficial."""
     return _ok({
-        "version": "0.5.0",
+        "version": "0.6.0",
         "tool_design": "Acciones agrupadas por recurso para reducir errores de selección de herramienta.",
         "implemented": {
             "courses": ["list/get/create/update/delete", "aliases", "gradebookSettings", "gradingPeriodSettings"],
@@ -95,6 +95,11 @@ def classroom_capabilities() -> str:
             ],
             "materials": ["list/get/create/publish/schedule/update/delete", "Drive/link attachments on create"],
             "submissions": ["list/get", "state", "late", "draft/assigned grades", "rubric grades", "history", "missing/progress"],
+            "submission_attachments": [
+                "list Drive/link attachments", "download/export teacher-accessible Drive files",
+                "extract text from PDF/DOCX/XLSX/PPTX/text", "render image/PDF pages for visual review",
+                "create/list/reply/resolve Google Drive file comments"
+            ],
             "grading": [
                 "set draft grade", "set final grade", "grade and return", "batch grade", "return one/many",
                 "attempt safe grade clearing", "diagnose write eligibility",
@@ -104,7 +109,8 @@ def classroom_capabilities() -> str:
             "profiles_guardians": ["user profile", "capability checks", "guardians list/get/delete", "guardian invitations list/get/create/cancel"],
         },
         "official_api_limits": {
-            "private_submission_comments": "No hay endpoint oficial para leer o escribir comentarios privados de una entrega.",
+            "private_submission_comments": "No hay endpoint oficial para leer o escribir comentarios privados nativos de una entrega. v0.6.0 ofrece comentarios en el archivo de Drive como canal de retroalimentación alternativo.",
+            "stream_announcement_comments": "No hay endpoint oficial de Classroom para leer/escribir comentarios del tablón/anuncios. Sí se pueden crear, editar, programar y borrar anuncios.",
             "overall_course_grade": "La API no expone la nota global calculada como campo editable; puede calcularse localmente con datos disponibles.",
             "rubric_criterion_scores": "Los puntajes por criterio pueden leerse en StudentSubmission, pero no escribirse mediante la API.",
             "associated_project_rule": "Editar/eliminar CourseWork y modificar/devolver StudentSubmissions puede exigir que el trabajo haya sido creado por el mismo proyecto OAuth.",
@@ -112,6 +118,7 @@ def classroom_capabilities() -> str:
             "grade_clear": "Google documenta actualización de draftGrade/assignedGrade, no un ejemplo explícito de borrado; el conector intenta FieldMask y si falla lo reporta sin inventar una alternativa.",
             "push_notifications": "La API soporta registrations hacia Google Cloud Pub/Sub, pero este paquete no activa ese flujo porque requiere configurar un topic Pub/Sub y un consumidor adicional.",
             "classroom_addon_attachments": "Los AddOnAttachments son una arquitectura de Classroom Add-ons distinta de los adjuntos Drive/link normales y requieren scopes/tokens específicos; no se habilitan en este MCP general.",
+            "drive_scope": "Para revisar cualquier archivo entregado y crear comentarios en esos archivos, el refresh token debe incluir https://www.googleapis.com/auth/drive.",
         },
     })
 
@@ -340,6 +347,115 @@ def classroom_profiles_guardians(action: str, student_id: str = "", guardian_id:
     raise ValueError(f"Acción de perfiles/tutores no soportada: {action}")
 
 # ---- aliases de alta frecuencia para compatibilidad y selección robusta ----
+
+@mcp.tool()
+def classroom_create_announcement(
+    course_id: str,
+    text: str,
+    materials_json: str = "[]",
+    publish: bool = False,
+    scheduled_time: str | None = None,
+    student_ids_json: str = "[]",
+    confirmed: bool = False,
+) -> str:
+    """Crea una publicación de ANUNCIO en el tablón de Classroom. Admite archivos de Drive/enlaces al crear. Requiere confirmación."""
+    materials = _json_obj(materials_json, [])
+    student_ids = _json_obj(student_ids_json, [])
+    preview = {
+        "course_id": course_id,
+        "text": text,
+        "materials": materials,
+        "publish": publish,
+        "scheduled_time": scheduled_time,
+        "student_ids": student_ids,
+    }
+    pending = _confirmation(preview, confirmed)
+    if pending:
+        return pending
+    return _ok(classroom.create_announcement(
+        course_id,
+        text=text,
+        publish=publish,
+        materials=materials,
+        scheduled_time=scheduled_time,
+        student_ids=student_ids,
+    ))
+
+
+@mcp.tool()
+def classroom_submission_files(
+    action: str,
+    course_id: str,
+    course_work_id: str,
+    submission_id: str,
+    attachment_index: int = 0,
+    payload_json: str = "{}",
+    confirmed: bool = False,
+) -> str:
+    """Archivos entregados y feedback sobre el archivo. action: list|inspect_text|comment|list_comments|reply_comment|resolve_comment. Los comentarios se escriben en Google Drive, NO como comentario privado nativo de Classroom."""
+    action = action.strip().lower()
+    p = _json_obj(payload_json, {})
+    if action == "list":
+        return _ok(classroom.list_submission_attachments(
+            course_id, course_work_id, submission_id,
+            include_drive_metadata=bool(p.get("include_drive_metadata", True)),
+        ))
+    if action == "inspect_text":
+        return _ok(classroom.inspect_submission_attachment_text(
+            course_id, course_work_id, submission_id, attachment_index,
+            max_chars=int(p.get("max_chars", 50000)),
+        ))
+
+    # Operaciones de comentarios de Drive son escrituras y requieren confirmación.
+    if action in {"comment", "reply_comment", "resolve_comment"} and not confirmed:
+        return _ok({
+            "requires_confirmation": True,
+            "preview": {
+                "action": action,
+                "course_id": course_id,
+                "course_work_id": course_work_id,
+                "submission_id": submission_id,
+                "attachment_index": attachment_index,
+                "payload": p,
+                "channel": "Google Drive file comments (not Classroom private comments)",
+            },
+        })
+
+    if action == "comment":
+        return _ok(classroom.comment_on_submission_attachment(
+            course_id, course_work_id, submission_id, attachment_index, str(p["content"])
+        ))
+
+    attachment = classroom._submission_attachment(course_id, course_work_id, submission_id, attachment_index)
+    drive = attachment.get("driveFile") or {}
+    file_id = str(drive.get("id") or "")
+    if not file_id:
+        raise ValueError("El adjunto seleccionado no es un archivo de Drive.")
+    if action == "list_comments":
+        return _ok(classroom.list_drive_comments(file_id, include_deleted=bool(p.get("include_deleted", False))))
+    if action == "reply_comment":
+        return _ok(classroom.reply_drive_comment(file_id, str(p["comment_id"]), str(p.get("content") or ""), resolve=False))
+    if action == "resolve_comment":
+        return _ok(classroom.reply_drive_comment(file_id, str(p["comment_id"]), str(p.get("content") or ""), resolve=True))
+    raise ValueError(f"Acción de archivos/feedback no soportada: {action}")
+
+
+@mcp.tool(structured_output=False)
+def classroom_attachment_image(
+    course_id: str,
+    course_work_id: str,
+    submission_id: str,
+    attachment_index: int = 0,
+    page: int = 1,
+    max_side: int = 1800,
+) -> tuple[str, Image]:
+    """Devuelve a ChatGPT una foto entregada por el alumno o una página renderizada de un PDF para revisión visual."""
+    info, png = classroom.render_submission_attachment_image(
+        course_id, course_work_id, submission_id, attachment_index,
+        page=page, max_side=max_side,
+    )
+    return (_ok(info), Image(data=png, format="png"))
+
 @mcp.tool()
 def classroom_list_courses(active_only: bool = True) -> str:
     """Lista cursos activos. Alias estable de lectura."""
@@ -645,6 +761,47 @@ def sieweb_send_message(recipient_codes: list[str], subject: str, html_message: 
     if not confirmed:
         return _ok({"requires_confirmation": True, "preview": preview})
     return _ok(sieweb.send_message(recipient_codes=recipient_codes, subject=subject, html_message=html_message))
+
+
+@mcp.tool()
+def sieweb_new_message(
+    subject: str,
+    html_message: str,
+    recipient_codes: list[str] | None = None,
+    recipient_query: str = "",
+    recipient_type: str = "any",
+    ngs: str = "",
+    confirmed: bool = False,
+) -> str:
+    """Crea y envía un mensaje NUEVO en SieWeb. Puede recibir USUCOD directamente o resolver un destinatario por nombre; nunca es una respuesta a un hilo existente."""
+    codes = [str(x).strip() for x in (recipient_codes or []) if str(x).strip()]
+    resolved = []
+    if not codes and recipient_query.strip():
+        resolved = sieweb.search_messaging_users(
+            query=recipient_query, recipient_type=recipient_type, ngs=ngs, limit=20
+        )
+        if len(resolved) != 1:
+            return _ok({
+                "requires_recipient_selection": True,
+                "query": recipient_query,
+                "recipient_type": recipient_type,
+                "ngs": ngs,
+                "matches": resolved,
+                "note": "Selecciona exactamente un USUCOD o vuelve a llamar con recipient_codes.",
+            })
+        codes = [str(resolved[0].get("USUCOD") or "")]
+    if not codes:
+        raise ValueError("Debes proporcionar recipient_codes o recipient_query.")
+    preview = {
+        "recipient_codes": codes,
+        "resolved_recipients": resolved,
+        "subject": subject,
+        "html_message": html_message,
+        "type": "new_sieweb_message",
+    }
+    if not confirmed:
+        return _ok({"requires_confirmation": True, "preview": preview})
+    return _ok(sieweb.send_message(recipient_codes=codes, subject=subject, html_message=html_message))
 
 # ---------------- SieWeb ampliado ----------------
 @mcp.tool()

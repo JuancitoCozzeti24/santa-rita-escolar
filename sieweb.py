@@ -27,7 +27,7 @@ class SieWebClient:
         self.session.headers.update(
             {
                 "Accept": "application/json, text/plain, */*",
-                "User-Agent": "Mozilla/5.0 Santa-Rita-Escolar-MCP/0.3.2",
+                "User-Agent": "Mozilla/5.0 Santa-Rita-Escolar-MCP/0.6.0",
                 "X-Requested-With": "XMLHttpRequest",
                 "Cache-Control": "no-cache",
                 "Pragma": "no-cache",
