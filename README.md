@@ -1,3 +1,13 @@
+
+## v0.6.4 — destinatarios masivos por sección en SieWeb
+
+- Corrige el caso **“padres de familia de 2A y 2B”**: ya no intenta buscar esa frase como si fuera un nombre.
+- Extrae las secciones de lenguaje natural (`2A`, `2.º B`, `S2A`, etc.).
+- Obtiene alumnos `TIPCOD=005` por `NGS` y resuelve sus familias `TIPCOD=004` usando únicamente registros reales del directorio.
+- Admite coincidencia exacta, apellidos familiares abreviados y pequeñas erratas únicas, siempre con diagnóstico.
+- Deduplica familias y bloquea el envío si queda algún alumno sin resolver o una coincidencia ambigua.
+- `sieweb_create_email`, `sieweb_send_new_email` y `sieweb_messaging` heredan este comportamiento sin cambiar el endpoint real de envío.
+
 # Santa Rita Escolar v0.6.3
 
 Servidor MCP remoto para **Google Classroom + SieWeb**. Esta versión extiende la v0.6.0 para revisar archivos entregados por estudiantes, dar retroalimentación sobre esos archivos, publicar anuncios y hacer más visible el envío de mensajes nuevos por SieWeb.

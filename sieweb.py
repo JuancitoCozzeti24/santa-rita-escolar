@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import difflib
 import html as html_lib
 import json
+import re
 import unicodedata
 import uuid
 from typing import Any
@@ -28,7 +30,7 @@ class SieWebClient:
         self.session.headers.update(
             {
                 "Accept": "application/json, text/plain, */*",
-                "User-Agent": "Mozilla/5.0 Santa-Rita-Escolar-MCP/0.6.1",
+                "User-Agent": "Mozilla/5.0 Santa-Rita-Escolar-MCP/0.6.4",
                 "X-Requested-With": "XMLHttpRequest",
                 "Cache-Control": "no-cache",
                 "Pragma": "no-cache",
@@ -283,7 +285,13 @@ class SieWebClient:
             "S5A": "S5A", "5A": "S5A", "5TOA": "S5A", "5TOANOA": "S5A",
             "5GRADOA": "S5A", "QUINTOA": "S5A", "QUINTOGRADOA": "S5A",
         }
-        return aliases.get(compact, compact)
+        if compact in aliases:
+            return aliases[compact]
+        # Forma genérica para otras secciones (por ejemplo 2B, 5B).
+        m = re.fullmatch(r"S?([1-6])([A-Z])", compact)
+        if m:
+            return f"S{m.group(1)}{m.group(2)}"
+        return compact
 
     def list_classes(self, *, id_ambito: int, validar_permisos: bool = True) -> dict[str, Any]:
         """Lista cursos/clases disponibles para un ámbito (salón) de SieWeb."""
@@ -421,6 +429,167 @@ class SieWebClient:
                 out = with_ngs
         out.sort(key=lambda r: self._normalize_text(r.get("USUNOM") or ""))
         return out[: max(1, min(int(limit), 100))]
+
+    @classmethod
+    def extract_section_codes(cls, text: str) -> list[str]:
+        """Extrae secciones como 2A, 2.º B, S5A o 'segundo A' desde una frase natural."""
+        raw = cls._normalize_text(text).replace("°", "")
+        # NFKD convierte 2.º en 2.O; retirar ese marcador ordinal antes de buscar la sección.
+        raw = re.sub(r"\b([1-6])\s*\.\s*O\b", r"\1", raw)
+        found: list[str] = []
+
+        # Formas compactas comunes: 2A, 2 A, S2A, 5-B, etc.
+        for grade, letter in re.findall(r"(?:\bS)?\s*([1-6])\s*[-.]?\s*([A-Z])\b", raw):
+            code = f"S{grade}{letter}"
+            if code not in found:
+                found.append(code)
+
+        # Formas escritas frecuentes en español.
+        words = {
+            "PRIMERO": "1", "PRIMER": "1",
+            "SEGUNDO": "2",
+            "TERCERO": "3", "TERCER": "3",
+            "CUARTO": "4",
+            "QUINTO": "5",
+            "SEXTO": "6",
+        }
+        for word, grade in words.items():
+            for letter in re.findall(rf"\b{word}(?:\s+(?:ANO|GRADO|SECUNDARIA))?\s+([A-Z])\b", raw):
+                code = f"S{grade}{letter}"
+                if code not in found:
+                    found.append(code)
+        return found
+
+    @classmethod
+    def _family_match_score(cls, student_surname: str, family_name: str) -> tuple[float, str]:
+        """Puntúa una relación estudiante→familia usando solo nombres reales del directorio.
+
+        No inventa códigos. Acepta coincidencia exacta, apellido familiar como prefijo
+        (p. ej. LAMAS VERA frente a LAMAS VERA TUDELA) y pequeñas erratas únicas
+        (p. ej. ORTMAN/ORTMANN).
+        """
+        s = cls._normalize_text(student_surname)
+        f = cls._normalize_text(family_name)
+        if not s or not f:
+            return 0.0, ""
+        if s == f:
+            return 1.0, "exact"
+        st, ft = s.split(), f.split()
+        if len(ft) >= 2 and len(st) >= len(ft) and st[: len(ft)] == ft:
+            return 0.97, "family_prefix"
+        if len(st) >= 2 and len(ft) >= len(st) and ft[: len(st)] == st:
+            return 0.96, "student_prefix"
+        ratio = difflib.SequenceMatcher(None, s, f).ratio()
+        if ratio >= 0.92:
+            return float(ratio), "fuzzy"
+        return 0.0, ""
+
+    def resolve_family_recipients_by_sections(self, sections: list[str]) -> dict[str, Any]:
+        """Resuelve todos los USUCOD de familias de una o más secciones.
+
+        Flujo: identifica alumnos TIPCOD=005 por NGS y los relaciona con usuarios
+        familia TIPCOD=004 por apellidos. Devuelve diagnóstico y nunca inventa un
+        destinatario. Los códigos de familia se deduplican.
+        """
+        wanted: list[str] = []
+        for section in sections:
+            code = self._normalize_section(section)
+            if code and code not in wanted:
+                wanted.append(code)
+        if not wanted:
+            raise SieWebError("Debes indicar al menos una sección, por ejemplo 2A o 2B.")
+
+        raw = self.list_messaging_users()
+        rows = (raw.get("json") or []) if isinstance(raw, dict) else []
+
+        # Dedupe: conservar la fila de alumno que sí contiene NGS cuando existe.
+        students_by_code: dict[str, dict[str, Any]] = {}
+        families_by_code: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            tip = str(row.get("TIPCOD") or "")
+            code = str(row.get("USUCOD") or "").strip()
+            if not code:
+                continue
+            if tip == "005":
+                ngs = self._normalize_text(row.get("NGS") or "").replace(" ", "")
+                if ngs not in wanted:
+                    continue
+                prev = students_by_code.get(code)
+                if prev is None or (row.get("NGS") and not prev.get("NGS")):
+                    students_by_code[code] = dict(row)
+            elif tip == "004":
+                families_by_code.setdefault(code, dict(row))
+
+        resolved: list[dict[str, Any]] = []
+        unresolved: list[dict[str, Any]] = []
+        ambiguous: list[dict[str, Any]] = []
+
+        for student in sorted(students_by_code.values(), key=lambda r: self._normalize_text(r.get("USUNOM") or "")):
+            student_name = str(student.get("USUNOM") or "").strip()
+            surname = student_name.split(",", 1)[0].strip() if "," in student_name else " ".join(student_name.split()[:2])
+            candidates: list[tuple[float, str, dict[str, Any]]] = []
+            for family in families_by_code.values():
+                score, match_kind = self._family_match_score(surname, str(family.get("USUNOM") or ""))
+                if score > 0:
+                    candidates.append((score, match_kind, family))
+            candidates.sort(key=lambda item: item[0], reverse=True)
+            if not candidates:
+                unresolved.append({
+                    "student": student_name, "student_code": student.get("USUCOD"),
+                    "section": student.get("NGS"), "surname": surname,
+                })
+                continue
+            best_score = candidates[0][0]
+            top = [item for item in candidates if abs(item[0] - best_score) < 1e-9]
+            unique_codes = {str(item[2].get("USUCOD") or "") for item in top}
+            if len(unique_codes) != 1:
+                ambiguous.append({
+                    "student": student_name, "student_code": student.get("USUCOD"),
+                    "section": student.get("NGS"),
+                    "matches": [
+                        {"USUCOD": item[2].get("USUCOD"), "USUNOM": item[2].get("USUNOM"), "score": item[0], "match": item[1]}
+                        for item in top[:10]
+                    ],
+                })
+                continue
+            _, match_kind, family = top[0]
+            resolved.append({
+                "student": student_name,
+                "student_code": student.get("USUCOD"),
+                "section": student.get("NGS"),
+                "family_name": family.get("USUNOM"),
+                "family_code": family.get("USUCOD"),
+                "match": match_kind,
+                "score": best_score,
+            })
+
+        recipient_codes: list[str] = []
+        seen: set[str] = set()
+        for item in resolved:
+            code = str(item.get("family_code") or "").strip()
+            if code and code not in seen:
+                seen.add(code)
+                recipient_codes.append(code)
+
+        per_section: dict[str, dict[str, int]] = {}
+        for section in wanted:
+            students = [r for r in students_by_code.values() if self._normalize_text(r.get("NGS") or "").replace(" ", "") == section]
+            ok = [r for r in resolved if self._normalize_text(r.get("section") or "").replace(" ", "") == section]
+            bad = [r for r in unresolved if self._normalize_text(r.get("section") or "").replace(" ", "") == section]
+            amb = [r for r in ambiguous if self._normalize_text(r.get("section") or "").replace(" ", "") == section]
+            per_section[section] = {"students": len(students), "resolved": len(ok), "unresolved": len(bad), "ambiguous": len(amb)}
+
+        return {
+            "sections": wanted,
+            "recipient_codes": recipient_codes,
+            "recipient_count": len(recipient_codes),
+            "students_found": len(students_by_code),
+            "resolved": resolved,
+            "unresolved": unresolved,
+            "ambiguous": ambiguous,
+            "complete": bool(students_by_code) and all(per_section.get(sec, {}).get("students", 0) > 0 for sec in wanted) and not unresolved and not ambiguous,
+            "per_section": per_section,
+        }
 
     def find_student_messaging_user(self, *, alucod: str) -> dict[str, Any] | None:
         """Busca el usuario de mensajería del alumno. Solo usa A+alucod si existe realmente."""

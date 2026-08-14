@@ -61,7 +61,7 @@ def _ok(data: Any) -> str:
     return json.dumps(data, ensure_ascii=False, default=str)
 
 
-# ---------------- Google Classroom v0.6.3 ----------------
+# ---------------- Google Classroom v0.6.4 ----------------
 def _confirmation(preview: dict[str, Any], confirmed: bool, *, destructive: bool = False) -> str | None:
     if confirmed:
         return None
@@ -81,7 +81,7 @@ def _require_confirm(action: str, payload: dict[str, Any], confirmed: bool, *, d
     return _confirmation({"action": action, **payload}, confirmed, destructive=action in destructive_actions)
 
 
-# ---------------- SieWeb: herramientas explícitas de compatibilidad v0.6.3 ----------------
+# ---------------- SieWeb: herramientas explícitas de compatibilidad v0.6.4 ----------------
 # Estas herramientas se registran al inicio para que clientes que conservaron nombres de
 # versiones anteriores no reciban "Unknown tool" después de un deploy/reconexión.
 
@@ -89,7 +89,7 @@ def _require_confirm(action: str, payload: dict[str, Any], confirmed: bool, *, d
 def sieweb_capabilities() -> str:
     """Capacidades de mensajería SieWeb. Confirma lectura, respuesta y creación/envío de correos nuevos."""
     return _ok({
-        "version": "0.6.3",
+        "version": "0.6.4",
         "list_inbox": True,
         "read_message": True,
         "reply_existing_message": True,
@@ -120,7 +120,7 @@ def sieweb_read_message(message_id: int, folder_id: int = 1) -> str:
 
 @mcp.tool()
 def sieweb_search_recipients(query: str, recipient_type: str = "any", ngs: str = "", limit: int = 30) -> str:
-    """Busca destinatarios de SieWeb por nombre/código; tipos: familia, alumno, docente o any."""
+    """Busca destinatarios de SieWeb por nombre/código. Para grupos como 'padres de familia de 2A y 2B', usa recipient_type='family' y esa frase como query; el servidor resolverá las familias por sección, no por coincidencia literal."""
     return _ok(sieweb.search_messaging_users(query=query, recipient_type=recipient_type, ngs=ngs, limit=limit))
 
 
@@ -225,7 +225,7 @@ def sieweb_reply_message(
 def classroom_capabilities() -> str:
     """Resume el control práctico de Classroom expuesto por este conector y los límites de la API oficial."""
     return _ok({
-        "version": "0.6.3",
+        "version": "0.6.4",
         "tool_design": "Acciones agrupadas por recurso para reducir errores de selección de herramienta.",
         "implemented": {
             "courses": ["list/get/create/update/delete", "aliases", "gradebookSettings", "gradingPeriodSettings"],
@@ -254,7 +254,7 @@ def classroom_capabilities() -> str:
             "profiles_guardians": ["user profile", "capability checks", "guardians list/get/delete", "guardian invitations list/get/create/cancel"],
         },
         "official_api_limits": {
-            "private_submission_comments": "No hay endpoint oficial para leer o escribir comentarios privados nativos de una entrega. v0.6.3 ofrece comentarios en el archivo de Drive como canal de retroalimentación alternativo.",
+            "private_submission_comments": "No hay endpoint oficial para leer o escribir comentarios privados nativos de una entrega. v0.6.4 ofrece comentarios en el archivo de Drive como canal de retroalimentación alternativo.",
             "stream_announcement_comments": "No hay endpoint oficial de Classroom para leer/escribir comentarios del tablón/anuncios. Sí se pueden crear, editar, programar y borrar anuncios.",
             "overall_course_grade": "La API no expone la nota global calculada como campo editable; puede calcularse localmente con datos disponibles.",
             "rubric_criterion_scores": "Los puntajes por criterio pueden leerse en StudentSubmission, pero no escribirse mediante la API.",
@@ -675,7 +675,7 @@ def sieweb_messaging(action: str, payload_json: str = "{}", confirmed: bool = Fa
     action = action.strip().lower(); p = _json_obj(payload_json, {})
     if action == "capabilities":
         return _ok({
-            "version": "0.6.3",
+            "version": "0.6.4",
             "list_inbox": True, "read_message": True, "reply_existing_message": True,
             "search_recipients": True, "compose_new_email": True, "send_new_email": True,
             "new_email_requires_existing_thread": False,
@@ -1005,7 +1005,7 @@ def sieweb_gradebook_by_section(section: str, period: int, course_code: str = "0
 def sieweb_capabilities() -> str:
     """Indica explícitamente las capacidades de CIEWEB/SIEWEB disponibles en esta versión."""
     return _ok({
-        "version": "0.6.3",
+        "version": "0.6.4",
         "messaging": {
             "list_inbox": True,
             "read_message": True,
@@ -1033,6 +1033,39 @@ def _resolve_sieweb_email_recipients(
         return codes, resolved, None
     if not recipient_query.strip():
         return [], [], {"error": "Debes proporcionar recipient_codes o recipient_query."}
+    direct_type = str(recipient_type or "").strip().lower()
+    family_types = {"family", "familia", "parent", "apoderado"}
+
+    # Destinatarios grupales por sección: "padres de familia de 2A y 2B".
+    # No se busca esa frase literalmente en el directorio; se resuelven primero los alumnos
+    # por NGS y luego sus usuarios de familia TIPCOD=004.
+    sections = sieweb.extract_section_codes(recipient_query)
+    query_norm = sieweb._normalize_text(recipient_query)
+    looks_like_family_group = bool(sections) and (
+        direct_type in family_types
+        or any(word in query_norm for word in ("PADRES", "FAMILIA", "FAMILIAS", "APODERADOS"))
+    )
+    if looks_like_family_group:
+        group = sieweb.resolve_family_recipients_by_sections(sections)
+        if group.get("complete") and group.get("recipient_codes"):
+            group_resolved = [
+                {
+                    "USUCOD": item.get("family_code"),
+                    "USUNOM": item.get("family_name"),
+                    "TIPCOD": "004",
+                    "NGS": item.get("section"),
+                    "student": item.get("student"),
+                    "match": item.get("match"),
+                }
+                for item in group.get("resolved", [])
+            ]
+            return list(group["recipient_codes"]), group_resolved, None
+        return [], group.get("resolved", []), {
+            "requires_recipient_selection": True,
+            "group_resolution": group,
+            "note": "No se envía mientras exista algún alumno sin familia resuelta o una coincidencia ambigua. Revisa el diagnóstico y corrige solo esos casos.",
+        }
+
     resolved = sieweb.search_messaging_users(
         query=recipient_query, recipient_type=recipient_type, ngs=ngs, limit=30
     )
@@ -1040,8 +1073,6 @@ def _resolve_sieweb_email_recipients(
     # Si se pide familia por el nombre completo del estudiante, el directorio de familias
     # puede guardar solo los apellidos. Intentar resolver primero al estudiante y luego
     # buscar la familia por sus apellidos, sin inventar códigos ni relaciones numéricas.
-    direct_type = str(recipient_type or "").strip().lower()
-    family_types = {"family", "familia", "parent", "apoderado"}
     if len(resolved) != 1 and direct_type in family_types:
         students = sieweb.search_messaging_users(
             query=recipient_query, recipient_type="student", ngs=ngs, limit=10
@@ -1077,7 +1108,7 @@ def sieweb_create_email(
     ngs: str = "",
     message_is_html: bool = False,
 ) -> str:
-    """CREA/COMPONE un correo NUEVO de CIEWEB/SIEWEB sin enviarlo. Puede resolver el destinatario por nombre. Devuelve el payload exacto listo para enviar; no necesita un mensaje previo."""
+    """CREA/COMPONE un correo NUEVO de SieWeb sin enviarlo. Acepta un destinatario individual o grupos naturales como 'padres de familia de 2A y 2B'; para grupos resuelve alumnos por NGS y familias por el directorio real. No necesita hilo previo."""
     codes, resolved, problem = _resolve_sieweb_email_recipients(
         recipient_codes, recipient_query, recipient_type, ngs
     )
