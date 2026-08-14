@@ -39,7 +39,10 @@ mcp = FastMCP(
         "sieweb_list_messages, sieweb_read_message, sieweb_search_recipients, sieweb_create_email, "
         "sieweb_send_new_email y sieweb_reply_message. Para correo nuevo usa sieweb_create_email para preparar "
         "y sieweb_send_new_email para enviar, o sieweb_messaging action=compose_new/send_new. El envío real usa "
-        "HyoMensajeria/enviarMensaje. Para responder un hilo existente usa action=reply. No confundas correo nuevo con respuesta. Antes de cualquier escritura o acción destructiva, "
+        "HyoMensajeria/enviarMensaje. Para responder un hilo existente usa action=reply. No confundas correo nuevo con respuesta. "
+        "Para PADRES/FAMILIAS DE SECCIONES COMPLETAS (por ejemplo 2.º A y 2.º B), NO uses resolve_class_context, idClase ni idAmbito: "
+        "usa sieweb_resolve_family_group para previsualizar o sieweb_send_section_email para enviar. Esas acciones resuelven directamente "
+        "NGS -> alumnos TIPCOD=005 -> familias TIPCOD=004 desde el directorio de Mensajería. Antes de cualquier escritura o acción destructiva, "
         "resume exactamente el cambio al usuario y solo ejecuta cuando haya autorizado ese cambio. Los comentarios privados de entregas no existen en la API oficial: "
         "no simules esa acción con anuncios ni otros recursos."
     ),
@@ -89,7 +92,7 @@ def _require_confirm(action: str, payload: dict[str, Any], confirmed: bool, *, d
 def sieweb_capabilities() -> str:
     """Capacidades de mensajería SieWeb. Confirma lectura, respuesta y creación/envío de correos nuevos."""
     return _ok({
-        "version": "0.6.4",
+        "version": "0.6.5",
         "list_inbox": True,
         "read_message": True,
         "reply_existing_message": True,
@@ -98,10 +101,13 @@ def sieweb_capabilities() -> str:
         "send_new_email": True,
         "new_email_requires_existing_thread": False,
         "new_email_endpoint": "/lms/api/HyoMensajeria/enviarMensaje",
+        "resolve_families_by_section": True,
+        "send_mass_email_by_section": True,
+        "section_group_requires_class_ids": False,
         "compatibility_aliases": [
             "sieweb_list_messages", "sieweb_read_message", "sieweb_search_recipients",
             "sieweb_create_email", "sieweb_send_new_email", "sieweb_reply_message",
-            "sieweb_messaging"
+            "sieweb_resolve_family_group", "sieweb_send_section_email", "sieweb_messaging"
         ],
     })
 
@@ -120,8 +126,99 @@ def sieweb_read_message(message_id: int, folder_id: int = 1) -> str:
 
 @mcp.tool()
 def sieweb_search_recipients(query: str, recipient_type: str = "any", ngs: str = "", limit: int = 30) -> str:
-    """Busca destinatarios de SieWeb por nombre/código. Para grupos como 'padres de familia de 2A y 2B', usa recipient_type='family' y esa frase como query; el servidor resolverá las familias por sección, no por coincidencia literal."""
+    """Busca destinatarios de SieWeb por nombre/código. Si la consulta pide padres/familias de secciones completas (p. ej. 2.º A y 2.º B), resuelve el grupo directamente por NGS; NO requiere idClase ni idAmbito."""
+    sections = sieweb.extract_section_codes(query)
+    direct_type = str(recipient_type or "").strip().lower()
+    qn = sieweb._normalize_text(query)
+    family_group = bool(sections) and (
+        direct_type in {"family", "familia", "parent", "apoderado"}
+        or any(word in qn for word in ("PADRES", "FAMILIA", "FAMILIAS", "APODERADOS"))
+    )
+    if family_group:
+        group = sieweb.resolve_family_recipients_by_sections(sections)
+        return _ok({
+            "mode": "family_group_by_section",
+            "requires_class_context": False,
+            **group,
+        })
     return _ok(sieweb.search_messaging_users(query=query, recipient_type=recipient_type, ngs=ngs, limit=limit))
+
+
+@mcp.tool()
+def sieweb_resolve_family_group(sections: list[str] | None = None, query: str = "") -> str:
+    """Resuelve TODOS los destinatarios familia de una o varias secciones (ej. ['2A','2B']). Usa exclusivamente el directorio de Mensajería: NGS de alumnos TIPCOD=005 y usuarios familia TIPCOD=004. No necesita ni acepta idClase/idAmbito. No envía nada."""
+    wanted: list[str] = []
+    for item in (sections or []):
+        code = sieweb._normalize_section(str(item))
+        if code and code not in wanted:
+            wanted.append(code)
+    for code in sieweb.extract_section_codes(query):
+        if code not in wanted:
+            wanted.append(code)
+    if not wanted:
+        return _ok({
+            "error": "Indica al menos una sección, por ejemplo 2A y 2B.",
+            "requires_class_context": False,
+        })
+    group = sieweb.resolve_family_recipients_by_sections(wanted)
+    return _ok({
+        "mode": "family_group_by_section",
+        "requires_class_context": False,
+        **group,
+    })
+
+
+@mcp.tool()
+def sieweb_send_section_email(
+    sections: list[str],
+    subject: str,
+    message: str,
+    message_is_html: bool = False,
+    confirmed: bool = False,
+) -> str:
+    """Prepara o ENVÍA un correo NUEVO masivo a todas las familias de las secciones indicadas. Ej.: sections=['2A','2B']. Resuelve NGS->alumnos->familias dentro del directorio de Mensajería y jamás pide idClase/idAmbito. Con confirmed=false solo muestra la previsualización; confirmed=true envía un único mensaje masivo."""
+    group = sieweb.resolve_family_recipients_by_sections(sections)
+    if not group.get("complete") or not group.get("recipient_codes"):
+        return _ok({
+            "sent": False,
+            "requires_recipient_review": True,
+            "requires_class_context": False,
+            "group_resolution": group,
+            "note": "No se envía hasta que todas las familias estén resueltas sin ambigüedad.",
+        })
+    codes = list(group["recipient_codes"])
+    payload = sieweb.compose_message(
+        recipient_codes=codes,
+        subject=subject,
+        html_message=message if message_is_html else "",
+        plain_text="" if message_is_html else message,
+    )
+    preview = {
+        "type": "new_sieweb_section_email",
+        "sections": group.get("sections"),
+        "students_found": group.get("students_found"),
+        "unique_family_recipients": group.get("recipient_count"),
+        "per_section": group.get("per_section"),
+        "recipient_codes": codes,
+        "subject": payload["asunto"],
+        "html_message": payload["mensaje"],
+        "requires_class_context": False,
+    }
+    if not confirmed:
+        return _ok({"requires_confirmation": True, "preview": preview})
+    result = sieweb.send_message(
+        recipient_codes=codes,
+        subject=subject,
+        html_message=message if message_is_html else "",
+        plain_text="" if message_is_html else message,
+    )
+    return _ok({
+        "sent": True,
+        "sections": group.get("sections"),
+        "unique_family_recipients": group.get("recipient_count"),
+        "per_section": group.get("per_section"),
+        "sieweb_result": result,
+    })
 
 
 @mcp.tool()
@@ -225,7 +322,7 @@ def sieweb_reply_message(
 def classroom_capabilities() -> str:
     """Resume el control práctico de Classroom expuesto por este conector y los límites de la API oficial."""
     return _ok({
-        "version": "0.6.4",
+        "version": "0.6.5",
         "tool_design": "Acciones agrupadas por recurso para reducir errores de selección de herramienta.",
         "implemented": {
             "courses": ["list/get/create/update/delete", "aliases", "gradebookSettings", "gradingPeriodSettings"],
@@ -675,7 +772,7 @@ def sieweb_messaging(action: str, payload_json: str = "{}", confirmed: bool = Fa
     action = action.strip().lower(); p = _json_obj(payload_json, {})
     if action == "capabilities":
         return _ok({
-            "version": "0.6.4",
+            "version": "0.6.5",
             "list_inbox": True, "read_message": True, "reply_existing_message": True,
             "search_recipients": True, "compose_new_email": True, "send_new_email": True,
             "new_email_requires_existing_thread": False,
@@ -1005,7 +1102,7 @@ def sieweb_gradebook_by_section(section: str, period: int, course_code: str = "0
 def sieweb_capabilities() -> str:
     """Indica explícitamente las capacidades de CIEWEB/SIEWEB disponibles en esta versión."""
     return _ok({
-        "version": "0.6.4",
+        "version": "0.6.5",
         "messaging": {
             "list_inbox": True,
             "read_message": True,

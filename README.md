@@ -1,5 +1,5 @@
 
-## v0.6.4 — destinatarios masivos por sección en SieWeb
+## v0.6.5 — destinatarios masivos por sección en SieWeb
 
 - Corrige el caso **“padres de familia de 2A y 2B”**: ya no intenta buscar esa frase como si fuera un nombre.
 - Extrae las secciones de lenguaje natural (`2A`, `2.º B`, `S2A`, etc.).
@@ -168,3 +168,16 @@ El registro académico queda en `sieweb_academics`; los flujos Classroom↔SieWe
 Esta versión restaura como herramientas MCP explícitas, además del router agrupado, los nombres `sieweb_list_messages`, `sieweb_read_message`, `sieweb_search_recipients`, `sieweb_create_email`, `sieweb_send_new_email`, `sieweb_reply_message` y `sieweb_capabilities`. Así un cliente que todavía invoque un nombre de una versión anterior no obtiene `Unknown tool`.
 
 Las herramientas críticas de mensajería se registran antes de las de Classroom. `sieweb_send_new_email` crea y envía un mensaje nuevo mediante `HyoMensajeria/enviarMensaje` sin `idEdition` ni `response`; `sieweb_reply_message` se reserva para respuestas a un hilo.
+
+
+## v0.6.5 — Correos masivos por sección (SieWeb)
+
+Se corrigió la resolución de destinatarios colectivos. Para expresiones como **“padres de familia de 2.º A y 2.º B”**, el conector ya no debe intentar resolver `idClase`/`idAmbito` ni buscar la frase literalmente.
+
+Nuevas acciones explícitas:
+
+- `sieweb_resolve_family_group(sections=["2A","2B"])`: obtiene alumnos por `NGS` (TIPCOD 005), relaciona sus apellidos con usuarios familia reales (TIPCOD 004), deduplica `USUCOD` y devuelve diagnóstico. No envía nada.
+- `sieweb_send_section_email(...)`: previsualiza o envía un único correo masivo a las familias resueltas. `confirmed=false` solo prepara; `confirmed=true` envía. No usa IDs académicos de clase.
+- `sieweb_search_recipients` ahora detecta grupos por sección y usa el mismo resolutor en vez de una búsqueda literal.
+
+Seguridad: nunca inventa `USUCOD`; si queda un alumno sin familia o una coincidencia ambigua, bloquea el envío y devuelve el diagnóstico.

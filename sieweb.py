@@ -30,7 +30,7 @@ class SieWebClient:
         self.session.headers.update(
             {
                 "Accept": "application/json, text/plain, */*",
-                "User-Agent": "Mozilla/5.0 Santa-Rita-Escolar-MCP/0.6.4",
+                "User-Agent": "Mozilla/5.0 Santa-Rita-Escolar-MCP/0.6.5",
                 "X-Requested-With": "XMLHttpRequest",
                 "Cache-Control": "no-cache",
                 "Pragma": "no-cache",
@@ -580,6 +580,9 @@ class SieWebClient:
             per_section[section] = {"students": len(students), "resolved": len(ok), "unresolved": len(bad), "ambiguous": len(amb)}
 
         return {
+            "resolver": "messaging_directory_ngs_to_family",
+            "requires_class_context": False,
+            "directory_endpoint": "/lms/api/HyoUsuario/obtListaUsuariosIntranet?isMensajeria=true",
             "sections": wanted,
             "recipient_codes": recipient_codes,
             "recipient_count": len(recipient_codes),
