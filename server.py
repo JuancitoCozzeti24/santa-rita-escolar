@@ -34,8 +34,11 @@ mcp = FastMCP(
         "dar ID/URL, usa el conector Google Drive de ChatGPT para resolverlo y después llama a la "
         "herramienta Classroom correspondiente. Para CALIFICACIONES distingue draftGrade (provisional) de assignedGrade "
         "(visible al alumno); devolver una entrega no finaliza automáticamente la nota en la API, así que usa las herramientas "
-        "de finalización/devolución. Para CIEWEB/SIEWEB, sí puedes CREAR CORREOS NUEVOS y ENVIARLOS sin que exista un hilo previo: "
-        "usa sieweb_messaging con action=compose_new para preparar y action=send_new para el envío real mediante "
+        "de finalización/devolución. Para CIEWEB/SIEWEB, sí puedes CREAR CORREOS NUEVOS y ENVIARLOS sin que exista un hilo previo. "
+        "Soporta tanto la herramienta agrupada sieweb_messaging como los nombres de compatibilidad "
+        "sieweb_list_messages, sieweb_read_message, sieweb_search_recipients, sieweb_create_email, "
+        "sieweb_send_new_email y sieweb_reply_message. Para correo nuevo usa sieweb_create_email para preparar "
+        "y sieweb_send_new_email para enviar, o sieweb_messaging action=compose_new/send_new. El envío real usa "
         "HyoMensajeria/enviarMensaje. Para responder un hilo existente usa action=reply. No confundas correo nuevo con respuesta. Antes de cualquier escritura o acción destructiva, "
         "resume exactamente el cambio al usuario y solo ejecuta cuando haya autorizado ese cambio. Los comentarios privados de entregas no existen en la API oficial: "
         "no simules esa acción con anuncios ni otros recursos."
@@ -58,7 +61,7 @@ def _ok(data: Any) -> str:
     return json.dumps(data, ensure_ascii=False, default=str)
 
 
-# ---------------- Google Classroom v0.6.2 ----------------
+# ---------------- Google Classroom v0.6.3 ----------------
 def _confirmation(preview: dict[str, Any], confirmed: bool, *, destructive: bool = False) -> str | None:
     if confirmed:
         return None
@@ -78,11 +81,151 @@ def _require_confirm(action: str, payload: dict[str, Any], confirmed: bool, *, d
     return _confirmation({"action": action, **payload}, confirmed, destructive=action in destructive_actions)
 
 
+# ---------------- SieWeb: herramientas explícitas de compatibilidad v0.6.3 ----------------
+# Estas herramientas se registran al inicio para que clientes que conservaron nombres de
+# versiones anteriores no reciban "Unknown tool" después de un deploy/reconexión.
+
+@mcp.tool()
+def sieweb_capabilities() -> str:
+    """Capacidades de mensajería SieWeb. Confirma lectura, respuesta y creación/envío de correos nuevos."""
+    return _ok({
+        "version": "0.6.3",
+        "list_inbox": True,
+        "read_message": True,
+        "reply_existing_message": True,
+        "search_recipients": True,
+        "create_new_email": True,
+        "send_new_email": True,
+        "new_email_requires_existing_thread": False,
+        "new_email_endpoint": "/lms/api/HyoMensajeria/enviarMensaje",
+        "compatibility_aliases": [
+            "sieweb_list_messages", "sieweb_read_message", "sieweb_search_recipients",
+            "sieweb_create_email", "sieweb_send_new_email", "sieweb_reply_message",
+            "sieweb_messaging"
+        ],
+    })
+
+
+@mcp.tool()
+def sieweb_list_messages(folder_id: int = 1, search: str = "") -> str:
+    """Lista mensajes de SieWeb. Herramienta explícita mantenida por compatibilidad."""
+    return _ok(sieweb.list_messages(folder_id=folder_id, search=search))
+
+
+@mcp.tool()
+def sieweb_read_message(message_id: int, folder_id: int = 1) -> str:
+    """Lee un mensaje de SieWeb por ID. Herramienta explícita mantenida por compatibilidad."""
+    return _ok(sieweb.get_message(message_id, folder_id=folder_id))
+
+
+@mcp.tool()
+def sieweb_search_recipients(query: str, recipient_type: str = "any", ngs: str = "", limit: int = 30) -> str:
+    """Busca destinatarios de SieWeb por nombre/código; tipos: familia, alumno, docente o any."""
+    return _ok(sieweb.search_messaging_users(query=query, recipient_type=recipient_type, ngs=ngs, limit=limit))
+
+
+@mcp.tool()
+def sieweb_create_email(
+    subject: str,
+    message: str,
+    recipient_codes: list[str] | None = None,
+    recipient_query: str = "",
+    recipient_type: str = "any",
+    ngs: str = "",
+    message_is_html: bool = False,
+) -> str:
+    """Compone un correo NUEVO en SieWeb sin enviarlo. No requiere hilo previo."""
+    codes, resolved, problem = _resolve_sieweb_email_recipients(
+        recipient_codes, recipient_query, recipient_type, ngs
+    )
+    if problem:
+        return _ok(problem)
+    payload = sieweb.compose_message(
+        recipient_codes=codes,
+        subject=subject,
+        html_message=message if message_is_html else "",
+        plain_text="" if message_is_html else message,
+    )
+    return _ok({
+        "created": True,
+        "sent": False,
+        "type": "new_sieweb_email",
+        "resolved_recipients": resolved,
+        "draft": payload,
+        "next_action": "Tras aprobación, usa sieweb_send_new_email con confirmed=true.",
+    })
+
+
+@mcp.tool()
+def sieweb_send_new_email(
+    subject: str,
+    message: str,
+    recipient_codes: list[str] | None = None,
+    recipient_query: str = "",
+    recipient_type: str = "any",
+    ngs: str = "",
+    message_is_html: bool = False,
+    confirmed: bool = False,
+) -> str:
+    """Crea Y ENVÍA un correo NUEVO en SieWeb. No requiere hilo previo. Requiere confirmed=true."""
+    codes, resolved, problem = _resolve_sieweb_email_recipients(
+        recipient_codes, recipient_query, recipient_type, ngs
+    )
+    if problem:
+        return _ok(problem)
+    payload = sieweb.compose_message(
+        recipient_codes=codes,
+        subject=subject,
+        html_message=message if message_is_html else "",
+        plain_text="" if message_is_html else message,
+    )
+    preview = {
+        "type": "new_sieweb_email",
+        "recipient_codes": codes,
+        "resolved_recipients": resolved,
+        "subject": payload["asunto"],
+        "html_message": payload["mensaje"],
+    }
+    if not confirmed:
+        return _ok({"requires_confirmation": True, "preview": preview})
+    return _ok(sieweb.send_message(
+        recipient_codes=codes,
+        subject=subject,
+        html_message=message if message_is_html else "",
+        plain_text="" if message_is_html else message,
+    ))
+
+
+@mcp.tool()
+def sieweb_reply_message(
+    recipient_codes: list[str],
+    subject: str,
+    html_message: str,
+    reply_to_message_id: int,
+    confirmed: bool = False,
+) -> str:
+    """Responde un hilo existente de SieWeb. Requiere confirmed=true."""
+    preview = {
+        "recipient_codes": recipient_codes,
+        "subject": subject,
+        "reply_to_message_id": reply_to_message_id,
+        "html_message": html_message,
+    }
+    if not confirmed:
+        return _ok({"requires_confirmation": True, "preview": preview})
+    return _ok(sieweb.send_reply(
+        recipient_codes=recipient_codes,
+        subject=subject,
+        html_message=html_message,
+        reply_to_message_id=reply_to_message_id,
+    ))
+
+
 @mcp.tool()
 def classroom_capabilities() -> str:
     """Resume el control práctico de Classroom expuesto por este conector y los límites de la API oficial."""
     return _ok({
-        "version": "0.6.2",
+        "version": "0.6.3",
         "tool_design": "Acciones agrupadas por recurso para reducir errores de selección de herramienta.",
         "implemented": {
             "courses": ["list/get/create/update/delete", "aliases", "gradebookSettings", "gradingPeriodSettings"],
@@ -111,7 +254,7 @@ def classroom_capabilities() -> str:
             "profiles_guardians": ["user profile", "capability checks", "guardians list/get/delete", "guardian invitations list/get/create/cancel"],
         },
         "official_api_limits": {
-            "private_submission_comments": "No hay endpoint oficial para leer o escribir comentarios privados nativos de una entrega. v0.6.2 ofrece comentarios en el archivo de Drive como canal de retroalimentación alternativo.",
+            "private_submission_comments": "No hay endpoint oficial para leer o escribir comentarios privados nativos de una entrega. v0.6.3 ofrece comentarios en el archivo de Drive como canal de retroalimentación alternativo.",
             "stream_announcement_comments": "No hay endpoint oficial de Classroom para leer/escribir comentarios del tablón/anuncios. Sí se pueden crear, editar, programar y borrar anuncios.",
             "overall_course_grade": "La API no expone la nota global calculada como campo editable; puede calcularse localmente con datos disponibles.",
             "rubric_criterion_scores": "Los puntajes por criterio pueden leerse en StudentSubmission, pero no escribirse mediante la API.",
@@ -532,7 +675,7 @@ def sieweb_messaging(action: str, payload_json: str = "{}", confirmed: bool = Fa
     action = action.strip().lower(); p = _json_obj(payload_json, {})
     if action == "capabilities":
         return _ok({
-            "version": "0.6.2",
+            "version": "0.6.3",
             "list_inbox": True, "read_message": True, "reply_existing_message": True,
             "search_recipients": True, "compose_new_email": True, "send_new_email": True,
             "new_email_requires_existing_thread": False,
@@ -862,7 +1005,7 @@ def sieweb_gradebook_by_section(section: str, period: int, course_code: str = "0
 def sieweb_capabilities() -> str:
     """Indica explícitamente las capacidades de CIEWEB/SIEWEB disponibles en esta versión."""
     return _ok({
-        "version": "0.6.2",
+        "version": "0.6.3",
         "messaging": {
             "list_inbox": True,
             "read_message": True,
@@ -893,6 +1036,26 @@ def _resolve_sieweb_email_recipients(
     resolved = sieweb.search_messaging_users(
         query=recipient_query, recipient_type=recipient_type, ngs=ngs, limit=30
     )
+
+    # Si se pide familia por el nombre completo del estudiante, el directorio de familias
+    # puede guardar solo los apellidos. Intentar resolver primero al estudiante y luego
+    # buscar la familia por sus apellidos, sin inventar códigos ni relaciones numéricas.
+    direct_type = str(recipient_type or "").strip().lower()
+    family_types = {"family", "familia", "parent", "apoderado"}
+    if len(resolved) != 1 and direct_type in family_types:
+        students = sieweb.search_messaging_users(
+            query=recipient_query, recipient_type="student", ngs=ngs, limit=10
+        )
+        if len(students) == 1:
+            student_name = str(students[0].get("USUNOM") or "").strip()
+            surname_part = student_name.split(",", 1)[0].strip() if "," in student_name else " ".join(student_name.split()[:2])
+            if surname_part:
+                family_matches = sieweb.search_messaging_users(
+                    query=surname_part, recipient_type="family", ngs=ngs, limit=30
+                )
+                if len(family_matches) == 1:
+                    resolved = family_matches
+
     if len(resolved) != 1:
         return [], resolved, {
             "requires_recipient_selection": True,
@@ -900,7 +1063,7 @@ def _resolve_sieweb_email_recipients(
             "recipient_type": recipient_type,
             "ngs": ngs,
             "matches": resolved,
-            "note": "Selecciona exactamente un USUCOD o vuelve a llamar con recipient_codes.",
+            "note": "Selecciona exactamente un USUCOD o vuelve a llamar con recipient_codes. No se inventan destinatarios.",
         }
     return [str(resolved[0].get("USUCOD") or "")], resolved, None
 

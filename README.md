@@ -1,8 +1,8 @@
-# Santa Rita Escolar v0.6.2
+# Santa Rita Escolar v0.6.3
 
 Servidor MCP remoto para **Google Classroom + SieWeb**. Esta versión extiende la v0.6.0 para revisar archivos entregados por estudiantes, dar retroalimentación sobre esos archivos, publicar anuncios y hacer más visible el envío de mensajes nuevos por SieWeb.
 
-## Correos NUEVOS en CIEWEB/SIEWEB — v0.6.2
+## Correos NUEVOS en CIEWEB/SIEWEB — v0.6.3
 
 Se reforzó la mensajería para que ChatGPT no confunda **crear un correo nuevo** con **responder un hilo existente**.
 
@@ -144,10 +144,17 @@ Para archivos binarios no soportados, se devuelve el enlace/metadatos sin invent
 - Drive comments/replies: https://developers.google.com/workspace/drive/api/guides/manage-comments
 
 
-## v0.6.2 — esquema compacto de 17 herramientas
+## v0.6.3 — esquema compacto de 17 herramientas
 
 Esta versión reduce el catálogo MCP de 48 herramientas a 17 herramientas agrupadas para evitar que acciones importantes queden fuera de la selección/descubrimiento de ChatGPT. No elimina capacidades: los aliases se convierten en helpers internos.
 
 Mensajería SieWeb queda concentrada en `sieweb_messaging` con acciones `capabilities`, `list`, `read`, `search_recipients`, `compose_new`, `send_new` y `reply`. `send_new` crea y envía un correo NUEVO mediante `/lms/api/HyoMensajeria/enviarMensaje` sin requerir hilo previo.
 
 El registro académico queda en `sieweb_academics`; los flujos Classroom↔SieWeb quedan en `workflow_school`; la revisión de adjuntos se incorpora a `classroom_submissions`, manteniendo `classroom_attachment_image` para visión de fotos/PDF.
+
+
+## v0.6.3 - Compatibilidad robusta de mensajería SieWeb
+
+Esta versión restaura como herramientas MCP explícitas, además del router agrupado, los nombres `sieweb_list_messages`, `sieweb_read_message`, `sieweb_search_recipients`, `sieweb_create_email`, `sieweb_send_new_email`, `sieweb_reply_message` y `sieweb_capabilities`. Así un cliente que todavía invoque un nombre de una versión anterior no obtiene `Unknown tool`.
+
+Las herramientas críticas de mensajería se registran antes de las de Classroom. `sieweb_send_new_email` crea y envía un mensaje nuevo mediante `HyoMensajeria/enviarMensaje` sin `idEdition` ni `response`; `sieweb_reply_message` se reserva para respuestas a un hilo.
