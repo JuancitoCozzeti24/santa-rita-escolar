@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "SieRoom Classroom Bridge",
+  "version": "0.7.0",
+  "description": "Puente local de SieRoom para publicar comentarios privados nativos en entregas de Google Classroom usando la sesión del navegador.",
+  "permissions": ["storage", "tabs"],
+  "host_permissions": [
+    "https://classroom.google.com/*",
+    "https://santa-rita-escolar-tcpb.onrender.com/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["https://classroom.google.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_title": "SieRoom Classroom Bridge",
+    "default_popup": "popup.html"
+  }
+}

@@ -1,3 +1,34 @@
+# SieRoom SRC 0.7.0
+
+## Comentarios privados nativos de Classroom mediante puente local
+
+Esta versión añade `classroom_private_feedback`, una cola segura para retroalimentación privada. El servidor obtiene `StudentSubmission.alternateLink` por la API oficial, encola el comentario y el componente local `browser_extension/` abre esa entrega con la sesión ya iniciada en Classroom. La extensión escribe el comentario en el cuadro **Comentarios privados** y confirma el resultado a SieRoom. Solo después, si el trabajo fue configurado con nota/devolución, el servidor usa la API oficial para calificar y/o devolver la entrega.
+
+### Seguridad
+
+- No se copian cookies de Google a Render.
+- No se guarda el refresh token de Google en la extensión.
+- El canal Render ↔ extensión usa un secreto independiente `CLASSROOM_BRIDGE_SECRET`.
+- Los endpoints `/bridge/v1/*` rechazan peticiones sin ese secreto.
+- La cola es temporal/en memoria: está pensada para trabajos inmediatos, no como almacenamiento permanente.
+
+### Instalación del puente
+
+1. En Render agrega `CLASSROOM_BRIDGE_SECRET` con un valor aleatorio largo. Puedes generarlo con `python generar_bridge_secret.py`.
+2. Despliega v0.7.0 y espera `LIVE`.
+3. En Chrome/Brave abre `chrome://extensions`, activa **Modo de desarrollador** y pulsa **Cargar descomprimida**. Selecciona la carpeta `browser_extension`.
+4. Abre la extensión, pega el mismo `CLASSROOM_BRIDGE_SECRET`, pulsa **Guardar y probar** y luego **Iniciar puente**.
+5. Deja abierta la pestaña `SieRoom Classroom Bridge` mientras procesas entregas.
+6. En ChatGPT actualiza las acciones de SieRoom y usa `classroom_private_feedback`.
+
+### Flujo de uso
+
+`revisar archivo -> redactar feedback -> classroom_private_feedback queue -> navegador publica comentario privado -> nota opcional -> devolución opcional`
+
+Si el comentario se publica pero la API oficial rechaza posteriormente la nota/devolución, el trabajo queda como `comment_posted_followup_failed`; SieRoom informa el éxito parcial y no repite el comentario silenciosamente.
+
+---
+
 
 ## v0.6.5 — destinatarios masivos por sección en SieWeb
 

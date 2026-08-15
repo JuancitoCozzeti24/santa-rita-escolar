@@ -41,6 +41,9 @@ class Settings:
     google_client_secret: str = os.getenv("GOOGLE_CLIENT_SECRET", "")
     google_refresh_token: str = os.getenv("GOOGLE_REFRESH_TOKEN", "")
 
+    # Puente local del navegador para comentarios privados nativos de Classroom.
+    classroom_bridge_secret: str = os.getenv("CLASSROOM_BRIDGE_SECRET", "")
+
     # SieWeb.
     sieweb_base_url: str = os.getenv(
         "SIEWEB_BASE_URL", "https://santaritadecasia.sieweb.com.pe"
