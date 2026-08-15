@@ -44,9 +44,12 @@ mcp = FastMCP(
         "sieweb_send_new_email y sieweb_reply_message. Para correo nuevo usa sieweb_create_email para preparar "
         "y sieweb_send_new_email para enviar, o sieweb_messaging action=compose_new/send_new. El envío real usa "
         "HyoMensajeria/enviarMensaje. Para responder un hilo existente usa action=reply. No confundas correo nuevo con respuesta. "
-        "Para PADRES/FAMILIAS DE SECCIONES COMPLETAS (por ejemplo 2.º A y 2.º B), NO uses resolve_class_context, idClase ni idAmbito: "
-        "usa sieweb_resolve_family_group para previsualizar o sieweb_send_section_email para enviar. Esas acciones resuelven directamente "
-        "NGS -> alumnos TIPCOD=005 -> familias TIPCOD=004 desde el directorio de Mensajería. Antes de cualquier escritura o acción destructiva, "
+        "Para SECCIONES COMPLETAS, NO uses resolve_class_context, idClase ni idAmbito. Si el destinatario son PADRES/FAMILIAS, "
+        "usa sieweb_resolve_family_group para previsualizar y sieweb_send_section_email con recipient_type=family para enviar. "
+        "Si el destinatario son ESTUDIANTES/ALUMNOS, usa sieweb_resolve_student_group para previsualizar y preferentemente "
+        "sieweb_send_student_section_email para enviar; también sieweb_send_section_email acepta recipient_type=student. "
+        "Para estudiantes se envían directamente los USUCOD TIPCOD=005 de cada NGS; nunca los conviertas a TIPCOD=004 ni a códigos familiares. "
+        "Para familias, el flujo es NGS -> alumnos TIPCOD=005 -> familias TIPCOD=004. Antes de cualquier escritura o acción destructiva, "
         "resume exactamente el cambio al usuario y solo ejecuta cuando haya autorizado ese cambio. "
         "Los comentarios privados nativos de entregas se manejan en v0.7.0 mediante el puente local de navegador SieRoom Classroom Bridge; "
         "no se guardan cookies ni tokens de Google en Render. Para un flujo de retroalimentación privada usa classroom_private_feedback. "
@@ -191,12 +194,15 @@ def sieweb_capabilities() -> str:
         "new_email_requires_existing_thread": False,
         "new_email_endpoint": "/lms/api/HyoMensajeria/enviarMensaje",
         "resolve_families_by_section": True,
+        "resolve_students_by_section": True,
         "send_mass_email_by_section": True,
+        "send_mass_email_to_students_by_section": True,
         "section_group_requires_class_ids": False,
         "compatibility_aliases": [
             "sieweb_list_messages", "sieweb_read_message", "sieweb_search_recipients",
             "sieweb_create_email", "sieweb_send_new_email", "sieweb_reply_message",
-            "sieweb_resolve_family_group", "sieweb_send_section_email", "sieweb_messaging"
+            "sieweb_resolve_family_group", "sieweb_resolve_student_group",
+            "sieweb_send_section_email", "sieweb_send_student_section_email", "sieweb_messaging"
         ],
     })
 
@@ -215,22 +221,64 @@ def sieweb_read_message(message_id: int, folder_id: int = 1) -> str:
 
 @mcp.tool()
 def sieweb_search_recipients(query: str, recipient_type: str = "any", ngs: str = "", limit: int = 30) -> str:
-    """Busca destinatarios de SieWeb por nombre/código. Si la consulta pide padres/familias de secciones completas (p. ej. 2.º A y 2.º B), resuelve el grupo directamente por NGS; NO requiere idClase ni idAmbito."""
+    """Busca destinatarios de SieWeb por nombre/código. Para secciones completas reconoce tanto estudiantes como familias y devuelve USUCOD reales del tipo solicitado."""
     sections = sieweb.extract_section_codes(query)
     direct_type = str(recipient_type or "").strip().lower()
     qn = sieweb._normalize_text(query)
+    student_types = {"student", "alumno", "alumna", "alumnos", "alumnas", "estudiante", "estudiantes"}
+    family_types = {"family", "familia", "parent", "apoderado", "padre", "padres"}
+
+    student_group = bool(sections) and (
+        direct_type in student_types
+        or any(word in qn for word in ("ALUMNO", "ALUMNA", "ALUMNOS", "ALUMNAS", "ESTUDIANTE", "ESTUDIANTES"))
+    )
+    if student_group:
+        group = sieweb.resolve_student_recipients_by_sections(sections)
+        return _ok({
+            "mode": "student_group_by_section",
+            "recipient_type": "student",
+            "requires_class_context": False,
+            **group,
+        })
+
     family_group = bool(sections) and (
-        direct_type in {"family", "familia", "parent", "apoderado"}
-        or any(word in qn for word in ("PADRES", "FAMILIA", "FAMILIAS", "APODERADOS"))
+        direct_type in family_types
+        or any(word in qn for word in ("PADRES", "PADRE", "FAMILIA", "FAMILIAS", "APODERADOS", "APODERADO"))
     )
     if family_group:
         group = sieweb.resolve_family_recipients_by_sections(sections)
         return _ok({
             "mode": "family_group_by_section",
+            "recipient_type": "family",
             "requires_class_context": False,
             **group,
         })
     return _ok(sieweb.search_messaging_users(query=query, recipient_type=recipient_type, ngs=ngs, limit=limit))
+
+
+@mcp.tool()
+def sieweb_resolve_student_group(sections: list[str] | None = None, query: str = "") -> str:
+    """Resuelve TODOS los destinatarios estudiante de una o varias secciones (ej. ['5A','5B']). Devuelve directamente USUCOD TIPCOD=005 por NGS. No convierte a familias y no envía nada."""
+    wanted: list[str] = []
+    for item in (sections or []):
+        code = sieweb._normalize_section(str(item))
+        if code and code not in wanted:
+            wanted.append(code)
+    for code in sieweb.extract_section_codes(query):
+        if code not in wanted:
+            wanted.append(code)
+    if not wanted:
+        return _ok({
+            "error": "Indica al menos una sección, por ejemplo 5A y 5B.",
+            "requires_class_context": False,
+        })
+    group = sieweb.resolve_student_recipients_by_sections(wanted)
+    return _ok({
+        "mode": "student_group_by_section",
+        "recipient_type": "student",
+        "requires_class_context": False,
+        **group,
+    })
 
 
 @mcp.tool()
@@ -262,18 +310,39 @@ def sieweb_send_section_email(
     sections: list[str],
     subject: str,
     message: str,
+    recipient_type: str = "family",
     message_is_html: bool = False,
     confirmed: bool = False,
 ) -> str:
-    """Prepara o ENVÍA un correo NUEVO masivo a todas las familias de las secciones indicadas. Ej.: sections=['2A','2B']. Resuelve NGS->alumnos->familias dentro del directorio de Mensajería y jamás pide idClase/idAmbito. Con confirmed=false solo muestra la previsualización; confirmed=true envía un único mensaje masivo."""
-    group = sieweb.resolve_family_recipients_by_sections(sections)
+    """Prepara o ENVÍA un correo NUEVO masivo por secciones. recipient_type='student' envía a USUCOD TIPCOD=005; recipient_type='family' resuelve familias TIPCOD=004. Nunca convierte estudiantes en familias cuando recipient_type=student."""
+    direct_type = str(recipient_type or "family").strip().lower()
+    student_types = {"student", "alumno", "alumna", "alumnos", "alumnas", "estudiante", "estudiantes"}
+    family_types = {"family", "familia", "parent", "apoderado", "padre", "padres"}
+    if direct_type in student_types:
+        target_type = "student"
+        group = sieweb.resolve_student_recipients_by_sections(sections)
+    elif direct_type in family_types:
+        target_type = "family"
+        group = sieweb.resolve_family_recipients_by_sections(sections)
+    else:
+        return _ok({
+            "sent": False,
+            "error": "recipient_type debe ser 'student' o 'family'.",
+            "received_recipient_type": recipient_type,
+        })
+
     if not group.get("complete") or not group.get("recipient_codes"):
         return _ok({
             "sent": False,
             "requires_recipient_review": True,
             "requires_class_context": False,
+            "recipient_type": target_type,
             "group_resolution": group,
-            "note": "No se envía hasta que todas las familias estén resueltas sin ambigüedad.",
+            "note": (
+                "No se envía hasta que todos los estudiantes de las secciones estén resueltos por USUCOD TIPCOD=005."
+                if target_type == "student"
+                else "No se envía hasta que todas las familias estén resueltas sin ambigüedad."
+            ),
         })
     codes = list(group["recipient_codes"])
     payload = sieweb.compose_message(
@@ -284,11 +353,15 @@ def sieweb_send_section_email(
     )
     preview = {
         "type": "new_sieweb_section_email",
+        "recipient_type": target_type,
         "sections": group.get("sections"),
         "students_found": group.get("students_found"),
-        "unique_family_recipients": group.get("recipient_count"),
+        "recipient_count": group.get("recipient_count"),
+        "unique_student_recipients": group.get("recipient_count") if target_type == "student" else None,
+        "unique_family_recipients": group.get("recipient_count") if target_type == "family" else None,
         "per_section": group.get("per_section"),
         "recipient_codes": codes,
+        "resolved_recipients": group.get("resolved"),
         "subject": payload["asunto"],
         "html_message": payload["mensaje"],
         "requires_class_context": False,
@@ -303,9 +376,69 @@ def sieweb_send_section_email(
     )
     return _ok({
         "sent": True,
+        "recipient_type": target_type,
         "sections": group.get("sections"),
-        "unique_family_recipients": group.get("recipient_count"),
+        "recipient_count": group.get("recipient_count"),
         "per_section": group.get("per_section"),
+        "recipient_codes": codes,
+        "sieweb_result": result,
+    })
+
+
+@mcp.tool()
+def sieweb_send_student_section_email(
+    sections: list[str],
+    subject: str,
+    message: str,
+    message_is_html: bool = False,
+    confirmed: bool = False,
+) -> str:
+    """Prepara o ENVÍA correo masivo EXCLUSIVAMENTE a estudiantes de las secciones indicadas. Usa directamente sus USUCOD TIPCOD=005; jamás resuelve ni sustituye destinatarios familiares."""
+    group = sieweb.resolve_student_recipients_by_sections(sections)
+    if not group.get("complete") or not group.get("recipient_codes"):
+        return _ok({
+            "sent": False,
+            "requires_recipient_review": True,
+            "recipient_type": "student",
+            "requires_class_context": False,
+            "group_resolution": group,
+            "note": "No se envía hasta que todas las secciones solicitadas tengan estudiantes USUCOD TIPCOD=005 resueltos.",
+        })
+    codes = list(group["recipient_codes"])
+    payload = sieweb.compose_message(
+        recipient_codes=codes,
+        subject=subject,
+        html_message=message if message_is_html else "",
+        plain_text="" if message_is_html else message,
+    )
+    preview = {
+        "type": "new_sieweb_student_section_email",
+        "recipient_type": "student",
+        "sections": group.get("sections"),
+        "students_found": group.get("students_found"),
+        "unique_student_recipients": group.get("recipient_count"),
+        "per_section": group.get("per_section"),
+        "recipient_codes": codes,
+        "resolved_recipients": group.get("resolved"),
+        "subject": payload["asunto"],
+        "html_message": payload["mensaje"],
+        "requires_class_context": False,
+    }
+    if not confirmed:
+        return _ok({"requires_confirmation": True, "preview": preview})
+    result = sieweb.send_message(
+        recipient_codes=codes,
+        subject=subject,
+        html_message=message if message_is_html else "",
+        plain_text="" if message_is_html else message,
+    )
+    return _ok({
+        "sent": True,
+        "recipient_type": "student",
+        "sections": group.get("sections"),
+        "unique_student_recipients": group.get("recipient_count"),
+        "per_section": group.get("per_section"),
+        "recipient_codes": codes,
         "sieweb_result": result,
     })
 
@@ -967,6 +1100,7 @@ def sieweb_messaging(action: str, payload_json: str = "{}", confirmed: bool = Fa
             "version": "0.7.0",
             "list_inbox": True, "read_message": True, "reply_existing_message": True,
             "search_recipients": True, "compose_new_email": True, "send_new_email": True,
+            "resolve_students_by_section": True, "resolve_families_by_section": True,
             "new_email_requires_existing_thread": False,
             "endpoint": "/lms/api/HyoMensajeria/enviarMensaje",
             "note": "send_new no usa idEdition ni response; crea y envía un mensaje nuevo de SieWeb."
@@ -976,9 +1110,20 @@ def sieweb_messaging(action: str, payload_json: str = "{}", confirmed: bool = Fa
     if action == "read":
         return _ok(sieweb.get_message(int(p["message_id"]), folder_id=int(p.get("folder_id", 1))))
     if action == "search_recipients":
+        query = str(p.get("query", ""))
+        recipient_type = str(p.get("recipient_type", "any"))
+        sections = sieweb.extract_section_codes(query)
+        direct_type = recipient_type.strip().lower()
+        qn = sieweb._normalize_text(query)
+        student_types = {"student", "alumno", "alumna", "alumnos", "alumnas", "estudiante", "estudiantes"}
+        family_types = {"family", "familia", "parent", "apoderado", "padre", "padres"}
+        if bool(sections) and (direct_type in student_types or any(w in qn for w in ("ALUMNO", "ALUMNA", "ALUMNOS", "ALUMNAS", "ESTUDIANTE", "ESTUDIANTES"))):
+            return _ok({"mode": "student_group_by_section", "recipient_type": "student", **sieweb.resolve_student_recipients_by_sections(sections)})
+        if bool(sections) and (direct_type in family_types or any(w in qn for w in ("PADRES", "PADRE", "FAMILIA", "FAMILIAS", "APODERADOS", "APODERADO"))):
+            return _ok({"mode": "family_group_by_section", "recipient_type": "family", **sieweb.resolve_family_recipients_by_sections(sections)})
         return _ok(sieweb.search_messaging_users(
-            query=str(p.get("query", "")),
-            recipient_type=str(p.get("recipient_type", "any")),
+            query=query,
+            recipient_type=recipient_type,
             ngs=str(p.get("ngs", "")),
             limit=int(p.get("limit", 30)),
         ))
