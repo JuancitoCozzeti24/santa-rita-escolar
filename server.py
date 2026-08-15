@@ -1324,12 +1324,29 @@ def _resolve_sieweb_email_recipients(
         return [], [], {"error": "Debes proporcionar recipient_codes o recipient_query."}
     direct_type = str(recipient_type or "").strip().lower()
     family_types = {"family", "familia", "parent", "apoderado"}
+    student_types = {"student", "alumno", "alumna", "alumnos", "alumnas", "estudiante", "estudiantes"}
 
-    # Destinatarios grupales por sección: "padres de familia de 2A y 2B".
+    # Destinatarios grupales por sección: "padres de familia de 2A y 2B" o
+    # "estudiantes de 5A y 5B". No se busca la frase literalmente en el directorio.
     # No se busca esa frase literalmente en el directorio; se resuelven primero los alumnos
     # por NGS y luego sus usuarios de familia TIPCOD=004.
     sections = sieweb.extract_section_codes(recipient_query)
     query_norm = sieweb._normalize_text(recipient_query)
+
+    looks_like_student_group = bool(sections) and (
+        direct_type in student_types
+        or any(word in query_norm for word in ("ALUMNO", "ALUMNA", "ALUMNOS", "ALUMNAS", "ESTUDIANTE", "ESTUDIANTES"))
+    )
+    if looks_like_student_group:
+        group = sieweb.resolve_student_recipients_by_sections(sections)
+        if group.get("complete") and group.get("recipient_codes"):
+            return list(group["recipient_codes"]), list(group.get("resolved", [])), None
+        return [], group.get("resolved", []), {
+            "requires_recipient_selection": True,
+            "group_resolution": group,
+            "note": "No se envía porque al menos una sección solicitada no tiene alumnos resolubles en el directorio de Mensajería. No se inventan destinatarios.",
+        }
+
     looks_like_family_group = bool(sections) and (
         direct_type in family_types
         or any(word in query_norm for word in ("PADRES", "FAMILIA", "FAMILIAS", "APODERADOS"))
