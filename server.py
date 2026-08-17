@@ -15,6 +15,7 @@ from classroom import ClassroomClient, ClassroomError
 from config import settings
 from sieweb import SieWebClient
 from bridge import ClassroomBridgeQueue
+from attendance import install as install_attendance
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
@@ -69,6 +70,7 @@ mcp = FastMCP(
 classroom = ClassroomClient()
 sieweb = SieWebClient()
 bridge_queue = ClassroomBridgeQueue()
+install_attendance(mcp, sieweb, settings)
 
 
 
