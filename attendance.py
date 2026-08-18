@@ -27,7 +27,7 @@ SESSIONS: dict[str, dict[str, Any]] = {}
 ROSTER_PATH = Path(__file__).with_name("attendance_roster.json")
 DEVICE_COOKIE = "sieroom_attendance_device"
 LIMA = ZoneInfo("America/Lima")
-DEFAULT_END_TIME = "16:30"
+DEFAULT_CLOSE_MODE = "MANUAL"
 DEFAULT_SHEET_NAME = "SieRoom - Asistencias de asesoría 2026"
 
 
@@ -79,8 +79,8 @@ def _client_ip(request: Request) -> str:
 
 
 def _parse_end_at(raw: str, *, now: datetime) -> datetime:
-    text = str(raw or DEFAULT_END_TIME).strip().lower()
-    # La UI v0.7.3 envía HH:MM. Se conservan formatos anteriores por compatibilidad.
+    text = str(raw or "16:30").strip().lower()
+    # La UI v0.7.4 envía HH:MM. Se conservan formatos anteriores por compatibilidad.
     m = re.search(r"(\d{1,2})\s*:\s*(\d{2})", text)
     if not m:
         raise ValueError("Hora de cierre inválida. Usa HH:MM.")
@@ -211,6 +211,13 @@ def install(mcp, sieweb, settings, classroom=None):
                 sheet_cache["id"] = str(files[0]["id"])
                 sheet_cache["url"] = str(files[0].get("webViewLink") or f"https://docs.google.com/spreadsheets/d/{files[0]['id']}/edit")
                 sheet_cache["error"] = ""
+                # Migra/normaliza encabezados si la hoja fue creada por v0.7.3.
+                try:
+                    _sheets_values("PUT", sheet_cache["id"], "Asistencias!A1:J1", values=[["ID sesión", "Fecha", "Sección", "Estudiante", "Código SIEweb", "Hora ingreso", "Estado", "Aviso familia", "Hora aviso", "Observación"]])
+                    _sheets_values("PUT", sheet_cache["id"], "Sesiones!A1:K1", values=[["ID sesión", "Fecha", "Sección", "Iniciada", "Tipo de cierre", "Finalizada", "Convocados", "Asistieron", "Faltaron", "Pendientes", "Estado"]])
+                    _sheets_values("PUT", sheet_cache["id"], "Resumen!A1:F1", values=[["Sección", "Estudiante", "Asistencias", "Faltas", "Total sesiones", "% asistencia"]])
+                except Exception:
+                    pass
                 return sheet_cache["id"], sheet_cache["url"]
 
             created = _google_request(
@@ -231,7 +238,7 @@ def install(mcp, sieweb, settings, classroom=None):
             surl = str(created.get("spreadsheetUrl") or f"https://docs.google.com/spreadsheets/d/{sid}/edit")
             sheet_cache["id"], sheet_cache["url"], sheet_cache["error"] = sid, surl, ""
             _sheets_values("PUT", sid, "Asistencias!A1:J1", values=[["ID sesión", "Fecha", "Sección", "Estudiante", "Código SIEweb", "Hora ingreso", "Estado", "Aviso familia", "Hora aviso", "Observación"]])
-            _sheets_values("PUT", sid, "Sesiones!A1:K1", values=[["ID sesión", "Fecha", "Sección", "Creada", "Cierre programado", "Cerrada", "Convocados", "Asistieron", "Faltaron", "Pendientes", "Estado"]])
+            _sheets_values("PUT", sid, "Sesiones!A1:K1", values=[["ID sesión", "Fecha", "Sección", "Iniciada", "Tipo de cierre", "Finalizada", "Convocados", "Asistieron", "Faltaron", "Pendientes", "Estado"]])
             _sheets_values("PUT", sid, "Resumen!A1:F1", values=[["Sección", "Estudiante", "Asistencias", "Faltas", "Total sesiones", "% asistencia"]])
             return sid, surl
         except Exception as ex:
@@ -243,7 +250,7 @@ def install(mcp, sieweb, settings, classroom=None):
             sid, surl = _ensure_attendance_sheet()
             result = _sheets_values(
                 "POST", sid, "Sesiones!A:K", append=True,
-                values=[[ses["token"], ses["date"], ses["section"], ses["created_at_display"], ses["end_time"], "", len(ses["roster_snapshot"]), 0, 0, 0, "ABIERTA"]],
+                values=[[ses["token"], ses["date"], ses["section"], ses["created_at_display"], "MANUAL", "", len(ses["roster_snapshot"]), 0, 0, 0, "ABIERTA"]],
             )
             rng = str((result.get("updates") or {}).get("updatedRange") or "")
             m = re.search(r"!(?:[A-Z]+)(\d+):", rng)
@@ -337,7 +344,7 @@ def install(mcp, sieweb, settings, classroom=None):
             "Estimados padres de familia:\n\n"
             f"Les informo que {rec['name']} ha registrado correctamente su asistencia "
             "al taller de asesoría de Matemática.\n\n"
-            f"Su asistencia ha quedado registrada satisfactoriamente. El taller culminará hoy a las {ses['end_time']}.\n\n"
+            "Su asistencia ha quedado registrada satisfactoriamente. La asesoría se encuentra en desarrollo y su hora de finalización será determinada por el docente.\n\n"
             "Si tienen alguna duda o consulta, estaré disponible para atenderlos.\n\n"
             "Saludos cordiales."
         )
@@ -366,7 +373,7 @@ def install(mcp, sieweb, settings, classroom=None):
         text = (
             "Estimados padres de familia:\n\n"
             f"Les informo que {student['name']} no asistió al taller de asesoría de Matemática programado para hoy, "
-            f"{ses['date']}. Al cierre del taller, a las {ses['end_time']}, su inasistencia ha quedado registrada como falta.\n\n"
+            f"{ses['date']}. Al finalizar la asesoría a las {ses.get('closed_time', 'hora registrada por el sistema')}, su inasistencia ha quedado registrada como falta.\n\n"
             "Este aviso tiene como finalidad mantenerlos informados y facilitar el seguimiento de la participación del estudiante en las asesorías.\n\n"
             "Si existiera alguna situación excepcional que deba ser comunicada, quedaré atento a su mensaje.\n\n"
             "Saludos cordiales."
@@ -385,7 +392,7 @@ def install(mcp, sieweb, settings, classroom=None):
             ses["absence_notifications"][code] = {"notified": False, "notified_at": "", "error": str(ex)}
             return False, str(ex)
 
-    # ---------- Cierre automático ----------
+    # ---------- Seguridad y cierre manual ----------
     def _active_claims(ses: dict[str, Any]) -> list[dict[str, Any]]:
         return [r for r in ses["attendees"].values() if r.get("status") in {"pending", "confirmed"}]
 
@@ -405,67 +412,82 @@ def install(mcp, sieweb, settings, classroom=None):
     def _student_by_code(ses: dict[str, Any], code: str) -> dict[str, str] | None:
         return next((x for x in ses.get("roster_snapshot", []) if x["code"] == code), None)
 
-    def _close_due_session(token: str) -> None:
-        ses = SESSIONS.get(token)
-        if not ses or ses.get("closed"):
-            return
-        ses["closed"] = True
-        ses["closed_at"] = _now().isoformat()
-        ses["closed_at_display"] = _now().strftime("%d/%m/%Y %H:%M:%S")
-
-        confirmed_codes = {code for code, rec in ses["attendees"].items() if rec.get("status") == "confirmed"}
-        pending_codes = {code for code, rec in ses["attendees"].items() if rec.get("status") == "pending"}
-        for student in ses.get("roster_snapshot", []):
-            code = student["code"]
-            if code in confirmed_codes or code in pending_codes:
+    def _pending_students(ses: dict[str, Any]) -> list[dict[str, str]]:
+        result = []
+        for code, rec in ses.get("attendees", {}).items():
+            if rec.get("status") != "pending":
                 continue
-            _notify_absence(ses, student)
-            _append_final_student_row(ses, student, state="FALTÓ", observation="Inasistencia registrada al cierre automático de la asesoría.")
+            student = _student_by_code(ses, code)
+            if student:
+                result.append(student)
+        result.sort(key=lambda x: _norm(x["name"]))
+        return result
 
-        ses["finalized"] = not bool(pending_codes)
-        _update_session_sheet_row(ses)
-        if ses["finalized"]:
-            _rebuild_summary()
-
-    def _resolve_pending_after_close(ses: dict[str, Any], code: str, *, confirmed: bool) -> None:
-        if not ses.get("closed"):
-            return
-        student = _student_by_code(ses, code)
-        if not student:
-            return
-        rec = ses["attendees"].get(code)
-        if confirmed:
-            _append_final_student_row(ses, student, state="ASISTIÓ", rec=rec, observation="Asistencia confirmada por el docente.")
-        else:
-            _notify_absence(ses, student)
-            _append_final_student_row(ses, student, state="FALTÓ", observation="Registro rechazado por el docente; se contabiliza como falta.")
-        pending = sum(1 for r in ses["attendees"].values() if r.get("status") == "pending")
-        ses["finalized"] = pending == 0
-        _update_session_sheet_row(ses)
-        if ses["finalized"]:
-            _rebuild_summary()
-
-    async def _deadline_worker(token: str) -> None:
+    def _finalize_session(token: str) -> dict[str, Any]:
         ses = SESSIONS.get(token)
         if not ses:
-            return
-        try:
-            end_at = datetime.fromisoformat(ses["end_at"])
-            delay = max(0.0, (end_at - _now()).total_seconds())
-            await asyncio.sleep(delay)
-            await asyncio.to_thread(_close_due_session, token)
-        except Exception as ex:
-            if token in SESSIONS:
-                SESSIONS[token]["close_error"] = str(ex)
-
-    def _ensure_due_closed(ses: dict[str, Any]) -> None:
+            return {"ok": False, "error": "Sesión no disponible."}
         if ses.get("closed"):
-            return
-        try:
-            if _now() >= datetime.fromisoformat(ses["end_at"]):
-                _close_due_session(ses["token"])
-        except Exception:
-            pass
+            confirmed = sum(1 for rec in ses.get("attendees", {}).values() if rec.get("status") == "confirmed")
+            return {
+                "ok": True, "already_closed": True, "confirmed": confirmed,
+                "absent": len(ses.get("absence_notifications") or {}),
+                "closed_at": ses.get("closed_at_display", ""), "closed_time": ses.get("closed_time", ""),
+            }
+
+        pending = _pending_students(ses)
+        if pending:
+            return {
+                "ok": False,
+                "error": "Hay registros pendientes de confirmar o rechazar antes de finalizar la asesoría.",
+                "pending": [{"code": x["code"], "name": x["name"]} for x in pending],
+            }
+
+        now = _now()
+        ses["closed"] = True
+        ses["finalized"] = False
+        ses["closed_at"] = now.isoformat(timespec="seconds")
+        ses["closed_at_display"] = now.strftime("%d/%m/%Y %H:%M:%S")
+        ses["closed_time"] = _display_time(now)
+
+        confirmed_codes = {code for code, rec in ses["attendees"].items() if rec.get("status") == "confirmed"}
+        for student in ses.get("roster_snapshot", []):
+            code = student["code"]
+            if code in confirmed_codes:
+                continue
+            _notify_absence(ses, student)
+            _append_final_student_row(
+                ses, student, state="FALTÓ",
+                observation="Inasistencia registrada al finalizar manualmente la asesoría.",
+            )
+
+        ses["finalized"] = True
+        _update_session_sheet_row(ses)
+        _rebuild_summary()
+        return {
+            "ok": True,
+            "already_closed": False,
+            "confirmed": len(confirmed_codes),
+            "absent": len(ses.get("absence_notifications") or {}),
+            "closed_at": ses.get("closed_at_display", ""),
+            "closed_time": ses.get("closed_time", ""),
+        }
+
+    def _session_public_payload(ses: dict[str, Any], *, resumed: bool = False) -> dict[str, Any]:
+        url = f"{settings.public_base_url}/asesoria/r/{ses['token']}"
+        qr = qrcode.make(url)
+        buf = io.BytesIO()
+        qr.save(buf, format="PNG")
+        roster = list(ses.get("roster_snapshot") or [])
+        return {
+            "ok": True, "resumed": resumed, "token": ses["token"], "section": ses["section"],
+            "date": ses["date"], "checkin_url": url,
+            "qr_data_url": "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode(),
+            "roster_count": len(roster), "roster_names": [x["name"] for x in roster],
+            "unresolved_allowlist": list(ses.get("unresolved_allowlist") or []),
+            "teacher_confirmation": require_teacher_confirm, "roster_source": roster_cfg.get("source", ""),
+            "sheet_url": ses.get("sheet_url", ""), "sheet_error": ses.get("sheet_error", ""),
+        }
 
     # ---------- Panel docente ----------
     @mcp.custom_route("/asesoria", methods=["GET"])
@@ -478,29 +500,44 @@ def install(mcp, sieweb, settings, classroom=None):
 <title>SieRoom Asesoría</title>
 <style>
 body{font-family:system-ui;max-width:1050px;margin:24px auto;padding:16px;color:#111}
-input,select,button{font-size:17px;padding:10px;margin:5px}button{cursor:pointer}
+select,button{font-size:17px;padding:10px;margin:5px}button{cursor:pointer}
 .card{border:1px solid #ddd;border-radius:14px;padding:16px;margin:14px 0}.muted{color:#666}.warn{color:#9a5b00}.ok{color:#087a28}.bad{color:#a51b1b}
 table{width:100%;border-collapse:collapse}td,th{padding:9px;border-bottom:1px solid #ddd;text-align:left;vertical-align:top}
 .small{font-size:13px}.pending{background:#fff9e8}.confirmed{background:#eefaf1}.rejected{background:#fff0f0}.absent{background:#fff4f4}
 a.btn{display:inline-block;padding:9px 12px;border:1px solid #bbb;border-radius:8px;text-decoration:none;color:#111;margin:4px 0}
+.start{background:#0b6f31;color:white;border:0;border-radius:9px;font-weight:700}.finish{background:#a51b1b;color:white;border:0;border-radius:9px;font-weight:700}.finish:disabled{opacity:.45;cursor:not-allowed}
 </style>
 <h1>Asistencia a asesoría</h1>
-<p>Crea una sesión y proyecta el QR. La v0.7.3 registra asistencia, avisa a las familias y al cierre envía automáticamente los avisos de inasistencia.</p>
-<div class=card><select id=s><option>2A</option><option>2B</option><option>5A</option><option>5B</option></select><label> Cierre: <input id=e type=time value='16:30'></label><button onclick='createSession()'>Nueva asesoría</button></div>
+<p><b>Iniciar asesoría</b> genera el QR y abre el registro. <b>Finalizar asesoría</b> cierra el QR y envía los avisos de inasistencia a quienes no asistieron.</p>
+<div class=card><label><b>Sección:</b> <select id=s><option>2A</option><option>2B</option><option>5A</option><option>5B</option></select></label><button class=start onclick='createSession()'>▶ Iniciar asesoría</button></div>
 <div id=out></div>
 <script>
 const key=KEY;
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 async function createSession(){
- let r=await fetch('/asesoria/api/session?key='+encodeURIComponent(key),{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({section:s.value,end_time:e.value})});
+ let r=await fetch('/asesoria/api/session?key='+encodeURIComponent(key),{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({section:s.value})});
  let j=await r.json();if(!j.ok){out.innerHTML='<p class=bad>'+esc(j.error||JSON.stringify(j))+'</p>';return}
  let sheet=j.sheet_url?'<p><a class=btn target=_blank href="'+esc(j.sheet_url)+'">📊 Abrir registro en Google Sheets</a></p>':('<p class=warn><b>Google Sheets:</b> '+esc(j.sheet_error||'Todavía no disponible.')+'</p>');
- out.innerHTML='<div class=card><h2>'+esc(j.section)+' · '+esc(j.date)+'</h2><p><b>Cierre automático:</b> '+esc(j.end_time)+'</p><p><b>Lista autorizada:</b> '+j.roster_count+' estudiantes</p>'+(j.unresolved_allowlist?.length?'<p class=warn><b>Atención:</b> no pude enlazar automáticamente: '+esc(j.unresolved_allowlist.join(', '))+'</p>':'')+'<img style="width:min(70vw,430px)" src="'+j.qr_data_url+'"><p class=small><b>Enlace:</b> '+esc(j.checkin_url)+'</p><p><b>Seguridad:</b> '+(j.teacher_confirmation?'Confirmación visual del docente activada. El correo de asistencia se envía solo al confirmar.':'Confirmación automática activada.')+'</p>'+sheet+'</div><h3>Registros</h3><div id=list></div>';
+ let resumed=j.resumed?'<p class=warn><b>Sesión recuperada:</b> esta asesoría ya estaba en curso; no se creó una segunda sesión.</p>':'';
+ out.innerHTML='<div class=card><h2>'+esc(j.section)+' · '+esc(j.date)+'</h2><p class=ok><b>● ASESORÍA INICIADA</b></p>'+resumed+'<p><b>Lista autorizada:</b> '+j.roster_count+' estudiantes</p>'+(j.unresolved_allowlist?.length?'<p class=warn><b>Atención:</b> no pude enlazar automáticamente: '+esc(j.unresolved_allowlist.join(', '))+'</p>':'')+'<img style="width:min(70vw,430px)" src="'+j.qr_data_url+'"><p class=small><b>Enlace:</b> '+esc(j.checkin_url)+'</p><p><b>Seguridad:</b> '+(j.teacher_confirmation?'Confirmación visual del docente activada. El correo de asistencia se envía solo al confirmar.':'Confirmación automática activada.')+'</p>'+sheet+'<p><button id=finishBtn class=finish onclick="finalizeSession(\''+j.token+'\')">■ Finalizar asesoría</button></p><p class=small>Al finalizar, el QR dejará de aceptar registros y se enviarán inmediatamente los avisos de inasistencia.</p></div><h3>Registros</h3><div id=list></div>';
  poll(j.token)
 }
 async function action(t,code,kind){
  let r=await fetch('/asesoria/api/session/'+encodeURIComponent(t)+'/'+kind+'/'+encodeURIComponent(code)+'?key='+encodeURIComponent(key),{method:'POST'});let j=await r.json();
  if(!j.ok)alert(j.error||'No se pudo completar la acción.');
+}
+async function finalizeSession(t){
+ if(!confirm('¿Finalizar la asesoría ahora? El QR se cerrará y se enviarán avisos de inasistencia a los estudiantes que no asistieron.'))return;
+ let b=document.getElementById('finishBtn');if(b)b.disabled=true;
+ let r=await fetch('/asesoria/api/session/'+encodeURIComponent(t)+'/finalize?key='+encodeURIComponent(key),{method:'POST'});let j=await r.json();
+ if(!j.ok){
+   if(b)b.disabled=false;
+   if(j.pending?.length){alert('Antes de finalizar, confirma o rechaza estos registros pendientes:\n\n'+j.pending.map(x=>'• '+x.name).join('\n'));}
+   else alert(j.error||'No se pudo finalizar la asesoría.');
+   return;
+ }
+ alert('Asesoría finalizada. Asistencias confirmadas: '+j.confirmed+'. Inasistencias registradas: '+j.absent+'.');
+ poll(t);
 }
 async function poll(t){
  let r=await fetch('/asesoria/api/session/'+encodeURIComponent(t)+'/status?key='+encodeURIComponent(key));let j=await r.json();
@@ -511,10 +548,11 @@ async function poll(t){
    return '<tr class="'+esc(x.status)+'"><td><b>'+esc(x.name)+'</b><div class=small>'+esc(x.status)+'</div></td><td>'+esc(x.time)+'</td><td>'+aviso+'</td><td>'+controls+'</td></tr>'
  }).join('');
  let abs=j.absences.map(x=>'<tr class=absent><td><b>'+esc(x.name)+'</b><div class=small>FALTA</div></td><td>—</td><td>'+(x.notified?'✓ Aviso de inasistencia enviado':('⚠ '+esc(x.error||'Pendiente')))+'</td><td>—</td></tr>').join('');
- let state=j.closed?('<span class="'+(j.finalized?'ok':'warn')+'"><b>'+esc(j.finalized?'CERRADA':'CERRADA · PENDIENTES POR RESOLVER')+'</b></span>'):'<span class=ok><b>ABIERTA</b></span>';
+ let state=j.closed?'<span class=bad><b>FINALIZADA '+esc(j.closed_time||'')+'</b></span>':'<span class=ok><b>EN CURSO</b></span>';
  let sheet=j.sheet_url?'<a class=btn target=_blank href="'+esc(j.sheet_url)+'">📊 Google Sheets</a>':('<span class=warn>'+esc(j.sheet_error||'Registro Sheets no disponible')+'</span>');
- list.innerHTML='<p>'+state+' · <b>Pendientes:</b> '+j.counts.pending+' · <b>Confirmados:</b> '+j.counts.confirmed+' · <b>Faltas notificadas:</b> '+j.counts.absent+'</p><p>'+sheet+'</p><table><tr><th>Alumno</th><th>Hora</th><th>Aviso a familia</th><th>Acción</th></tr>'+rows+abs+'</table>';
- setTimeout(()=>poll(t),2500)
+ let fb=document.getElementById('finishBtn');if(fb)fb.disabled=!!j.closed;
+ list.innerHTML='<p>'+state+' · <b>Pendientes:</b> '+j.counts.pending+' · <b>Confirmados:</b> '+j.counts.confirmed+' · <b>Faltas:</b> '+j.counts.absent+'</p><p>'+sheet+'</p><table><tr><th>Alumno</th><th>Hora</th><th>Aviso a familia</th><th>Acción</th></tr>'+rows+abs+'</table>';
+ if(!j.closed)setTimeout(()=>poll(t),2500)
 }
 </script>""".replace("KEY", repr(key))
         return HTMLResponse(page)
@@ -530,13 +568,13 @@ async function poll(t){
         section = str(body.get("section") or "").upper().replace(" ", "")
         if section not in {"2A", "2B", "5A", "5B"}:
             return JSONResponse({"ok": False, "error": "section_invalid"}, 400)
+
+        # Evita dos asesorías simultáneas de la misma sección dentro de la misma instancia.
+        active = next((x for x in SESSIONS.values() if x.get("section") == section and not x.get("closed")), None)
+        if active:
+            return JSONResponse(_session_public_payload(active, resumed=True))
+
         now = _now()
-        try:
-            end_at = _parse_end_at(str(body.get("end_time") or DEFAULT_END_TIME), now=now)
-        except ValueError as ex:
-            return JSONResponse({"ok": False, "error": str(ex)}, 400)
-        if end_at <= now:
-            return JSONResponse({"ok": False, "error": f"La hora de cierre {_display_time(end_at)} ya pasó. Elige una hora futura para esta sesión."}, 400)
         try:
             roster, unresolved = advisory_students(section)
         except Exception as ex:
@@ -551,8 +589,7 @@ async function poll(t){
             "date_iso": now.strftime("%Y-%m-%d"),
             "created_at": now.isoformat(timespec="seconds"),
             "created_at_display": now.strftime("%d/%m/%Y %H:%M:%S"),
-            "end_at": end_at.isoformat(timespec="seconds"),
-            "end_time": _display_time(end_at),
+            "close_mode": DEFAULT_CLOSE_MODE,
             "attendees": {},
             "allowed_codes": {x["code"] for x in roster},
             "roster_snapshot": roster,
@@ -567,27 +604,18 @@ async function poll(t){
         }
         SESSIONS[token] = ses
         await asyncio.to_thread(_append_session_start, ses)
-        asyncio.create_task(_deadline_worker(token))
-        url = f"{settings.public_base_url}/asesoria/r/{token}"
-        qr = qrcode.make(url)
-        buf = io.BytesIO()
-        qr.save(buf, format="PNG")
-        return JSONResponse({
-            "ok": True,
-            "token": token,
-            "section": section,
-            "date": ses["date"],
-            "end_time": ses["end_time"],
-            "checkin_url": url,
-            "qr_data_url": "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode(),
-            "roster_count": len(roster),
-            "roster_names": [x["name"] for x in roster],
-            "unresolved_allowlist": unresolved,
-            "teacher_confirmation": require_teacher_confirm,
-            "roster_source": roster_cfg.get("source", ""),
-            "sheet_url": ses.get("sheet_url", ""),
-            "sheet_error": ses.get("sheet_error", ""),
-        })
+        return JSONResponse(_session_public_payload(ses, resumed=False))
+
+    @mcp.custom_route("/asesoria/api/session/{token}/finalize", methods=["POST"])
+    async def finalize(request: Request):
+        if not admin_ok(request):
+            return JSONResponse({"ok": False, "error": "unauthorized"}, 401)
+        token = str(request.path_params.get("token") or "")
+        result = await asyncio.to_thread(_finalize_session, token)
+        if not result.get("ok"):
+            status_code = 409 if result.get("pending") else 404
+            return JSONResponse(result, status_code)
+        return JSONResponse(result)
 
     @mcp.custom_route("/asesoria/r/{token}", methods=["GET"])
     async def form(request: Request):
@@ -595,9 +623,8 @@ async function poll(t){
         ses = SESSIONS.get(token)
         if not ses:
             return HTMLResponse("<h2>Esta sesión ya no está disponible.</h2>", 404)
-        _ensure_due_closed(ses)
         if ses.get("closed"):
-            return HTMLResponse(f"<h2>La asesoría de {html.escape(ses['section'])} ya cerró a las {html.escape(ses['end_time'])}.</h2><p>Ya no se admiten nuevos registros.</p>", 410)
+            return HTMLResponse(f"<h2>La asesoría de {html.escape(ses['section'])} ya fue finalizada.</h2><p>Ya no se admiten nuevos registros.</p>", 410)
         device_cookie = str(request.cookies.get(DEVICE_COOKIE) or "").strip()
         new_cookie = False
         if not device_cookie:
@@ -612,7 +639,7 @@ async function poll(t){
 <meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'>
 <title>Asesoría de Matemática</title>
 <style>body{font-family:system-ui;max-width:600px;margin:30px auto;padding:20px;text-align:center}select,button{width:100%;font-size:18px;padding:14px;margin:10px 0}.note{font-size:14px;color:#666}.error{color:#a51b1b}.ok{color:#087a28}</style>
-<h1>Asesoría de Matemática</h1><p>SECTION · DATE</p><p><b>Cierre: ENDTIME</b></p>
+<h1>Asesoría de Matemática</h1><p>SECTION · DATE</p><p><b>Asesoría en curso</b></p>
 <p class=note>Solo aparecen los estudiantes convocados a nivelación del II trimestre. Este dispositivo puede registrar a un solo estudiante en esta sesión.</p>
 <select id=student><option value=''>— Selecciona tu nombre —</option>OPTIONS</select>
 <button id=btn onclick='go()'>REGISTRAR MI ASISTENCIA</button><div id=msg></div>
@@ -628,7 +655,6 @@ async function go(){
 </script>"""
         page = page.replace("SECTION", html.escape(ses["section"]))
         page = page.replace("DATE", html.escape(ses["date"]))
-        page = page.replace("ENDTIME", html.escape(ses["end_time"]))
         page = page.replace("OPTIONS", opts).replace("TOKEN", token)
         response = HTMLResponse(page)
         if new_cookie:
@@ -648,9 +674,8 @@ async function go(){
         ses = SESSIONS.get(token)
         if not ses:
             return JSONResponse({"ok": False, "error": "Sesión no disponible."}, 404)
-        _ensure_due_closed(ses)
         if ses.get("closed"):
-            return JSONResponse({"ok": False, "error": f"La asesoría cerró a las {ses['end_time']}. Ya no se admiten nuevos registros."}, 410)
+            return JSONResponse({"ok": False, "error": "La asesoría ya fue finalizada. Ya no se admiten nuevos registros."}, 410)
         try:
             body = await request.json()
         except Exception:
@@ -711,7 +736,6 @@ async function go(){
         ses = SESSIONS.get(token)
         if not ses:
             return JSONResponse({"ok": False, "error": "Sesión no disponible."}, 404)
-        _ensure_due_closed(ses)
         rec = ses["attendees"].get(code)
         if not rec:
             return JSONResponse({"ok": False, "error": "Registro no encontrado."}, 404)
@@ -723,8 +747,6 @@ async function go(){
         student = _student_by_code(ses, code)
         if student:
             await asyncio.to_thread(_append_final_student_row, ses, student, state="ASISTIÓ", rec=rec, observation="Asistencia confirmada por el docente.")
-        if ses.get("closed"):
-            await asyncio.to_thread(_resolve_pending_after_close, ses, code, confirmed=True)
         return JSONResponse({"ok": sent, "status": "confirmed", "notified": sent, "error": error}, 200 if sent else 502)
 
     @mcp.custom_route("/asesoria/api/session/{token}/reject/{code}", methods=["POST"])
@@ -736,7 +758,6 @@ async function go(){
         ses = SESSIONS.get(token)
         if not ses:
             return JSONResponse({"ok": False, "error": "Sesión no disponible."}, 404)
-        _ensure_due_closed(ses)
         rec = ses["attendees"].get(code)
         if not rec:
             return JSONResponse({"ok": False, "error": "Registro no encontrado."}, 404)
@@ -744,8 +765,6 @@ async function go(){
             return JSONResponse({"ok": False, "error": "No se puede rechazar porque la familia ya fue notificada."}, 409)
         rec["status"] = "rejected"
         rec["rejected_at"] = _now().isoformat(timespec="seconds")
-        if ses.get("closed"):
-            await asyncio.to_thread(_resolve_pending_after_close, ses, code, confirmed=False)
         return JSONResponse({"ok": True, "status": "rejected"})
 
     @mcp.custom_route("/asesoria/api/session/{token}/status", methods=["GET"])
@@ -755,7 +774,6 @@ async function go(){
         ses = SESSIONS.get(str(request.path_params.get("token") or ""))
         if not ses:
             return JSONResponse({"ok": False, "error": "not_found"}, 404)
-        _ensure_due_closed(ses)
         attendees = list(ses["attendees"].values())
         attendees.sort(key=lambda x: x.get("created_at", ""))
         absences = []
@@ -789,7 +807,8 @@ async function go(){
             "counts": counts,
             "closed": bool(ses.get("closed")),
             "finalized": bool(ses.get("finalized")),
-            "end_time": ses.get("end_time", ""),
+            "closed_time": ses.get("closed_time", ""),
+            "closed_at": ses.get("closed_at_display", ""),
             "sheet_url": ses.get("sheet_url", ""),
             "sheet_error": ses.get("sheet_error", ""),
             "close_error": ses.get("close_error", ""),
