@@ -70,7 +70,7 @@ mcp = FastMCP(
 classroom = ClassroomClient()
 sieweb = SieWebClient()
 bridge_queue = ClassroomBridgeQueue()
-install_attendance(mcp, sieweb, settings)
+install_attendance(mcp, sieweb, settings, classroom)
 
 
 
