@@ -8,11 +8,12 @@
   input { width:100%; box-sizing:border-box; padding:8px; margin-top:4px; }
   button { margin-top:12px; padding:8px 10px; width:100%; }
   #msg { margin-top:10px; white-space:pre-wrap; }
+  .danger { background:#b3261e; color:white; border:0; font-weight:700; }
   small { color:#555; }
 </style>
 </head>
 <body>
-  <h3>SieRoom Classroom Bridge 0.7.0</h3>
+  <h3>SieRoom Classroom Bridge 0.7.3</h3>
   <label>Servidor SieRoom</label>
   <input id="endpoint" value="https://santa-rita-escolar-tcpb.onrender.com" />
   <label>CLASSROOM_BRIDGE_SECRET</label>
@@ -20,6 +21,7 @@
   <small>Debe ser exactamente el mismo valor guardado en Render. No es tu contraseña de Google.</small>
   <button id="save">Guardar y probar</button>
   <button id="start">Iniciar puente</button>
+  <button id="reset" class="danger">RESET / DESATASCAR COLA</button>
   <div id="msg"></div>
   <script src="popup.js"></script>
 </body>

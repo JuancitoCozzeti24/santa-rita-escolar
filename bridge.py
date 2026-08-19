@@ -89,7 +89,59 @@ class ClassroomBridgeQueue:
         with self._lock:
             for job in self._jobs.values():
                 counts[job.status] = counts.get(job.status, 0) + 1
+        # Compatibilidad: conservamos los contadores por estado, pero añadimos
+        # un resumen explícito para que la extensión no confunda el historial
+        # (completed/failed/cancelled) con trabajos que siguen realmente en cola.
+        queued = counts.get("queued", 0)
+        claimed = counts.get("claimed", 0)
+        counts["work_remaining"] = queued + claimed
+        counts["active_total"] = queued + claimed
+        counts["history_total"] = sum(
+            counts.get(k, 0) for k in (
+                "completed", "failed", "cancelled",
+                "comment_posted", "comment_posted_followup_failed",
+            )
+        )
         return counts
+
+    def reset_active(self, *, retry_failed: bool = False) -> dict[str, Any]:
+        """Desatasca la cola sin borrar trabajos pendientes válidos.
+
+        - Todo trabajo `claimed` vuelve inmediatamente a `queued`, sin esperar
+          a que venza el lease de 90 s.
+        - Los trabajos ya `queued` se conservan tal cual.
+        - Por defecto NO reintenta `failed`, para evitar bucles de errores
+          permanentes. Puede pedirse explícitamente con retry_failed=True.
+        - No toca completed/cancelled ni borra el historial.
+
+        La publicación DOM del puente es idempotente por texto: content.js
+        comprueba si el comentario ya aparece antes de volver a enviarlo.
+        """
+        now = _now()
+        released_claimed: list[str] = []
+        retried_failed: list[str] = []
+        with self._lock:
+            for job in self._jobs.values():
+                if job.status == "claimed":
+                    job.status = "queued"
+                    job.claimed_until = None
+                    job.error = None
+                    job.updated_at = now
+                    released_claimed.append(job.id)
+                elif retry_failed and job.status == "failed":
+                    job.status = "queued"
+                    job.claimed_until = None
+                    job.error = None
+                    job.updated_at = now
+                    retried_failed.append(job.id)
+        return {
+            "ok": True,
+            "released_claimed": released_claimed,
+            "retried_failed": retried_failed,
+            "released_count": len(released_claimed),
+            "retried_failed_count": len(retried_failed),
+            "queue": self.stats(),
+        }
 
     def next_job(self, claim_seconds: int = 90) -> BridgeJob | None:
         now = _now()

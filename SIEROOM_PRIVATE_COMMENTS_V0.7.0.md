@@ -1,8 +1,8 @@
-# SieRoom SRC 0.7.0 — Comentarios privados de Classroom
+# SieRoom SRC 0.7.3 — Comentarios privados de Classroom
 
 ## Qué resuelve
 
-Google Classroom no expone una operación pública para escribir el comentario privado nativo de una entrega. SieRoom 0.7.0 añade un **puente local de navegador** para esa única acción y conserva las APIs oficiales para lectura de entregas, Drive, notas y devolución.
+Google Classroom no expone una operación pública para escribir el comentario privado nativo de una entrega. SieRoom 0.7.3 añade un **puente local de navegador** para esa única acción y conserva las APIs oficiales para lectura de entregas, Drive, notas y devolución.
 
 ## Arquitectura
 

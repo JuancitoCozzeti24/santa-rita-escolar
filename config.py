@@ -66,6 +66,3 @@ class Settings:
 
 
 settings = Settings()
-
-# Nota: ATTENDANCE_ADMIN_SECRET se lee directamente en server.py para evitar
-# invalidar despliegues existentes si todavía no está configurado.

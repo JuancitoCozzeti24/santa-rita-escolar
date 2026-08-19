@@ -1,4 +1,4 @@
-# Instalación SieRoom SRC 0.7.0
+# Instalación SieRoom SRC 0.7.3
 
 ## A. Subir servidor a GitHub/Render
 
@@ -20,7 +20,7 @@
 6. Abre la extensión `SieRoom Classroom Bridge`.
 7. Servidor: deja `https://santa-rita-escolar-tcpb.onrender.com`.
 8. En `CLASSROOM_BRIDGE_SECRET`, pega exactamente el mismo secreto guardado en Render.
-9. Pulsa `Guardar y probar`. Debe indicar conexión correcta y versión 0.7.0.
+9. Pulsa `Guardar y probar`. Debe indicar conexión correcta y versión 0.7.3.
 10. Pulsa `Iniciar puente` y deja abierta esa pestaña mientras procesas entregas.
 11. Asegúrate de estar iniciado en `classroom.google.com` con la cuenta docente correcta.
 

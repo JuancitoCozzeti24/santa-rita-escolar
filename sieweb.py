@@ -30,7 +30,7 @@ class SieWebClient:
         self.session.headers.update(
             {
                 "Accept": "application/json, text/plain, */*",
-                "User-Agent": "Mozilla/5.0 SieRoom-SRC/0.7.0",
+                "User-Agent": "Mozilla/5.0 SieRoom-SRC/0.7.3",
                 "X-Requested-With": "XMLHttpRequest",
                 "Cache-Control": "no-cache",
                 "Pragma": "no-cache",
@@ -444,20 +444,6 @@ class SieWebClient:
             if code not in found:
                 found.append(code)
 
-        # Una misma promoción con varias secciones: "5A y B", "2 A, B".
-        # El segundo literal no repite el grado, así que se hereda solo dentro del
-        # mismo fragmento explícito para evitar adivinar secciones.
-        for grade, letters_chunk in re.findall(
-            r"(?:\bS)?\s*([1-6])\s*[-.]?\s*([A-Z](?:\s*(?:Y|,|/)\s*[A-Z])+)\b",
-            raw,
-        ):
-            for letter in re.split(r"\s*(?:Y|,|/)\s*", letters_chunk):
-                if not re.fullmatch(r"[A-Z]", letter):
-                    continue
-                code = f"S{grade}{letter}"
-                if code not in found:
-                    found.append(code)
-
         # Formas escritas frecuentes en español.
         words = {
             "PRIMERO": "1", "PRIMER": "1",
@@ -472,93 +458,7 @@ class SieWebClient:
                 code = f"S{grade}{letter}"
                 if code not in found:
                     found.append(code)
-            for letters_chunk in re.findall(
-                rf"\b{word}(?:\s+(?:ANO|GRADO|SECUNDARIA))?\s+([A-Z](?:\s*(?:Y|,|/)\s*[A-Z])+)\b",
-                raw,
-            ):
-                for letter in re.split(r"\s*(?:Y|,|/)\s*", letters_chunk):
-                    if not re.fullmatch(r"[A-Z]", letter):
-                        continue
-                    code = f"S{grade}{letter}"
-                    if code not in found:
-                        found.append(code)
         return found
-
-    def resolve_student_recipients_by_sections(self, sections: list[str]) -> dict[str, Any]:
-        """Resuelve los USUCOD de alumnos de una o más secciones usando NGS.
-
-        El directorio de Mensajería identifica alumnos con TIPCOD=005. Para un
-        envío grupal no se intenta buscar literalmente frases como "estudiantes
-        de 5A y 5B": se filtra el directorio real por NGS y se devuelven los
-        USUCOD existentes, sin inventar destinatarios.
-        """
-        wanted: list[str] = []
-        for section in sections:
-            code = self._normalize_section(section)
-            if code and code not in wanted:
-                wanted.append(code)
-        if not wanted:
-            raise SieWebError("Debes indicar al menos una sección, por ejemplo 2A o 2B.")
-
-        raw = self.list_messaging_users()
-        rows = (raw.get("json") or []) if isinstance(raw, dict) else []
-
-        students_by_code: dict[str, dict[str, Any]] = {}
-        for row in rows:
-            if str(row.get("TIPCOD") or "") != "005":
-                continue
-            code = str(row.get("USUCOD") or "").strip()
-            if not code:
-                continue
-            row_ngs = self._normalize_text(row.get("NGS") or "").replace(" ", "")
-            if row_ngs not in wanted:
-                continue
-            previous = students_by_code.get(code)
-            if previous is None or (row.get("NGS") and not previous.get("NGS")):
-                students_by_code[code] = dict(row)
-
-        resolved = sorted(
-            [
-                {
-                    "USUCOD": str(row.get("USUCOD") or "").strip(),
-                    "USUNOM": row.get("USUNOM"),
-                    "TIPCOD": "005",
-                    "NGS": row.get("NGS"),
-                }
-                for row in students_by_code.values()
-            ],
-            key=lambda r: (
-                self._normalize_text(r.get("NGS") or ""),
-                self._normalize_text(r.get("USUNOM") or ""),
-            ),
-        )
-        recipient_codes = [r["USUCOD"] for r in resolved if r.get("USUCOD")]
-
-        per_section: dict[str, dict[str, int]] = {}
-        for section in wanted:
-            count = sum(
-                1
-                for row in resolved
-                if self._normalize_text(row.get("NGS") or "").replace(" ", "") == section
-            )
-            per_section[section] = {"students": count, "resolved": count}
-
-        missing_sections = [
-            section for section in wanted if per_section.get(section, {}).get("students", 0) == 0
-        ]
-        return {
-            "resolver": "messaging_directory_ngs_to_students",
-            "requires_class_context": False,
-            "directory_endpoint": "/lms/api/HyoUsuario/obtListaUsuariosIntranet?isMensajeria=true",
-            "sections": wanted,
-            "recipient_codes": recipient_codes,
-            "recipient_count": len(recipient_codes),
-            "students_found": len(resolved),
-            "resolved": resolved,
-            "missing_sections": missing_sections,
-            "complete": bool(recipient_codes) and not missing_sections,
-            "per_section": per_section,
-        }
 
     @classmethod
     def _family_match_score(cls, student_surname: str, family_name: str) -> tuple[float, str]:
