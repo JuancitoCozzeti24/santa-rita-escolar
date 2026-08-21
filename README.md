@@ -1,4 +1,13 @@
-# SieRoom SRC 0.7.3
+# SieRoom SRC 0.7.4
+
+## SIEweb — guardado seguro de notas (v0.7.4)
+
+- `sieweb_academics action=save_grades_verified` es la ruta recomendada para escribir calificaciones.
+- El payload se construye copiando la celda real devuelta por `obtRegistroNotas`; no se reconstruye desde cero.
+- El preflight exige que todas las notas solicitadas encuentren alumno y celda.
+- Después del guardado se vuelve a leer el gradebook y solo se declara éxito si las notas quedaron persistidas.
+- `update_grades` se conserva como operación de bajo nivel por compatibilidad.
+
 
 ## Comentarios privados nativos de Classroom mediante puente local
 
@@ -15,7 +24,7 @@ Esta versión añade `classroom_private_feedback`, una cola segura para retroali
 ### Instalación del puente
 
 1. En Render agrega `CLASSROOM_BRIDGE_SECRET` con un valor aleatorio largo. Puedes generarlo con `python generar_bridge_secret.py`.
-2. Despliega v0.7.3 y espera `LIVE`.
+2. Despliega v0.7.4 y espera `LIVE`.
 3. En Chrome/Brave abre `chrome://extensions`, activa **Modo de desarrollador** y pulsa **Cargar descomprimida**. Selecciona la carpeta `browser_extension`.
 4. Abre la extensión, pega el mismo `CLASSROOM_BRIDGE_SECRET`, pulsa **Guardar y probar** y luego **Iniciar puente**.
 5. Deja abierta la pestaña `SieRoom Classroom Bridge` mientras procesas entregas.

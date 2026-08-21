@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import copy
 import difflib
 import html as html_lib
 import json
 import re
 import unicodedata
 import uuid
+import time
 from typing import Any
 
 import requests
@@ -30,7 +32,7 @@ class SieWebClient:
         self.session.headers.update(
             {
                 "Accept": "application/json, text/plain, */*",
-                "User-Agent": "Mozilla/5.0 SieRoom-SRC/0.7.3",
+                "User-Agent": "Mozilla/5.0 SieRoom-SRC/0.7.4",
                 "X-Requested-With": "XMLHttpRequest",
                 "Cache-Control": "no-cache",
                 "Pragma": "no-cache",
@@ -692,6 +694,30 @@ class SieWebClient:
         class_name: str | None = None,
         notify: bool = True,
     ) -> dict[str, Any]:
+        if not records:
+            raise SieWebError("No se enviaron notas: la lista de registros está vacía.")
+        invalid = []
+        for index, record in enumerate(records):
+            if not isinstance(record, dict):
+                invalid.append({"index": index, "reason": "record_not_object"})
+                continue
+            missing = [
+                field for field in ("alucod", "idPersona", "notaNue")
+                if record.get(field) in (None, "")
+            ]
+            if missing:
+                invalid.append({
+                    "index": index,
+                    "alucod": record.get("alucod"),
+                    "reason": "missing_required_fields",
+                    "fields": missing,
+                })
+        if invalid:
+            raise SieWebError(
+                "No se enviaron notas porque hay registros incompletos: "
+                + json.dumps(invalid, ensure_ascii=False)
+            )
+
         payload = {
             "ano": year,
             "cursocod": course_code,
@@ -915,23 +941,276 @@ class SieWebClient:
                 errors.append({"record": r, "error": str(exc)})
         return {"updated": results, "errors": errors, "count_updated": len(results), "count_errors": len(errors)}
 
+    @staticmethod
+    def _normalize_grade_value(value: Any) -> str:
+        """Normaliza una nota para comparar números o niveles sin alterar el payload."""
+        text = str(value if value is not None else "").strip().upper().replace(",", ".")
+        if not text:
+            return ""
+        try:
+            number = float(text)
+            if number.is_integer():
+                return str(int(number))
+            return ("%f" % number).rstrip("0").rstrip(".")
+        except (TypeError, ValueError):
+            return text
+
+    @staticmethod
+    def _grade_field_values(note_obj: dict[str, Any]) -> dict[str, Any]:
+        """Extrae solo campos que parecen representar la nota actual/registrada."""
+        current_aliases = {
+            "notareg", "notaregistrada", "notaregistro", "notaguardada",
+            "notaactual", "nota", "calificacion", "grade", "valornota",
+        }
+        pending_aliases = {"notanue", "notanueva", "nuevanota"}
+        initial_aliases = {"notaini", "notainicial", "notainicio"}
+
+        def normalized_key(key: Any) -> str:
+            raw = unicodedata.normalize("NFKD", str(key))
+            raw = "".join(ch for ch in raw if not unicodedata.combining(ch))
+            return re.sub(r"[^a-z0-9]", "", raw.lower())
+
+        current: dict[str, Any] = {}
+        pending: dict[str, Any] = {}
+        initial: dict[str, Any] = {}
+        for key, value in (note_obj or {}).items():
+            nk = normalized_key(key)
+            if nk in current_aliases:
+                current[str(key)] = value
+            elif nk in pending_aliases:
+                pending[str(key)] = value
+            elif nk in initial_aliases:
+                initial[str(key)] = value
+
+        return current or pending or initial
+
+    @staticmethod
+    def _note_object_for_header(student: dict[str, Any], header_id: int) -> dict[str, Any] | None:
+        notes = student.get("notas") or {}
+        if not isinstance(notes, dict):
+            return None
+        note_obj = notes.get(str(header_id))
+        if note_obj is None:
+            note_obj = notes.get(header_id)
+        return note_obj if isinstance(note_obj, dict) else None
+
     def build_grade_records(self, summary: dict[str, Any], *, header_id: int,
                             grades_by_student_code: dict[str, str]) -> list[dict[str, Any]]:
-        records = []
-        for s in summary.get("students") or []:
-            code = str(s.get("alucod") or "")
-            if code not in grades_by_student_code:
+        """Construye el payload desde las celdas REALES devueltas por SieWeb.
+
+        v0.7.4: se copia íntegramente `note_obj` y solo se añade/modifica
+        `notaNue` más la identidad que ya utilizaba el guardado anterior.
+        """
+        requested = {
+            str(code).strip(): str(note).strip().upper()
+            for code, note in (grades_by_student_code or {}).items()
+            if str(code).strip()
+        }
+        if not requested:
+            raise SieWebError("No hay calificaciones para construir.")
+
+        by_code: dict[str, list[dict[str, Any]]] = {}
+        for student in summary.get("students") or []:
+            code = str(student.get("alucod") or "").strip()
+            if code:
+                by_code.setdefault(code, []).append(student)
+
+        criterion = None
+        for item in summary.get("criteria") or []:
+            if str(item.get("id")) == str(header_id):
+                criterion = item
+                break
+
+        records: list[dict[str, Any]] = []
+        problems: list[dict[str, Any]] = []
+
+        for code, note in requested.items():
+            matches = by_code.get(code) or []
+            if not matches:
+                problems.append({"alucod": code, "reason": "student_not_found"})
                 continue
-            note = str(grades_by_student_code[code]).strip().upper()
-            note_obj = (s.get("notas") or {}).get(str(header_id)) or {}
+            if len(matches) != 1:
+                problems.append({
+                    "alucod": code,
+                    "reason": "student_ambiguous",
+                    "matches": len(matches),
+                })
+                continue
+
+            student = matches[0]
+            note_obj = self._note_object_for_header(student, header_id)
             if not note_obj:
+                problems.append({
+                    "alucod": code,
+                    "reason": "grade_cell_not_found",
+                    "header_id": header_id,
+                })
                 continue
-            records.append({
-                "idNota": note_obj.get("idNota"),
-                "notaNue": note,
-                "nivelEva": note_obj.get("nivelEva"),
-                "idPersona": s.get("idPersona"),
-                "alucod": code,
-                "nemo": s.get("nemo"),
-            })
+
+            record = copy.deepcopy(note_obj)
+            record["notaNue"] = note
+            record["idPersona"] = student.get("idPersona")
+            record["alucod"] = code
+            record["nemo"] = student.get("nemo")
+
+            if record.get("nivelEva") is None and criterion is not None:
+                record["nivelEva"] = criterion.get("nivelEva")
+
+            records.append(record)
+
+        if problems:
+            raise SieWebError(
+                "No se construyó el lote de notas porque el preflight encontró "
+                f"{len(problems)} problema(s). No se envió nada. Detalle: "
+                + json.dumps(problems, ensure_ascii=False)
+            )
+
+        if len(records) != len(requested):
+            raise SieWebError(
+                "Preflight inconsistente: "
+                f"{len(requested)} notas solicitadas y {len(records)} registros preparados. "
+                "No se envió nada."
+            )
         return records
+
+    def verify_grade_changes(self, summary: dict[str, Any], *, header_id: int,
+                             grades_by_student_code: dict[str, str]) -> dict[str, Any]:
+        """Comprueba que el gradebook releído contenga las notas solicitadas."""
+        by_code = {
+            str(s.get("alucod") or "").strip(): s
+            for s in summary.get("students") or []
+            if str(s.get("alucod") or "").strip()
+        }
+        verified: list[dict[str, Any]] = []
+        failed: list[dict[str, Any]] = []
+
+        for raw_code, raw_expected in (grades_by_student_code or {}).items():
+            code = str(raw_code).strip()
+            expected = self._normalize_grade_value(raw_expected)
+            student = by_code.get(code)
+            if not student:
+                failed.append({"alucod": code, "reason": "student_not_found_after_save"})
+                continue
+            note_obj = self._note_object_for_header(student, header_id)
+            if not note_obj:
+                failed.append({
+                    "alucod": code,
+                    "reason": "grade_cell_not_found_after_save",
+                    "header_id": header_id,
+                })
+                continue
+
+            observed_fields = self._grade_field_values(note_obj)
+            observed_normalized = {
+                key: self._normalize_grade_value(value)
+                for key, value in observed_fields.items()
+            }
+            if expected and expected in observed_normalized.values():
+                verified.append({
+                    "alucod": code,
+                    "expected": expected,
+                    "observed": observed_fields,
+                })
+            else:
+                failed.append({
+                    "alucod": code,
+                    "reason": "grade_not_persisted",
+                    "expected": expected,
+                    "observed": observed_fields,
+                })
+
+        return {
+            "ok": not failed and len(verified) == len(grades_by_student_code or {}),
+            "requested_count": len(grades_by_student_code or {}),
+            "verified_count": len(verified),
+            "failed_count": len(failed),
+            "verified": verified,
+            "failed": failed,
+        }
+
+    def save_grades_verified(
+        self,
+        *,
+        year: str,
+        course_code: str,
+        class_period_id: int,
+        root_content_id: int,
+        period: int,
+        section_ng: list[dict[str, str]],
+        header_id: int,
+        grades_by_student_code: dict[str, str],
+        class_name: str | None = None,
+        extra_params: dict[str, Any] | None = None,
+        notify: bool = True,
+        verification_attempts: int = 3,
+    ) -> dict[str, Any]:
+        """Guarda notas con preflight y verificación posterior obligatoria."""
+        before = self.get_gradebook_summary(
+            class_period_id=class_period_id,
+            root_content_id=root_content_id,
+            extra_params=extra_params,
+        )
+        records = self.build_grade_records(
+            before,
+            header_id=header_id,
+            grades_by_student_code=grades_by_student_code,
+        )
+
+        update_result = self.update_grades(
+            year=year,
+            course_code=course_code,
+            class_period_id=class_period_id,
+            period=period,
+            section_ng=section_ng,
+            records=records,
+            class_name=class_name,
+            notify=notify,
+        )
+
+        attempts: list[dict[str, Any]] = []
+        verification: dict[str, Any] = {
+            "ok": False,
+            "requested_count": len(grades_by_student_code or {}),
+            "verified_count": 0,
+            "failed_count": len(grades_by_student_code or {}),
+            "verified": [],
+            "failed": [],
+        }
+        max_attempts = max(1, min(int(verification_attempts or 1), 5))
+        for attempt in range(1, max_attempts + 1):
+            after = self.get_gradebook_summary(
+                class_period_id=class_period_id,
+                root_content_id=root_content_id,
+                extra_params=extra_params,
+            )
+            verification = self.verify_grade_changes(
+                after,
+                header_id=header_id,
+                grades_by_student_code=grades_by_student_code,
+            )
+            attempts.append({
+                "attempt": attempt,
+                "ok": verification["ok"],
+                "verified_count": verification["verified_count"],
+                "failed_count": verification["failed_count"],
+            })
+            if verification["ok"]:
+                break
+            if attempt < max_attempts:
+                time.sleep(0.4 * attempt)
+
+        if not verification["ok"]:
+            raise SieWebError(
+                "SieWeb respondió a la actualización, pero la relectura no confirmó "
+                "todas las notas. No se declarará éxito. Verificación: "
+                + json.dumps(verification, ensure_ascii=False)
+            )
+
+        return {
+            "saved": True,
+            "requested_count": len(grades_by_student_code or {}),
+            "prepared_count": len(records),
+            "update": update_result,
+            "verification": verification,
+            "verification_attempts": attempts,
+        }

@@ -46,7 +46,10 @@ mcp = FastMCP(
         "HyoMensajeria/enviarMensaje. Para responder un hilo existente usa action=reply. No confundas correo nuevo con respuesta. "
         "Para PADRES/FAMILIAS DE SECCIONES COMPLETAS (por ejemplo 2.º A y 2.º B), NO uses resolve_class_context, idClase ni idAmbito: "
         "usa sieweb_resolve_family_group para previsualizar o sieweb_send_section_email para enviar. Esas acciones resuelven directamente "
-        "NGS -> alumnos TIPCOD=005 -> familias TIPCOD=004 desde el directorio de Mensajería. Antes de cualquier escritura o acción destructiva, "
+        "NGS -> alumnos TIPCOD=005 -> familias TIPCOD=004 desde el directorio de Mensajería. "
+        "Para GUARDAR NOTAS EN SIEWEB usa preferentemente sieweb_academics action=save_grades_verified: esa acción relee la matrícula real, "
+        "preserva la estructura original de cada celda, detiene el lote si falta un alumno/desempeño y verifica la persistencia después del PUT. "
+        "No construyas manualmente registros mínimos para HyoClasenota/actualizar. Antes de cualquier escritura o acción destructiva, "
         "resume exactamente el cambio al usuario y solo ejecuta cuando haya autorizado ese cambio. "
         "Los comentarios privados nativos de entregas se manejan en v0.7.3 mediante el puente local de navegador SieRoom Classroom Bridge; "
         "no se guardan cookies ni tokens de Google en Render. Para un flujo de retroalimentación privada usa classroom_private_feedback. "
@@ -85,7 +88,7 @@ async def classroom_bridge_http_status(request: Request):
         return _bridge_unauthorized()
     return JSONResponse({
         "ok": True,
-        "version": "0.7.3",
+        "version": "0.7.4",
         "bridge": "SieRoom Classroom Bridge",
         "queue": bridge_queue.stats(),
     })
@@ -108,7 +111,7 @@ async def classroom_bridge_http_reset(request: Request):
     result = bridge_queue.reset_active(retry_failed=retry_failed)
     return JSONResponse({
         **result,
-        "version": "0.7.3",
+        "version": "0.7.4",
         "message": "Cola desatascada. Los trabajos activos se conservaron y pueden procesarse de nuevo.",
     })
 
@@ -203,7 +206,7 @@ def _require_confirm(action: str, payload: dict[str, Any], confirmed: bool, *, d
 def sieweb_capabilities() -> str:
     """Capacidades de mensajería SieWeb. Confirma lectura, respuesta y creación/envío de correos nuevos."""
     return _ok({
-        "version": "0.7.3",
+        "version": "0.7.4",
         "list_inbox": True,
         "read_message": True,
         "reply_existing_message": True,
@@ -433,7 +436,7 @@ def sieweb_reply_message(
 def classroom_capabilities() -> str:
     """Resume el control práctico de Classroom expuesto por este conector y los límites de la API oficial."""
     return _ok({
-        "version": "0.7.3",
+        "version": "0.7.4",
         "tool_design": "Acciones agrupadas por recurso para reducir errores de selección de herramienta.",
         "implemented": {
             "courses": ["list/get/create/update/delete", "aliases", "gradebookSettings", "gradingPeriodSettings"],
@@ -495,7 +498,7 @@ def classroom_private_feedback(
     p = _json_obj(payload_json, {})
     if action == "status":
         return _ok({
-            "version": "0.7.3",
+            "version": "0.7.4",
             "bridge_configured": bool(settings.classroom_bridge_secret),
             "bridge_endpoint": f"{settings.public_base_url}/bridge/v1",
             "queue": bridge_queue.stats(),
@@ -999,7 +1002,7 @@ def sieweb_messaging(action: str, payload_json: str = "{}", confirmed: bool = Fa
     action = action.strip().lower(); p = _json_obj(payload_json, {})
     if action == "capabilities":
         return _ok({
-            "version": "0.7.3",
+            "version": "0.7.4",
             "list_inbox": True, "read_message": True, "reply_existing_message": True,
             "search_recipients": True, "compose_new_email": True, "send_new_email": True,
             "new_email_requires_existing_thread": False,
@@ -1069,7 +1072,7 @@ def sieweb_messaging(action: str, payload_json: str = "{}", confirmed: bool = Fa
 
 @mcp.tool()
 def sieweb_academics(action: str, payload_json: str = "{}", confirmed: bool = False) -> str:
-    """Registro académico de SieWeb agrupado. action: login_status|resolve_class_context|gradebook|gradebook_by_section|gradebook_summary|find_students|find_criteria|get_criteria|upsert_criteria|update_grades|build_grade_records|get_conclusion|get_conclusions_batch|save_conclusion|save_conclusions_batch."""
+    """Registro académico de SieWeb agrupado. action: login_status|resolve_class_context|gradebook|gradebook_by_section|gradebook_summary|find_students|find_criteria|get_criteria|upsert_criteria|build_grade_records|save_grades_verified|update_grades|get_conclusion|get_conclusions_batch|save_conclusion|save_conclusions_batch. Para guardar notas nuevas prefiere save_grades_verified; update_grades es una operación de bajo nivel para registros ya construidos."""
     action = action.strip().lower(); p = _json_obj(payload_json, {})
     if action == "login_status": return sieweb_login_status()
     if action == "resolve_class_context": return sieweb_resolve_class_context(str(p["section"]), int(p["period"]), str(p.get("course_code", "05")), p.get("id_ambito"))
@@ -1080,6 +1083,7 @@ def sieweb_academics(action: str, payload_json: str = "{}", confirmed: bool = Fa
     if action == "find_criteria": return sieweb_find_criteria(int(p["class_period_id"]), int(p["root_content_id"]), str(p["query"]), json.dumps(p.get("extra_params", {}), ensure_ascii=False))
     if action == "get_criteria": return sieweb_get_criteria(int(p["class_id"]), int(p["class_period_id"]), int(p["root_content_id"]), int(p.get("id_ambito", 518)), json.dumps(p.get("extra_params", {}), ensure_ascii=False))
     if action == "upsert_criteria": return sieweb_upsert_criteria(int(p["class_id"]), json.dumps(p.get("records", []), ensure_ascii=False), json.dumps(p.get("replica", {}), ensure_ascii=False), confirmed)
+    if action == "save_grades_verified": return sieweb_save_grades_verified(str(p["year"]), str(p["course_code"]), int(p["class_period_id"]), int(p["root_content_id"]), int(p["period"]), json.dumps(p["section_ng"], ensure_ascii=False), int(p["header_id"]), json.dumps(p.get("grades_by_student_code", {}), ensure_ascii=False), str(p.get("class_name", "")), json.dumps(p.get("extra_params", {}), ensure_ascii=False), confirmed)
     if action == "update_grades": return sieweb_update_grades(str(p["year"]), str(p["course_code"]), int(p["class_period_id"]), int(p["period"]), json.dumps(p["section_ng"], ensure_ascii=False), json.dumps(p.get("records", []), ensure_ascii=False), str(p.get("class_name", "")), confirmed)
     if action == "build_grade_records": return sieweb_build_grade_records(int(p["class_period_id"]), int(p["root_content_id"]), int(p["header_id"]), json.dumps(p.get("grades_by_student_code", {}), ensure_ascii=False), json.dumps(p.get("extra_params", {}), ensure_ascii=False))
     if action == "get_conclusion": return sieweb_get_conclusion(int(p["person_id"]), int(p["class_content_id"]), str(p["ng"]))
@@ -1151,6 +1155,86 @@ def sieweb_get_gradebook(
     )
 
 
+def sieweb_save_grades_verified(
+    year: str,
+    course_code: str,
+    class_period_id: int,
+    root_content_id: int,
+    period: int,
+    section_ng_json: str,
+    header_id: int,
+    grades_by_student_code_json: str,
+    class_name: str = "",
+    extra_params_json: str = "{}",
+    confirmed: bool = False,
+) -> str:
+    """Guarda notas SIEweb desde la matrícula real y verifica persistencia. Requiere confirmed=true."""
+    section_ng = json.loads(section_ng_json or "[]")
+    grade_map = {
+        str(k).strip(): str(v).strip().upper()
+        for k, v in json.loads(grades_by_student_code_json or "{}").items()
+        if str(k).strip()
+    }
+    extra = json.loads(extra_params_json or "{}")
+    if not grade_map:
+        raise ValueError("grades_by_student_code no puede estar vacío.")
+
+    summary = sieweb.get_gradebook_summary(
+        class_period_id=class_period_id,
+        root_content_id=root_content_id,
+        extra_params=extra,
+    )
+    records = sieweb.build_grade_records(
+        summary,
+        header_id=header_id,
+        grades_by_student_code=grade_map,
+    )
+    preview = {
+        "year": year,
+        "course_code": course_code,
+        "class_period_id": class_period_id,
+        "root_content_id": root_content_id,
+        "period": period,
+        "header_id": header_id,
+        "section_ng": section_ng,
+        "class_name": class_name,
+        "requested_count": len(grade_map),
+        "prepared_count": len(records),
+        "changes": [
+            {
+                "alucod": str(record.get("alucod") or ""),
+                "idPersona": record.get("idPersona"),
+                "idNota": record.get("idNota"),
+                "notaNue": record.get("notaNue"),
+                "preserved_fields": sorted(record.keys()),
+            }
+            for record in records
+        ],
+    }
+    if not confirmed:
+        return _ok({
+            "requires_confirmation": True,
+            "safe_mode": "save_grades_verified",
+            "preview": preview,
+        })
+
+    return _ok(
+        sieweb.save_grades_verified(
+            year=year,
+            course_code=course_code,
+            class_period_id=class_period_id,
+            root_content_id=root_content_id,
+            period=period,
+            section_ng=section_ng,
+            header_id=header_id,
+            grades_by_student_code=grade_map,
+            class_name=class_name or None,
+            extra_params=extra,
+            notify=bool(class_name),
+        )
+    )
+
+
 def sieweb_update_grades(
     year: str,
     course_code: str,
@@ -1161,7 +1245,7 @@ def sieweb_update_grades(
     class_name: str = "",
     confirmed: bool = False,
 ) -> str:
-    """Actualiza una o varias notas de SieWeb. Requiere confirmación explícita."""
+    """Actualiza notas con registros ya construidos (bajo nivel). Para un guardado nuevo usa save_grades_verified. Requiere confirmación explícita."""
     section_ng = json.loads(section_ng_json)
     records = json.loads(records_json)
     preview = {
@@ -1329,7 +1413,7 @@ def sieweb_gradebook_by_section(section: str, period: int, course_code: str = "0
 def sieweb_capabilities() -> str:
     """Indica explícitamente las capacidades de CIEWEB/SIEWEB disponibles en esta versión."""
     return _ok({
-        "version": "0.7.3",
+        "version": "0.7.4",
         "messaging": {
             "list_inbox": True,
             "read_message": True,
