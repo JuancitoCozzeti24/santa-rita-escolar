@@ -58,7 +58,7 @@ def test_v079_passes_exact_ambito_to_pre_and_post_verification_reads(monkeypatch
     )
     assert seen == [518,518]
     assert result["idAmbito"] == 518
-    assert result["context_guard"] == "exact-ambito-native-modal-roster-v0.7.14"
+    assert result["context_guard"] == "exact-ambito-native-modal-roster-v0.7.15"
 
 
 def test_v079_blocks_editor_rows_from_another_section_before_post(monkeypatch):

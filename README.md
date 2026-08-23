@@ -1,4 +1,19 @@
-# SieRoom SRC 0.7.14
+# SieRoom SRC 0.7.15
+
+## SIEWeb — matrícula completa para Classroom → Registro de Notas
+
+La v0.7.15 corrige el segundo bloqueo del flujo: el conector enviaba `objInfoRegIndividual[alucod]=False` al abrir el registro general. SIEWeb interpretaba ese valor como un filtro individual y omitía `dataAlumno`, aunque devolvía normalmente los criterios.
+
+- la lectura general omite `alucod` y envía `objInfoRegIndividual[tipoRegistro]=registroNotas`, como la interfaz oficial;
+- la lectura individual solo envía `alucod` cuando existe un código real;
+- la comprobación real de 2.º A pasó de **0 a 28 alumnos**, conservando los 51 criterios y el desempeño `AREAS PERIM.`;
+- se conserva el alta modal de v0.7.14, la verificación doble y el bloqueo de Nivel de Logro.
+
+La suite pasa **44/44 pruebas**. Consulta `SIEWEB_SYNC_V0.7.15.md` y `TEST_REPORT_V0.7.15.txt`.
+
+---
+
+# Historial — SieRoom SRC 0.7.14
 
 ## SIEWeb — alta nativa de desempeños sin `e0006` ni falso éxito
 

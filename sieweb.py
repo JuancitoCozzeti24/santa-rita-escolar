@@ -32,7 +32,7 @@ class SieWebClient:
         self.session.headers.update(
             {
                 "Accept": "application/json, text/plain, */*",
-                "User-Agent": "Mozilla/5.0 SieRoom-SRC/0.7.14",
+                "User-Agent": "Mozilla/5.0 SieRoom-SRC/0.7.15",
                 "X-Requested-With": "XMLHttpRequest",
                 "Cache-Control": "no-cache",
                 "Pragma": "no-cache",
@@ -946,7 +946,10 @@ class SieWebClient:
             "idContenido": int(root_content_id),
             "permisoMenu": 3,
             "idPeriodoAnt": int(previous_id),
-            "objInfoRegIndividual[alucod]": False,
+            # La UI oficial envía objInfoRegIndividual con tipoRegistro y solo
+            # agrega alucod cuando el usuario abre el registro individual. Enviar
+            # alucod=False filtra la respuesta y elimina dataAlumno por completo.
+            "objInfoRegIndividual[tipoRegistro]": "registroNotas",
             "chkNotFRET": False,
         }
         params.update(extra_params or {})
@@ -1875,7 +1878,7 @@ class SieWebClient:
         La UI oficial llama ``HyoClaseContenido/insertar`` con exactamente tres
         propiedades: ``registros``, ``idClase`` y ``datosReplica``. Para una alta,
         ``registros`` contiene el objeto ``defaultDataContenido`` del modal, no el
-        árbol ``resCriterios`` ni una plaza ``flExiste=false``. v0.7.14 replica ese
+        árbol ``resCriterios`` ni una plaza ``flExiste=false``. v0.7.15 conserva ese
         contrato y elimina los fallbacks que causaban e0006/falsos éxitos.
         """
         try:
@@ -2063,8 +2066,8 @@ class SieWebClient:
                 "operations":operations,"sent_record_count":0,"sent_node_count":0,
                 "write_strategy":"no-post-already-present","write_attempts":[],
                 "idAmbito":id_ambito,"CURSOCOD":write_course_code,
-                "context_guard":"exact-ambito-native-modal-roster-v0.7.14",
-                "mode":"ui-native-modal-coursecode-roster-v0.7.14",
+                "context_guard":"exact-ambito-native-modal-roster-v0.7.15",
+                "mode":"ui-native-modal-coursecode-roster-v0.7.15",
             }
 
         replica_for_post=self.build_native_replica_context(
@@ -2146,8 +2149,8 @@ class SieWebClient:
             "write_attempts":write_attempts,
             "idAmbito":id_ambito,
             "CURSOCOD":((getattr(self, "_last_criteria_context", {}) or {}).get("CURSOCOD")),
-            "context_guard":"exact-ambito-native-modal-roster-v0.7.14",
-            "mode":"ui-native-modal-coursecode-roster-v0.7.14",
+            "context_guard":"exact-ambito-native-modal-roster-v0.7.15",
+            "mode":"ui-native-modal-coursecode-roster-v0.7.15",
         }
 
     # ---------- Conclusiones descriptivas ----------
@@ -2414,7 +2417,7 @@ class SieWebClient:
             "criteria": headers,
             "students": students,
             "reader_diagnostics": {
-                "mode":"recursive-gradebook-v0.7.14",
+                "mode":"recursive-gradebook-v0.7.15",
                 "header_source":header_source,
                 "header_count":len(headers),
                 "student_source":student_source,
