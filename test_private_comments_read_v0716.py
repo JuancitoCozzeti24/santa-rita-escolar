@@ -33,9 +33,9 @@ def test_v0717_read_job_accepts_empty_comment_and_exposes_operation():
     assert public["status"] == "queued"
 
 
-def test_v0717_post_job_still_rejects_empty_comment():
+def test_v081_post_job_rejects_when_every_action_is_empty():
     queue = ClassroomBridgeQueue()
-    with pytest.raises(ValueError, match="no puede estar vacío"):
+    with pytest.raises(ValueError, match="necesita comentario, nota o devolución"):
         queue.enqueue(
             course_id="course",
             course_work_id="work",
@@ -73,10 +73,10 @@ def test_v0717_extension_mirrors_and_read_message_are_present():
     assert root_content == extension_content
     assert root_bridge == extension_bridge
     assert "SIEROOM_READ_PRIVATE_COMMENTS" in extension_content
-    assert "dom-v0.7.17-read" in extension_content
+    assert "dom-v0.8.1-read" in extension_content
     assert 'job.operation === "read_private_comments"' in extension_bridge
     assert "X-SieRoom-Bridge-Capabilities" in extension_bridge
-    assert "post_private_comment,read_private_comments" in extension_bridge
+    assert "post_private_comment,read_private_comments,browser_grade_return,teacher_account_guard" in extension_bridge
 
 
 def test_v0717_manifests_advertise_matching_version():
@@ -85,7 +85,8 @@ def test_v0717_manifests_advertise_matching_version():
         (ROOT / "browser_extension" / "manifest.json").read_text(encoding="utf-8")
     )
     assert root_manifest == extension_manifest
-    assert root_manifest["version"] == "0.7.17"
+    assert root_manifest["version"] == "0.8.1"
+    assert "scripting" in root_manifest["permissions"]
 
 
 def test_v0717_read_all_previews_every_submission(monkeypatch):
@@ -239,7 +240,7 @@ def test_v0717_accepts_structured_read_result(monkeypatch):
         "operation": "read_private_comments",
         "count": 1,
         "comments": [{"text": "Nota cuantitativa: 14", "markers": ["nota cuantitativa"]}],
-        "method": "dom-v0.7.17-read",
+        "method": "dom-v0.8.1-read",
     }
     response = asyncio.run(server.classroom_bridge_http_complete(_FakeBridgeRequest(
         job_id=job.id, body=read_result
@@ -248,3 +249,89 @@ def test_v0717_accepts_structured_read_result(monkeypatch):
     assert response.status_code == 200
     assert payload["job"]["status"] == "completed"
     assert payload["job"]["bridge_result"] == read_result
+
+
+def test_v081_grade_only_browser_job_is_allowed():
+    queue = ClassroomBridgeQueue()
+    job = queue.enqueue(
+        course_id="course",
+        course_work_id="work",
+        submission_id="submission",
+        submission_url="https://classroom.google.com/example",
+        operation="post_private_comment",
+        grade=17,
+    )
+    assert job.comment == ""
+    assert job.grade == 17
+
+
+def test_v081_teacher_email_guard_is_present_in_all_extension_surfaces():
+    popup_html = (ROOT / "browser_extension" / "popup.html").read_text(encoding="utf-8")
+    popup_js = (ROOT / "browser_extension" / "popup.js").read_text(encoding="utf-8")
+    bridge_js = (ROOT / "browser_extension" / "bridge.js").read_text(encoding="utf-8")
+    content_js = (ROOT / "browser_extension" / "content.js").read_text(encoding="utf-8")
+    assert 'id="teacherEmail"' in popup_html
+    assert 'chrome.storage.local.get(["endpoint", "teacherEmail", "secret"])' in popup_js
+    assert 'u.searchParams.set("authuser", email)' in bridge_js
+    assert "SIEROOM_CHECK_ACCOUNT" in bridge_js
+    assert "SIEROOM_CHECK_ACCOUNT" in content_js
+    assert "extractEmailsFromPage" in content_js
+
+
+def test_v081_server_accepts_verified_browser_grade_and_return(monkeypatch):
+    queue = ClassroomBridgeQueue()
+    job = queue.enqueue(
+        course_id="course",
+        course_work_id="work",
+        submission_id="submission",
+        submission_url="https://classroom.google.com/example",
+        comment="Muy bien",
+        grade=16,
+        return_after_comment=True,
+    )
+    queue.next_job()
+    monkeypatch.setattr(server, "bridge_queue", queue)
+    browser_result = {
+        "ok": True,
+        "method": "dom-v0.8.1",
+        "comment": {"ok": True, "alreadyPresent": False},
+        "browser_followup_done": True,
+        "browser_grade_applied": True,
+        "browser_grade": 16,
+        "browser_returned": True,
+    }
+    response = asyncio.run(server.classroom_bridge_http_complete(_FakeBridgeRequest(
+        job_id=job.id, body=browser_result
+    )))
+    payload = _json_response(response)
+    assert response.status_code == 200
+    assert payload["job"]["status"] == "completed"
+    assert payload["job"]["classroom_result"]["mode"] == "local_browser"
+    assert payload["job"]["classroom_result"]["teacher_account_guard"] is True
+
+
+def test_v081_server_rejects_unconfirmed_browser_grade(monkeypatch):
+    queue = ClassroomBridgeQueue()
+    job = queue.enqueue(
+        course_id="course",
+        course_work_id="work",
+        submission_id="submission",
+        submission_url="https://classroom.google.com/example",
+        grade=16,
+    )
+    queue.next_job()
+    monkeypatch.setattr(server, "bridge_queue", queue)
+    response = asyncio.run(server.classroom_bridge_http_complete(_FakeBridgeRequest(
+        job_id=job.id,
+        body={
+            "ok": True,
+            "browser_followup_done": True,
+            "browser_grade_applied": True,
+            "browser_grade": 14,
+            "browser_returned": False,
+        },
+    )))
+    payload = _json_response(response)
+    assert response.status_code == 409
+    assert payload["job"]["status"] == "failed"
+    assert "nota_distinta" in payload["job"]["error"]
