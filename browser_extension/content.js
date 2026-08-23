@@ -1,6 +1,6 @@
 (() => {
-  if (window.__SIEROOM_CLASSROOM_BRIDGE_080__) return;
-  window.__SIEROOM_CLASSROOM_BRIDGE_080__ = true;
+  if (window.__SIEROOM_CLASSROOM_BRIDGE_082__) return;
+  window.__SIEROOM_CLASSROOM_BRIDGE_082__ = true;
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const norm = (s) => String(s || "")
@@ -350,7 +350,7 @@
     const { label, composer, container } = await waitForPrivateSection();
     const beforeText = norm(container?.textContent || "");
     if (beforeText.includes(norm(text)) || commentVisibleOutsideComposer(text, composer)) {
-      return { ok: true, alreadyPresent: true, method: "dom-v0.8.1", url: location.href };
+      return { ok: true, alreadyPresent: true, method: "dom-v0.8.2", url: location.href };
     }
 
     composer.scrollIntoView({ block: "nearest", inline: "nearest" });
@@ -367,7 +367,7 @@
     while (Date.now() - started < 18000) {
       await sleep(500);
       if (commentVisibleOutsideComposer(text, composer)) {
-        return { ok: true, alreadyPresent: false, method: "dom-v0.8.1", url: location.href };
+        return { ok: true, alreadyPresent: false, method: "dom-v0.8.2", url: location.href };
       }
     }
     throw new Error("Se pulsó Enviar/Publicar, pero no pude confirmar visualmente que el comentario apareciera.");
@@ -607,7 +607,7 @@
 
     return {
       ok: true,
-      method: "dom-v0.8.1",
+      method: "dom-v0.8.2",
       url: location.href,
       comment: commentResult,
       grade: gradeResult,
@@ -631,7 +631,8 @@
   function privateCommentMarkers(text) {
     const t = norm(text);
     return [
-      "lo que hizo bien", "lo que debe mejorar", "sugerencias",
+      "lo que hizo bien", "lo que hiciste bien",
+      "lo que debe mejorar", "lo que debes mejorar", "sugerencias",
       "nota cuantitativa", "calificacion cuantitativa",
       "nota cualitativa", "calificacion cualitativa",
     ].filter((marker) => t.includes(marker));
@@ -644,11 +645,13 @@
       "comentarios privados", "private comments", "anade un comentario",
       "agrega un comentario", "escribe un comentario", "add a comment",
       "write a comment", "enviar", "send", "publicar", "post",
+      "instrucciones", "trabajo de los alumnos", "more_vert",
+      "more_vert mas opciones", "mas opciones",
     ].includes(t);
   }
 
-  function commentReadCandidates(container, label, composer) {
-    const semanticSelector = '[data-comment-id],[role="article"],[role="listitem"],li,div';
+  function commentReadCandidates(container, label, composer, structuredOnly = false) {
+    const semanticSelector = '[data-comment-id],[role="article"],[role="listitem"],div';
     const rows = [];
     for (const el of container.querySelectorAll(semanticSelector)) {
       if (!visible(el) || el === label || label?.contains?.(el)) continue;
@@ -656,8 +659,9 @@
       const text = cleanCommentText(el.innerText || el.textContent || "");
       if (text.length < 2 || text.length > 6000 || isPrivateCommentUiText(text)) continue;
       const markers = privateCommentMarkers(text);
-      const semantic = el.matches('[data-comment-id],[role="article"],[role="listitem"],li');
-      if (markers.length < 2 && !semantic) continue;
+      const semantic = el.matches('[data-comment-id],[role="article"],[role="listitem"]');
+      if (structuredOnly && markers.length < 2) continue;
+      if (!structuredOnly && markers.length < 2 && !semantic) continue;
       rows.push({ text, markers, semantic });
     }
 
@@ -673,9 +677,31 @@
   }
 
   async function readPrivateComments() {
-    const { label, composer, container } = await waitForPrivateSection();
+    // Una retroalimentación estructurada completa es evidencia suficiente aun si
+    // Classroom ocultó temporalmente el encabezado/editor del panel. Se exige al
+    // menos dos marcadores y nunca se aceptan textos de navegación como comentario.
+    await sleep(800);
+    const structuredFallback = commentReadCandidates(document.body, null, null, true);
+    if (structuredFallback.length) {
+      return {
+        ok: true,
+        operation: "read_private_comments",
+        count: structuredFallback.length,
+        comments: structuredFallback.map((row) => ({
+          text: row.text,
+          markers: row.markers,
+          structuredFeedback: true,
+        })),
+        private_section_verified: false,
+        structured_fallback_verified: true,
+        method: "dom-v0.8.2-read",
+        url: location.href,
+      };
+    }
+
+    const { label, composer, container } = await waitForPrivateSection(12000);
     await sleep(500);
-    const candidates = commentReadCandidates(container, label, composer);
+    const candidates = commentReadCandidates(container, label, composer, false);
     return {
       ok: true,
       operation: "read_private_comments",
@@ -685,7 +711,9 @@
         markers: row.markers,
         structuredFeedback: row.markers.length >= 2,
       })),
-      method: "dom-v0.8.1-read",
+      private_section_verified: Boolean(label),
+      structured_fallback_verified: false,
+      method: "dom-v0.8.2-read",
       url: location.href,
     };
   }
@@ -755,7 +783,7 @@
     if (!msg) return;
 
     if (msg.type === "SIEROOM_PING") {
-      sendResponse({ ok: true, version: "0.8.1", url: location.href });
+      sendResponse({ ok: true, version: "0.8.2", url: location.href });
       return;
     }
 

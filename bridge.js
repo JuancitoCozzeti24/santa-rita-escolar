@@ -109,7 +109,7 @@ async function bridgeFetch(path, options = {}) {
   headers.set("X-SieRoom-Bridge-Version", chrome.runtime.getManifest().version);
   headers.set(
     "X-SieRoom-Bridge-Capabilities",
-    "post_private_comment,read_private_comments,browser_grade_return,teacher_account_guard"
+    "post_private_comment,read_private_comments,verified_private_comment_read_v2,browser_grade_return,teacher_account_guard"
   );
   if (options.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
   const r = await fetch(`${c.endpoint}${path}`, { ...options, headers, cache: "no-store" });
@@ -177,9 +177,10 @@ function promiseTimeout(promise, ms, message) {
 
 async function ensureContentScript(tabId, generation = resetGeneration) {
   assertGeneration(generation);
+  const expectedVersion = chrome.runtime.getManifest().version;
   try {
     const pong = await chrome.tabs.sendMessage(tabId, { type: "SIEROOM_PING" });
-    if (pong?.ok) return true;
+    if (pong?.ok && pong?.version === expectedVersion) return true;
   } catch (_) {}
 
   // Si Classroom navegó internamente o Chrome descartó el content script,
@@ -191,7 +192,7 @@ async function ensureContentScript(tabId, generation = resetGeneration) {
     });
     await sleep(350);
     const pong = await chrome.tabs.sendMessage(tabId, { type: "SIEROOM_PING" });
-    return Boolean(pong?.ok);
+    return Boolean(pong?.ok && pong?.version === expectedVersion);
   } catch (_) {
     return false;
   }
@@ -255,7 +256,7 @@ async function processJob(job, generation) {
     assertGeneration(generation);
 
     const isRead = job.operation === "read_private_comments";
-    // v0.8.1 conserva comentario + calificación + devolución en la MISMA
+    // v0.8.2 conserva comentario + calificación + devolución en la MISMA
     // sesión del navegador y añade lectura segura bajo la cuenta docente.
     const result = await sendToContent(tab.id, isRead ? {
       type: "SIEROOM_READ_PRIVATE_COMMENTS"
@@ -311,7 +312,7 @@ async function processJob(job, generation) {
       // Compatibilidad temporal con servidor 0.7.x: ese servidor intenta repetir
       // nota/devolución por API y puede recibir 403. Si el navegador YA confirmó
       // ambas acciones, no convertimos un éxito real en un fallo local.
-      log(`Trabajo ${job.id} completado en Classroom. El servidor antiguo reportó seguimiento API parcial; actualiza Render a v0.8.1 para limpiar ese estado.`);
+      log(`Trabajo ${job.id} completado en Classroom. El servidor antiguo reportó seguimiento API parcial; actualiza Render a v0.8.2 para limpiar ese estado.`);
       return { completedInBrowser: true, legacyServerPartial: true };
     }
     log(`Trabajo ${job.id} completado: comentario/nota/devolución confirmados.`);

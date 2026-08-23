@@ -1,11 +1,11 @@
-# SieRoom Classroom Bridge 0.8.1
+# SieRoom Classroom Bridge 0.8.2
 
 Este componente local permite que SieRoom lea y publique **comentarios privados nativos** en entregas de Google Classroom usando la sesión ya iniciada en Chrome.
 
 - No copia ni envía cookies de Google a Render.
 - No guarda el `GOOGLE_REFRESH_TOKEN` en la extensión.
 - Render solo mantiene una cola temporal de trabajos y recibe el texto leído o la confirmación de que el comentario se publicó.
-- La nota y la devolución se siguen haciendo por la API oficial de Classroom después de confirmar el comentario.
+- La nota y la devolución pueden confirmarse en la misma sesión local del navegador, sin exponer la sesión de Google a Render.
 
 ## Instalación
 
@@ -19,7 +19,7 @@ Este componente local permite que SieRoom lea y publique **comentarios privados 
 
 Si Google cambia la interfaz de Classroom, el puente puede necesitar una actualización de selectores. Las demás capacidades de SieRoom siguen usando las APIs oficiales.
 
-## Cuenta docente y lectura privada — protegido en 0.8.1
+## Cuenta docente y lectura privada — protegido en 0.8.2
 
 - La operación `read_private_comments` abre la entrega real y localiza exclusivamente el panel **Comentarios privados**.
 - Reconoce retroalimentaciones estructuradas mediante encabezados como “Lo que hizo bien”, “Lo que debe mejorar”, “Sugerencias”, “Nota cuantitativa” y “Calificación cualitativa”.
@@ -29,8 +29,10 @@ Si Google cambia la interfaz de Classroom, el puente puede necesitar una actuali
 - Cada entrega se abre con `authuser=<correo>` y se verifica la cuenta visible antes de cualquier lectura o escritura.
 - Si aparece una cuenta diferente, la cola se pausa sin publicar, calificar ni devolver.
 - Los flujos de comentario, calificación y devolución de v0.8.0 permanecen disponibles.
-- La extensión anuncia sus capacidades en cada consulta. Las copias antiguas no pueden reclamar trabajos de lectura.
-- El servidor rechaza cualquier respuesta que no incluya una lista real de comentarios y un conteo coherente.
+- La extensión anuncia `verified_private_comment_read_v2`. Las copias antiguas no pueden reclamar trabajos de lectura.
+- El lector descarta “Instrucciones”, “Trabajo de los alumnos”, “Más opciones” y otros textos de navegación.
+- El servidor exige fuente verificada, método v0.8.2 y objetos de comentario estructuralmente válidos.
+- Si una pestaña conserva un `content.js` anterior, el Bridge compara versiones y reinyecta el archivo actual.
 
 
 ## Cambios en 0.7.2

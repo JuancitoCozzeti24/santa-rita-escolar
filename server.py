@@ -56,7 +56,7 @@ mcp = FastMCP(
         "resume exactamente el cambio al usuario y solo ejecuta cuando haya autorizado ese cambio. "
         "Los comentarios privados nativos de entregas se manejan mediante el puente local de navegador SieRoom Classroom Bridge; "
         "no se guardan cookies ni tokens de Google en Render. Para un flujo de retroalimentación privada usa classroom_private_feedback. "
-        "v0.8.1 permite leer y publicar comentarios privados, calificar y devolver bajo una cuenta docente verificada. "
+        "v0.8.2 permite leer y publicar comentarios privados, calificar y devolver bajo una cuenta docente verificada. "
         "Si se solicita comentar, calificar y devolver, primero prepara/revisa la retroalimentación, luego encola el comentario privado y deja que el puente lo publique; "
         "solo después el servidor aplica la nota/devolución oficial configurada para ese trabajo."
     ),
@@ -92,7 +92,7 @@ async def classroom_bridge_http_status(request: Request):
         return _bridge_unauthorized()
     return JSONResponse({
         "ok": True,
-        "version": "0.8.1",
+        "version": "0.8.2",
         "bridge": "SieRoom Classroom Bridge",
         "queue": bridge_queue.stats(),
     })
@@ -115,7 +115,7 @@ async def classroom_bridge_http_reset(request: Request):
     result = bridge_queue.reset_active(retry_failed=retry_failed)
     return JSONResponse({
         **result,
-        "version": "0.8.1",
+        "version": "0.8.2",
         "message": "Cola desatascada. Los trabajos activos se conservaron y pueden procesarse de nuevo.",
     })
 
@@ -131,7 +131,12 @@ async def classroom_bridge_http_next(request: Request):
         if item.strip()
     }
     allowed_operations = {"post_private_comment"}
-    if "read_private_comments" in capabilities:
+    verified_read_capability = "verified_private_comment_read_v2"
+    read_capable = (
+        "read_private_comments" in capabilities
+        and verified_read_capability in capabilities
+    )
+    if read_capable:
         allowed_operations.add("read_private_comments")
     job = bridge_queue.next_job(allowed_operations=allowed_operations)
     if not job:
@@ -140,11 +145,11 @@ async def classroom_bridge_http_next(request: Request):
             "ok": True,
             "job": None,
             "read_waiting_for_compatible_bridge": bool(
-                read_waiting and "read_private_comments" not in capabilities
+                read_waiting and not read_capable
             ),
             "required_capability": (
-                "read_private_comments"
-                if read_waiting and "read_private_comments" not in capabilities
+                verified_read_capability
+                if read_waiting and not read_capable
                 else None
             ),
         })
@@ -167,10 +172,50 @@ async def classroom_bridge_http_complete(request: Request):
         result = body if isinstance(body, dict) else {}
         comments = result.get("comments")
         count = result.get("count")
+        method = str(result.get("method") or "")
+        private_section_verified = result.get("private_section_verified") is True
+        structured_fallback_verified = result.get("structured_fallback_verified") is True
+        ui_only_texts = {
+            "instrucciones",
+            "trabajo de los alumnos",
+            "more_vert",
+            "more_vert más opciones",
+            "más opciones",
+        }
+
+        valid_comments = isinstance(comments, list)
+        if valid_comments:
+            for comment in comments:
+                if not isinstance(comment, dict):
+                    valid_comments = False
+                    break
+                text = " ".join(str(comment.get("text") or "").split()).strip()
+                markers = comment.get("markers")
+                structured = comment.get("structuredFeedback")
+                if (
+                    not text
+                    or text.lower() in ui_only_texts
+                    or not isinstance(markers, list)
+                    or any(not isinstance(marker, str) for marker in markers)
+                    or not isinstance(structured, bool)
+                ):
+                    valid_comments = False
+                    break
+
+        valid_source = private_section_verified
+        if structured_fallback_verified:
+            valid_source = bool(comments) and all(
+                isinstance(comment, dict)
+                and comment.get("structuredFeedback") is True
+                and len(comment.get("markers") or []) >= 2
+                for comment in comments
+            )
         valid_read_result = (
             result.get("ok") is True
             and result.get("operation") == "read_private_comments"
-            and isinstance(comments, list)
+            and method == "dom-v0.8.2-read"
+            and valid_comments
+            and valid_source
             and isinstance(count, int)
             and not isinstance(count, bool)
             and count == len(comments)
@@ -182,7 +227,7 @@ async def classroom_bridge_http_complete(request: Request):
                 str(
                     result.get("error")
                     or (
-                        "bridge_incompatible_read_result: actualiza y recarga SieRoom Bridge v0.8.1."
+                        "bridge_incompatible_read_result: actualiza y recarga SieRoom Bridge v0.8.2."
                         if incompatible
                         else "El puente no pudo leer los comentarios privados."
                     )
@@ -301,7 +346,7 @@ def _require_confirm(action: str, payload: dict[str, Any], confirmed: bool, *, d
 def sieweb_capabilities() -> str:
     """Capacidades de mensajería SieWeb. Confirma lectura, respuesta y creación/envío de correos nuevos."""
     return _ok({
-        "version": "0.8.1",
+        "version": "0.8.2",
         "list_inbox": True,
         "read_message": True,
         "reply_existing_message": True,
@@ -542,7 +587,7 @@ def sieweb_reply_message(
 def classroom_capabilities() -> str:
     """Resume el control práctico de Classroom expuesto por este conector y los límites de la API oficial."""
     return _ok({
-        "version": "0.8.1",
+        "version": "0.8.2",
         "tool_design": "Acciones agrupadas por recurso para reducir errores de selección de herramienta.",
         "implemented": {
             "courses": ["list/get/create/update/delete", "aliases", "gradebookSettings", "gradingPeriodSettings"],
@@ -576,7 +621,7 @@ def classroom_capabilities() -> str:
             "profiles_guardians": ["user profile", "capability checks", "guardians list/get/delete", "guardian invitations list/get/create/cancel"],
         },
         "official_api_limits": {
-            "private_submission_comments": "La API oficial no expone lectura/escritura de comentarios privados. v0.8.1 usa un puente local con negociación de capacidades y guardia de correo docente para leerlos o publicarlos en la interfaz web autenticada, sin enviar cookies de Google a Render.",
+            "private_submission_comments": "La API oficial no expone lectura/escritura de comentarios privados. v0.8.2 usa un puente local con lectura verificada, negociación de capacidades y guardia de correo docente para leerlos o publicarlos en la interfaz web autenticada, sin enviar cookies de Google a Render.",
             "stream_announcement_comments": "No hay endpoint oficial de Classroom para leer/escribir comentarios del tablón/anuncios. Sí se pueden crear, editar, programar y borrar anuncios.",
             "overall_course_grade": "La API no expone la nota global calculada como campo editable; puede calcularse localmente con datos disponibles.",
             "rubric_criterion_scores": "Los puntajes por criterio pueden leerse en StudentSubmission, pero no escribirse mediante la API.",
@@ -608,14 +653,14 @@ def classroom_private_feedback(
     p = _json_obj(payload_json, {})
     if action == "status":
         return _ok({
-            "version": "0.8.1",
+            "version": "0.8.2",
             "bridge_configured": bool(settings.classroom_bridge_secret),
             "bridge_endpoint": f"{settings.public_base_url}/bridge/v1",
             "queue": bridge_queue.stats(),
             "mode": "local_browser_bridge",
             "google_session_stored_on_render": False,
             "read_private_comments": True,
-            "note": "El puente v0.8.1 debe estar abierto en Chrome y configurado con el correo docente correcto de Classroom.",
+            "note": "El puente v0.8.2 debe estar abierto en Chrome y configurado con el correo docente correcto de Classroom.",
         })
     if action == "job":
         job = bridge_queue.get(job_id)
@@ -1168,7 +1213,7 @@ def sieweb_messaging(action: str, payload_json: str = "{}", confirmed: bool = Fa
     action = action.strip().lower(); p = _json_obj(payload_json, {})
     if action == "capabilities":
         return _ok({
-            "version": "0.8.1",
+            "version": "0.8.2",
             "list_inbox": True, "read_message": True, "reply_existing_message": True,
             "search_recipients": True, "compose_new_email": True, "send_new_email": True,
             "new_email_requires_existing_thread": False,
@@ -1618,7 +1663,7 @@ def sieweb_gradebook_by_section(section: str, period: int, course_code: str = "0
 def sieweb_capabilities() -> str:
     """Indica explícitamente las capacidades de CIEWEB/SIEWEB disponibles en esta versión."""
     return _ok({
-        "version": "0.8.1",
+        "version": "0.8.2",
         "messaging": {
             "list_inbox": True,
             "read_message": True,
