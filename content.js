@@ -344,9 +344,89 @@
     throw new Error("Se pulsó Enviar/Publicar, pero no pude confirmar visualmente que el comentario apareciera.");
   }
 
+  function cleanCommentText(value) {
+    return String(value || "")
+      .replace(/\r/g, "")
+      .replace(/[ \t]+\n/g, "\n")
+      .replace(/\n[ \t]+/g, "\n")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+  }
+
+  function privateCommentMarkers(text) {
+    const t = norm(text);
+    return [
+      "lo que hizo bien", "lo que debe mejorar", "sugerencias",
+      "nota cuantitativa", "calificacion cuantitativa",
+      "nota cualitativa", "calificacion cualitativa",
+    ].filter((marker) => t.includes(marker));
+  }
+
+  function isPrivateCommentUiText(text) {
+    const t = norm(text);
+    if (!t) return true;
+    return [
+      "comentarios privados", "private comments", "anade un comentario",
+      "agrega un comentario", "escribe un comentario", "add a comment",
+      "write a comment", "enviar", "send", "publicar", "post",
+    ].includes(t);
+  }
+
+  function commentReadCandidates(container, label, composer) {
+    const semanticSelector = '[data-comment-id],[role="article"],[role="listitem"],li,div';
+    const rows = [];
+    for (const el of container.querySelectorAll(semanticSelector)) {
+      if (!visible(el) || el === label || label?.contains?.(el)) continue;
+      if (el === composer || composer?.contains?.(el) || el.contains?.(composer)) continue;
+      const text = cleanCommentText(el.innerText || el.textContent || "");
+      if (text.length < 2 || text.length > 6000 || isPrivateCommentUiText(text)) continue;
+      const markers = privateCommentMarkers(text);
+      const semantic = el.matches('[data-comment-id],[role="article"],[role="listitem"],li');
+      if (markers.length < 2 && !semantic) continue;
+      rows.push({ text, markers, semantic });
+    }
+
+    // Los contenedores de Classroom están anidados. Elegimos primero el nodo más
+    // pequeño que conserva el comentario completo y descartamos padres que solo
+    // repiten el mismo texto junto con controles de interfaz.
+    rows.sort((a, b) => a.text.length - b.text.length);
+    const chosen = [];
+    for (const row of rows) {
+      const key = norm(row.text);
+      if (chosen.some((item) => norm(item.text) === key)) continue;
+      if (chosen.some((item) => key.includes(norm(item.text)) && key.length > norm(item.text).length + 35)) continue;
+      chosen.push(row);
+    }
+    return chosen;
+  }
+
+  async function readPrivateComments() {
+    const { label, composer, container } = await waitForPrivateSection();
+    await sleep(500);
+    const candidates = commentReadCandidates(container, label, composer);
+    return {
+      ok: true,
+      operation: "read_private_comments",
+      count: candidates.length,
+      comments: candidates.map((row) => ({
+        text: row.text,
+        markers: row.markers,
+        structuredFeedback: row.markers.length >= 2,
+      })),
+      method: "dom-v0.7.16-read",
+      url: location.href,
+    };
+  }
+
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-    if (!msg || msg.type !== "SIEROOM_POST_PRIVATE_COMMENT") return;
-    postPrivateComment(msg.comment)
+    if (!msg) return;
+    const task = msg.type === "SIEROOM_POST_PRIVATE_COMMENT"
+      ? postPrivateComment(msg.comment)
+      : msg.type === "SIEROOM_READ_PRIVATE_COMMENTS"
+        ? readPrivateComments()
+        : null;
+    if (!task) return;
+    task
       .then((result) => sendResponse(result))
       .catch((err) => sendResponse({ ok: false, error: String(err?.message || err), url: location.href }));
     return true;
