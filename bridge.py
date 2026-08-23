@@ -18,7 +18,8 @@ class BridgeJob:
     course_work_id: str
     submission_id: str
     submission_url: str
-    comment: str
+    comment: str = ""
+    operation: str = "post_private_comment"
     grade: float | None = None
     return_after_comment: bool = False
     status: str = "queued"
@@ -55,12 +56,16 @@ class ClassroomBridgeQueue:
         course_work_id: str,
         submission_id: str,
         submission_url: str,
-        comment: str,
+        comment: str = "",
+        operation: str = "post_private_comment",
         grade: float | None = None,
         return_after_comment: bool = False,
     ) -> BridgeJob:
+        operation = str(operation or "post_private_comment").strip().lower()
+        if operation not in {"post_private_comment", "read_private_comments"}:
+            raise ValueError(f"Operación de Bridge no soportada: {operation}")
         comment = str(comment or "").strip()
-        if not comment:
+        if operation == "post_private_comment" and not comment:
             raise ValueError("El comentario privado no puede estar vacío.")
         job = BridgeJob(
             id=str(uuid4()),
@@ -69,6 +74,7 @@ class ClassroomBridgeQueue:
             submission_id=str(submission_id),
             submission_url=str(submission_url),
             comment=comment,
+            operation=operation,
             grade=float(grade) if grade is not None else None,
             return_after_comment=bool(return_after_comment),
         )
@@ -170,11 +176,18 @@ class ClassroomBridgeQueue:
             job.updated_at = _now()
             return job
 
-    def mark_completed(self, job_id: str, classroom_result: dict[str, Any] | None = None) -> BridgeJob:
+    def mark_completed(
+        self,
+        job_id: str,
+        classroom_result: dict[str, Any] | None = None,
+        bridge_result: dict[str, Any] | None = None,
+    ) -> BridgeJob:
         with self._lock:
             job = self._jobs[str(job_id)]
             job.status = "completed"
             job.classroom_result = classroom_result or {}
+            if bridge_result is not None:
+                job.bridge_result = bridge_result
             job.error = None
             job.claimed_until = None
             job.updated_at = _now()
