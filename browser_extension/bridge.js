@@ -112,7 +112,7 @@ async function sendToContent(tabId, payload, attempts = 12, generation = resetGe
       const response = await promiseTimeout(
         chrome.tabs.sendMessage(tabId, payload),
         65000,
-        "Classroom tardó demasiado en responder al comentario privado."
+        "Classroom tardó demasiado en procesar el panel de comentarios privados."
       );
       if (response) return response;
     } catch (e) {
@@ -146,18 +146,29 @@ async function processJob(job, generation) {
     await sleep(2600);
     assertGeneration(generation);
 
-    const result = await sendToContent(tab.id, {
+    const isRead = job.operation === "read_private_comments";
+    const result = await sendToContent(tab.id, isRead ? {
+      type: "SIEROOM_READ_PRIVATE_COMMENTS"
+    } : {
       type: "SIEROOM_POST_PRIVATE_COMMENT",
       comment: job.comment
     }, 12, generation);
     assertGeneration(generation);
 
-    if (!result?.ok) throw new Error(result?.error || "Classroom no confirmó el comentario privado.");
-    log(`Comentario publicado para ${job.submission_id}${result.alreadyPresent ? " (ya existía)" : ""}.`);
+    if (!result?.ok) {
+      throw new Error(result?.error || (isRead
+        ? "Classroom no devolvió los comentarios privados."
+        : "Classroom no confirmó el comentario privado."));
+    }
+    if (isRead) {
+      log(`Comentarios leídos para ${job.submission_id}: ${Number(result.count || 0)}.`);
+    } else {
+      log(`Comentario publicado para ${job.submission_id}${result.alreadyPresent ? " (ya existía)" : ""}.`);
+    }
     const done = await complete(job, result);
     assertGeneration(generation);
 
-    if (done.status === 207 || done.data?.partial) {
+    if (!isRead && (done.status === 207 || done.data?.partial)) {
       log(`Comentario publicado, pero falló nota/devolución: ${done.data?.job?.error || "error de seguimiento"}`);
     } else {
       log(`Trabajo ${job.id} completado.`);
