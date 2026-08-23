@@ -32,7 +32,7 @@ class SieWebClient:
         self.session.headers.update(
             {
                 "Accept": "application/json, text/plain, */*",
-                "User-Agent": "Mozilla/5.0 SieRoom-SRC/0.7.4",
+                "User-Agent": "Mozilla/5.0 SieRoom-SRC/0.7.6",
                 "X-Requested-With": "XMLHttpRequest",
                 "Cache-Control": "no-cache",
                 "Pragma": "no-cache",
@@ -232,27 +232,213 @@ class SieWebClient:
             params={"carpeta": folder_id, "idMensaje": message_id},
         )
 
-    def send_reply(
+    @staticmethod
+    def _reply_detail_body(detail: dict[str, Any]) -> dict[str, Any]:
+        """Devuelve el objeto útil de ``obtDetalle`` sin asumir un único wrapper.
+
+        SieWeb ha devuelto tanto objetos directos como respuestas envueltas en ``json``
+        en distintas rutas. Mantener esta normalización local evita que una variación
+        menor de la respuesta rompa la preparación de una respuesta al hilo.
+        """
+        if not isinstance(detail, dict):
+            return {}
+        body = detail.get("json")
+        return body if isinstance(body, dict) else detail
+
+    @classmethod
+    def _find_first_recursive(cls, value: Any, keys: tuple[str, ...]) -> Any:
+        wanted = {str(key).lower() for key in keys}
+        if isinstance(value, dict):
+            for key, item in value.items():
+                if str(key).lower() in wanted and item not in (None, "", [], {}):
+                    return item
+            for item in value.values():
+                found = cls._find_first_recursive(item, keys)
+                if found not in (None, "", [], {}):
+                    return found
+        elif isinstance(value, list):
+            for item in value:
+                found = cls._find_first_recursive(item, keys)
+                if found not in (None, "", [], {}):
+                    return found
+        return None
+
+    @classmethod
+    def _reply_sender_code(cls, body: dict[str, Any]) -> str:
+        """Extrae el USUCOD del remitente sin confundirlo con usuarios citados.
+
+        Primero se buscan campos explícitos de remitente/emisor. Luego se inspeccionan
+        contenedores con nombre de remitente. No se hace una búsqueda global de
+        ``USUCOD`` porque el detalle puede incluir destinatarios y otros usuarios.
+        """
+        direct = cls._find_first_recursive(body, (
+            "usucodRemitente", "usuCodRemitente", "codigoRemitente",
+            "codRemitente", "remitenteCodigo", "remitenteUsucod",
+            "usucodEmisor", "usuCodEmisor", "codigoEmisor", "codEmisor",
+        ))
+        if direct not in (None, ""):
+            return str(direct).strip()
+
+        def scan_named_containers(value: Any) -> str:
+            if isinstance(value, dict):
+                for key, item in value.items():
+                    normalized = str(key).lower()
+                    if normalized in {"remitente", "sender", "emisor", "from"} and isinstance(item, dict):
+                        code = cls._find_first_recursive(
+                            item, ("USUCOD", "usucod", "codigo", "code", "usuCod")
+                        )
+                        if code not in (None, ""):
+                            return str(code).strip()
+                for item in value.values():
+                    code = scan_named_containers(item)
+                    if code:
+                        return code
+            elif isinstance(value, list):
+                for item in value:
+                    code = scan_named_containers(item)
+                    if code:
+                        return code
+            return ""
+
+        return scan_named_containers(body)
+
+    def prepare_reply(
         self,
         *,
-        recipient_codes: list[str],
-        subject: str,
-        html_message: str,
         reply_to_message_id: int,
+        html_message: str,
+        recipient_codes: list[str] | None = None,
+        subject: str = "",
+        folder_id: int = 1,
     ) -> dict[str, Any]:
+        """Prepara una respuesta usando el mensaje real como fuente de contexto.
+
+        La versión anterior convertía ``idEdition`` a texto y dependía de que el
+        llamador adivinara destinatario y asunto. La interfaz de SieWeb trabaja con
+        IDs numéricos. Esta versión relee el mensaje, conserva su asunto por defecto,
+        resuelve el remitente cuando el detalle lo expone y usa un ``idEdition`` real
+        si SieWeb lo devuelve; de lo contrario usa el ID numérico del mensaje original.
+        """
+        message_id = int(reply_to_message_id)
+        if message_id <= 0:
+            raise SieWebError("reply_to_message_id debe ser un entero positivo.")
+
+        detail = self.get_message(message_id, folder_id=int(folder_id))
+        body = self._reply_detail_body(detail)
+
+        raw_edition_id = self._find_first_recursive(
+            body,
+            (
+                "idEdition", "idEdicion", "id_edicion", "idMensajeEdicion",
+                "idMensajeEdition",
+            ),
+        )
+        try:
+            edition_id = int(raw_edition_id) if raw_edition_id not in (None, "") else message_id
+        except (TypeError, ValueError):
+            edition_id = message_id
+        if edition_id <= 0:
+            edition_id = message_id
+
+        clean_codes: list[str] = []
+        seen: set[str] = set()
+        for code in recipient_codes or []:
+            value = str(code or "").strip()
+            if value and value not in seen:
+                clean_codes.append(value)
+                seen.add(value)
+        if not clean_codes:
+            sender_code = self._reply_sender_code(body)
+            if sender_code:
+                clean_codes = [sender_code]
+        if not clean_codes:
+            raise SieWebError(
+                "SieWeb no expuso el USUCOD del remitente en el detalle. "
+                "Proporciona recipient_codes para responder este hilo; no se envió nada."
+            )
+
+        clean_subject = str(subject or "").strip()
+        if not clean_subject:
+            found_subject = self._find_first_recursive(
+                body, ("asunto", "subject", "tituloMensaje")
+            )
+            clean_subject = str(found_subject or "").strip()
+        if not clean_subject:
+            raise SieWebError(
+                "SieWeb no devolvió el asunto del mensaje y no se proporcionó uno; no se envió nada."
+            )
+
+        body_html = str(html_message or "").strip()
+        if not body_html:
+            raise SieWebError("La respuesta necesita contenido; no se envió nada.")
+
         payload = {
             "adjunto": [],
-            "asunto": subject,
+            "asunto": clean_subject,
             "fh_programado": "1970-01-01T00:00:00.000Z",
-            "idEdition": str(reply_to_message_id),
-            "mensaje": html_message,
-            "para": recipient_codes,
+            # Importante: la UI envía IDs numéricos; v0.7.4 lo convertía a string.
+            "idEdition": edition_id,
+            "mensaje": body_html,
+            "para": clean_codes,
             "programado": False,
             "response": 1,
         }
-        return self._request(
+        return {
+            "reply_to_message_id": message_id,
+            "folder_id": int(folder_id),
+            "edition_id": edition_id,
+            "edition_id_source": "detail" if raw_edition_id not in (None, "") else "message_id",
+            "recipients": clean_codes,
+            "subject": clean_subject,
+            "payload": payload,
+        }
+
+    def send_reply(
+        self,
+        *,
+        html_message: str,
+        reply_to_message_id: int,
+        recipient_codes: list[str] | None = None,
+        subject: str = "",
+        folder_id: int = 1,
+    ) -> dict[str, Any]:
+        """Responde un hilo existente y exige confirmación positiva de SieWeb.
+
+        Nunca devuelve ``sent=True`` cuando el proveedor responde ``estado != 1``.
+        """
+        prepared = self.prepare_reply(
+            reply_to_message_id=reply_to_message_id,
+            html_message=html_message,
+            recipient_codes=recipient_codes,
+            subject=subject,
+            folder_id=folder_id,
+        )
+        payload = prepared["payload"]
+        result = self._request(
             "POST", "/lms/api/HyoMensajeria/enviarMensaje", json=payload
         )
+        provider = result.get("json") if isinstance(result, dict) else None
+        body = provider if isinstance(provider, dict) else (result if isinstance(result, dict) else {})
+        estado = body.get("estado")
+        if estado != 1:
+            code = body.get("codigo") or body.get("code") or body.get("mensaje") or body.get("message")
+            raise SieWebError(
+                "SieWeb no confirmó la respuesta al hilo "
+                f"{prepared['reply_to_message_id']} (estado={estado!r}, codigo={code!r}). "
+                "No se marcará como enviada."
+            )
+        return {
+            "sent": True,
+            "message_id": body.get("idMensaje") or body.get("idmensaje"),
+            "reply_to_message_id": prepared["reply_to_message_id"],
+            "edition_id": prepared["edition_id"],
+            "edition_id_source": prepared["edition_id_source"],
+            "status_code": estado,
+            "provider_message": body.get("mensaje") or body.get("message"),
+            "recipients": prepared["recipients"],
+            "subject": prepared["subject"],
+            "raw": result,
+        }
 
     # ---------- Descubrimiento de clases / periodos ----------
     _KNOWN_SECTIONS_2026 = {
@@ -802,6 +988,204 @@ class SieWebClient:
             raise SieWebError(f"SieWeb no confirmó el guardado del criterio: {result}")
         return result
 
+    @staticmethod
+    def _canon_text(value: Any) -> str:
+        raw = unicodedata.normalize("NFKD", str(value or ""))
+        raw = "".join(ch for ch in raw if not unicodedata.combining(ch))
+        return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9]+", " ", raw.lower())).strip()
+
+    def find_exact_criterion(self, summary: dict[str, Any], *, description: str,
+                             parent_id: int | None = None, level: int | None = None) -> list[dict[str, Any]]:
+        """Busca un criterio por texto canónico y, opcionalmente, padre/nivel.
+
+        Se usa para evitar duplicados y, sobre todo, para no reutilizar IDs de otra sección.
+        """
+        wanted = self._canon_text(description)
+        out = []
+        for item in summary.get("criteria") or []:
+            text = item.get("descripcion") or item.get("desc") or item.get("abreviatura") or ""
+            if self._canon_text(text) != wanted:
+                continue
+            if parent_id is not None and str(item.get("idpadre")) != str(parent_id):
+                continue
+            if level is not None and str(item.get("nivelEva")) != str(level):
+                continue
+            out.append(item)
+        return out
+
+    def assert_performance_target(self, summary: dict[str, Any], *, header_id: int,
+                                  performance_level: int = 3) -> dict[str, Any]:
+        """Bloquea escrituras sobre competencia/Nivel de Logro.
+
+        Para el flujo automático Classroom→SIEweb solo se permite un desempeño de nivel 3.
+        """
+        matches = [x for x in summary.get("criteria") or [] if str(x.get("id")) == str(header_id)]
+        if len(matches) != 1:
+            raise SieWebError(f"El desempeño {header_id} no existe o es ambiguo; no se guardó nada.")
+        target = matches[0]
+        if str(target.get("nivelEva")) != str(performance_level):
+            raise SieWebError(
+                f"PROTECCIÓN NIVEL DE LOGRO: el destino {header_id} tiene nivelEva={target.get('nivelEva')}; "
+                f"el flujo automático solo admite desempeños nivel {performance_level}. No se guardó nada."
+            )
+        return target
+
+    @staticmethod
+    def _walk_dicts(value: Any):
+        """Recorre todos los dicts de una respuesta SIEweb sin asumir su envoltura."""
+        if isinstance(value, dict):
+            yield value
+            for child in value.values():
+                yield from SieWebClient._walk_dicts(child)
+        elif isinstance(value, list):
+            for child in value:
+                yield from SieWebClient._walk_dicts(child)
+
+    def _criterion_description(self, row: dict[str, Any]) -> str:
+        for key in ("descripcion", "desc", "descComp", "DESCRIPCION", "DESC", "nombre", "nom"):
+            if row.get(key) not in (None, ""):
+                return str(row.get(key))
+        return ""
+
+    def _criterion_parent(self, row: dict[str, Any]) -> Any:
+        for key in ("idpadre", "idPadre", "ID_PADRE", "idContenidoPadre", "idClaseContenidoPadre"):
+            if key in row:
+                return row.get(key)
+        return None
+
+    def _criterion_level(self, row: dict[str, Any]) -> Any:
+        for key in ("nivelEva", "nivel", "NIVEL_EVA", "nivelEvaluacion"):
+            if key in row:
+                return row.get(key)
+        return None
+
+    def find_raw_criteria(self, raw: dict[str, Any], *, description: str | None = None,
+                          parent_id: int | None = None, level: int | None = None) -> list[dict[str, Any]]:
+        """Busca nodos reales de dataInicialPesosCriterios para poder clonar su esquema exacto."""
+        wanted = self._canon_text(description) if description is not None else None
+        out=[]
+        seen=set()
+        for row in self._walk_dicts(raw):
+            desc=self._criterion_description(row)
+            if not desc:
+                continue
+            if wanted is not None and self._canon_text(desc) != wanted:
+                continue
+            parent=self._criterion_parent(row)
+            lev=self._criterion_level(row)
+            if parent_id is not None and str(parent) != str(parent_id):
+                continue
+            if level is not None and lev is not None and str(lev) != str(level):
+                continue
+            marker=id(row)
+            if marker not in seen:
+                seen.add(marker); out.append(row)
+        return out
+
+    @staticmethod
+    def _strip_identity_for_new_criterion(record: dict[str, Any]) -> dict[str, Any]:
+        """Quita solo identidades persistidas; conserva flags/pesos/campos que SIEweb exige."""
+        out=copy.deepcopy(record)
+        identity_keys={
+            "id", "ID", "idClaseContenido", "ID_CLASE_CONTENIDO", "idContenido", "ID_CONTENIDO",
+            "idCriterio", "ID_CRITERIO", "codigo", "codContenido"
+        }
+        for key in list(out):
+            if key in identity_keys:
+                out.pop(key, None)
+        return out
+
+    def build_new_performance_record(self, *, class_id: int, class_period_id: int,
+                                     root_content_id: int, parent_id: int, description: str,
+                                     level: int = 3, id_ambito: int | None = None,
+                                     extra_params: dict[str, Any] | None = None,
+                                     preferred_template: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Construye un alta usando como plantilla un desempeño REAL de la misma capacidad/sección.
+
+        Evita mandar una plantilla procedente de otra sección, causa probable de altas fantasma (estado=1).
+        """
+        raw=self.get_criteria(class_id=class_id, class_period_id=class_period_id,
+                              root_content_id=root_content_id, id_ambito=id_ambito,
+                              extra_params=extra_params)
+        candidates=self.find_raw_criteria(raw, parent_id=parent_id, level=level)
+        template=None
+        if preferred_template:
+            # Solo se admite como fallback; se prefieren siempre campos observados en el destino.
+            template=preferred_template
+        if candidates:
+            # escoger el nodo más rico en campos, normalmente el registro editable completo
+            template=max(candidates, key=lambda x: len(x.keys()))
+        if not template:
+            raise SieWebError(
+                f"No existe un desempeño hermano utilizable bajo la capacidad {parent_id}; "
+                "no se puede inferir de forma segura el esquema de alta de SIEweb."
+            )
+        record=self._strip_identity_for_new_criterion(template)
+        # Reescribir padre/nivel con los nombres de campo que realmente usa la plantilla.
+        parent_key=next((k for k in ("idpadre","idPadre","ID_PADRE","idContenidoPadre","idClaseContenidoPadre") if k in record), "idpadre")
+        level_key=next((k for k in ("nivelEva","nivel","NIVEL_EVA","nivelEvaluacion") if k in record), "nivelEva")
+        desc_key=next((k for k in ("descripcion","desc","descComp","DESCRIPCION","DESC","nombre","nom") if k in record), "descripcion")
+        record[parent_key]=parent_id
+        record[level_key]=level
+        record[desc_key]=description
+        # Muchos formularios Angular distinguen alta/edición mediante estas identidades vacías/cero.
+        # No se inventan campos: solo se ponen a 0 si estaban presentes en la plantilla original.
+        for key in ("id", "idClaseContenido", "idContenido", "idCriterio"):
+            if key in template:
+                record[key]=0
+        return record
+
+    def upsert_criteria_verified(self, *, class_id: int, class_period_id: int,
+                                 root_content_id: int, records: list[dict[str, Any]],
+                                 replica: dict[str, Any], expected: list[dict[str, Any]],
+                                 extra_params: dict[str, Any] | None = None,
+                                 verification_attempts: int = 3) -> dict[str, Any]:
+        """Crea/edita desempeños y confirma por relectura que existen exactamente una vez."""
+        before = self.get_gradebook_summary(class_period_id=class_period_id, root_content_id=root_content_id,
+                                            extra_params=extra_params)
+        duplicate_preflight = []
+        for e in expected:
+            found = self.find_exact_criterion(before, description=str(e["description"]),
+                                              parent_id=e.get("parent_id"), level=e.get("level", 3))
+            if len(found) > 1:
+                duplicate_preflight.append({"expected": e, "matches": found})
+        if duplicate_preflight:
+            raise SieWebError("Hay desempeños duplicados antes de escribir; se detuvo el proceso: " +
+                              json.dumps(duplicate_preflight, ensure_ascii=False))
+
+        result = self.upsert_criteria(class_id=class_id, records=records, replica=replica)
+        attempts = []
+        final = []
+        for attempt in range(1, max(1, min(int(verification_attempts), 5)) + 1):
+            after = self.get_gradebook_summary(class_period_id=class_period_id, root_content_id=root_content_id,
+                                               extra_params=extra_params)
+            # dataInicialPesosCriterios es la fuente de verdad inmediata del editor de desempeños;
+            # obtRegistroNotas puede tardar en regenerar cabeceras. Consultamos ambas.
+            class_info=after.get("class") or {}
+            raw_criteria=self.get_criteria(class_id=int(class_info.get("idClase") or class_id),
+                class_period_id=class_period_id, root_content_id=root_content_id,
+                extra_params=extra_params)
+            checks=[]
+            ok=True
+            for e in expected:
+                found_gradebook=self.find_exact_criterion(after, description=str(e["description"]),
+                                                parent_id=e.get("parent_id"), level=e.get("level", 3))
+                found_editor=self.find_raw_criteria(raw_criteria, description=str(e["description"]),
+                                                parent_id=e.get("parent_id"), level=e.get("level", 3))
+                # El editor debe confirmar exactamente uno. El gradebook puede refrescar después.
+                checks.append({"expected": e, "editor_count": len(found_editor),
+                               "gradebook_count": len(found_gradebook),
+                               "editor_matches": found_editor, "gradebook_matches": found_gradebook})
+                if len(found_editor) != 1: ok=False
+            attempts.append({"attempt": attempt, "ok": ok, "checks": checks})
+            final=checks
+            if ok: break
+            if attempt < verification_attempts: time.sleep(0.4 * attempt)
+        if not attempts[-1]["ok"]:
+            raise SieWebError("SIEweb respondió al alta, pero la relectura no confirmó los desempeños. " +
+                              json.dumps(final, ensure_ascii=False))
+        return {"saved": True, "update": result, "verification": final, "attempts": attempts}
+
     # ---------- Conclusiones descriptivas ----------
     def get_conclusion(
         self,
@@ -1143,6 +1527,8 @@ class SieWebClient:
         extra_params: dict[str, Any] | None = None,
         notify: bool = True,
         verification_attempts: int = 3,
+        protect_achievement_level: bool = False,
+        performance_level: int = 3,
     ) -> dict[str, Any]:
         """Guarda notas con preflight y verificación posterior obligatoria."""
         before = self.get_gradebook_summary(
@@ -1150,6 +1536,8 @@ class SieWebClient:
             root_content_id=root_content_id,
             extra_params=extra_params,
         )
+        if protect_achievement_level:
+            self.assert_performance_target(before, header_id=header_id, performance_level=performance_level)
         records = self.build_grade_records(
             before,
             header_id=header_id,

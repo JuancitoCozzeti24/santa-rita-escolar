@@ -49,6 +49,9 @@ mcp = FastMCP(
         "NGS -> alumnos TIPCOD=005 -> familias TIPCOD=004 desde el directorio de Mensajería. "
         "Para GUARDAR NOTAS EN SIEWEB usa preferentemente sieweb_academics action=save_grades_verified: esa acción relee la matrícula real, "
         "preserva la estructura original de cada celda, detiene el lote si falta un alumno/desempeño y verifica la persistencia después del PUT. "
+        "Para transferir una calificación oficial de Classroom a un desempeño SIEweb usa workflow_school action=classroom_grades_to_sieweb; "
+        "ese flujo bloquea Nivel de Logro y solo admite desempeños nivelEva=3. Para replicar desempeños entre secciones usa action=replicate_performances: "
+        "debe resolver los IDs internos de cada sección por separado y nunca copiar IDs de 2.º A a 2.º B. "
         "No construyas manualmente registros mínimos para HyoClasenota/actualizar. Antes de cualquier escritura o acción destructiva, "
         "resume exactamente el cambio al usuario y solo ejecuta cuando haya autorizado ese cambio. "
         "Los comentarios privados nativos de entregas se manejan en v0.7.3 mediante el puente local de navegador SieRoom Classroom Bridge; "
@@ -88,7 +91,7 @@ async def classroom_bridge_http_status(request: Request):
         return _bridge_unauthorized()
     return JSONResponse({
         "ok": True,
-        "version": "0.7.4",
+        "version": "0.7.5",
         "bridge": "SieRoom Classroom Bridge",
         "queue": bridge_queue.stats(),
     })
@@ -111,7 +114,7 @@ async def classroom_bridge_http_reset(request: Request):
     result = bridge_queue.reset_active(retry_failed=retry_failed)
     return JSONResponse({
         **result,
-        "version": "0.7.4",
+        "version": "0.7.5",
         "message": "Cola desatascada. Los trabajos activos se conservaron y pueden procesarse de nuevo.",
     })
 
@@ -206,7 +209,7 @@ def _require_confirm(action: str, payload: dict[str, Any], confirmed: bool, *, d
 def sieweb_capabilities() -> str:
     """Capacidades de mensajería SieWeb. Confirma lectura, respuesta y creación/envío de correos nuevos."""
     return _ok({
-        "version": "0.7.4",
+        "version": "0.7.5",
         "list_inbox": True,
         "read_message": True,
         "reply_existing_message": True,
@@ -409,26 +412,37 @@ def sieweb_send_new_email(
 
 @mcp.tool()
 def sieweb_reply_message(
-    recipient_codes: list[str],
-    subject: str,
-    html_message: str,
     reply_to_message_id: int,
+    html_message: str,
+    recipient_codes: list[str] | None = None,
+    subject: str = "",
+    folder_id: int = 1,
     confirmed: bool = False,
 ) -> str:
-    """Responde un hilo existente de SieWeb. Requiere confirmed=true."""
+    """Responde un hilo existente de SieWeb. Relee el mensaje original y requiere confirmed=true."""
+    prepared = sieweb.prepare_reply(
+        reply_to_message_id=reply_to_message_id,
+        html_message=html_message,
+        recipient_codes=recipient_codes,
+        subject=subject,
+        folder_id=folder_id,
+    )
     preview = {
-        "recipient_codes": recipient_codes,
-        "subject": subject,
-        "reply_to_message_id": reply_to_message_id,
+        "recipient_codes": prepared["recipients"],
+        "subject": prepared["subject"],
+        "reply_to_message_id": prepared["reply_to_message_id"],
+        "edition_id": prepared["edition_id"],
+        "edition_id_source": prepared["edition_id_source"],
         "html_message": html_message,
     }
     if not confirmed:
         return _ok({"requires_confirmation": True, "preview": preview})
     return _ok(sieweb.send_reply(
-        recipient_codes=recipient_codes,
-        subject=subject,
+        recipient_codes=prepared["recipients"],
+        subject=prepared["subject"],
         html_message=html_message,
         reply_to_message_id=reply_to_message_id,
+        folder_id=folder_id,
     ))
 
 
@@ -436,7 +450,7 @@ def sieweb_reply_message(
 def classroom_capabilities() -> str:
     """Resume el control práctico de Classroom expuesto por este conector y los límites de la API oficial."""
     return _ok({
-        "version": "0.7.4",
+        "version": "0.7.5",
         "tool_design": "Acciones agrupadas por recurso para reducir errores de selección de herramienta.",
         "implemented": {
             "courses": ["list/get/create/update/delete", "aliases", "gradebookSettings", "gradingPeriodSettings"],
@@ -498,7 +512,7 @@ def classroom_private_feedback(
     p = _json_obj(payload_json, {})
     if action == "status":
         return _ok({
-            "version": "0.7.4",
+            "version": "0.7.5",
             "bridge_configured": bool(settings.classroom_bridge_secret),
             "bridge_endpoint": f"{settings.public_base_url}/bridge/v1",
             "queue": bridge_queue.stats(),
@@ -998,11 +1012,11 @@ def classroom_grade_submission(course_id: str, course_work_id: str, submission_i
 
 @mcp.tool()
 def sieweb_messaging(action: str, payload_json: str = "{}", confirmed: bool = False) -> str:
-    """Mensajería completa de SieWeb. action: capabilities|list|read|search_recipients|compose_new|send_new|reply. send_new CREA Y ENVÍA un correo nuevo sin hilo previo; reply responde uno existente. Escrituras requieren confirmed=true."""
+    """Mensajería completa de SieWeb. action: capabilities|list|read|search_recipients|compose_new|send_new|prepare_reply|reply. send_new CREA Y ENVÍA un correo nuevo sin hilo previo; reply responde uno existente. Escrituras requieren confirmed=true."""
     action = action.strip().lower(); p = _json_obj(payload_json, {})
     if action == "capabilities":
         return _ok({
-            "version": "0.7.4",
+            "version": "0.7.5",
             "list_inbox": True, "read_message": True, "reply_existing_message": True,
             "search_recipients": True, "compose_new_email": True, "send_new_email": True,
             "new_email_requires_existing_thread": False,
@@ -1054,18 +1068,35 @@ def sieweb_messaging(action: str, payload_json: str = "{}", confirmed: bool = Fa
             plain_text="" if message_is_html else message,
         ))
 
-    if action == "reply":
-        codes = [str(x).strip() for x in (p.get("recipient_codes") or []) if str(x).strip()]
-        if not codes: raise ValueError("recipient_codes es obligatorio para responder un mensaje existente.")
+    if action in {"prepare_reply", "reply"}:
+        message_id = int(p.get("reply_to_message_id", p.get("message_id", 0)))
+        html_message = str(p.get("html_message", p.get("message", "")))
+        folder_id = int(p.get("folder_id", 1))
+        prepared = sieweb.prepare_reply(
+            reply_to_message_id=message_id,
+            html_message=html_message,
+            recipient_codes=p.get("recipient_codes") or None,
+            subject=str(p.get("subject", "")),
+            folder_id=folder_id,
+        )
         preview = {
-            "recipient_codes": codes, "subject": str(p.get("subject", "")),
-            "reply_to_message_id": int(p["reply_to_message_id"]),
-            "html_message": str(p.get("html_message", p.get("message", ""))),
+            "recipient_codes": prepared["recipients"],
+            "subject": prepared["subject"],
+            "reply_to_message_id": prepared["reply_to_message_id"],
+            "edition_id": prepared["edition_id"],
+            "edition_id_source": prepared["edition_id_source"],
+            "html_message": html_message,
         }
-        if not confirmed: return _ok({"requires_confirmation": True, "preview": preview})
+        if action == "prepare_reply":
+            return _ok({"prepared": True, "sent": False, "preview": preview})
+        if not confirmed:
+            return _ok({"requires_confirmation": True, "preview": preview})
         return _ok(sieweb.send_reply(
-            recipient_codes=codes, subject=preview["subject"],
-            html_message=preview["html_message"], reply_to_message_id=preview["reply_to_message_id"]
+            recipient_codes=prepared["recipients"],
+            subject=prepared["subject"],
+            html_message=html_message,
+            reply_to_message_id=message_id,
+            folder_id=folder_id,
         ))
     raise ValueError(f"Acción de mensajería SieWeb no soportada: {action}")
 
@@ -1095,12 +1126,14 @@ def sieweb_academics(action: str, payload_json: str = "{}", confirmed: bool = Fa
 
 @mcp.tool()
 def workflow_school(action: str, payload_json: str = "{}") -> str:
-    """Flujos Classroom↔SieWeb. action: match_roster|missing_with_sieweb_ids|missing_to_sieweb_recipients."""
+    """Flujos Classroom↔SieWeb. action: match_roster|missing_with_sieweb_ids|missing_to_sieweb_recipients|classroom_grades_to_sieweb|replicate_performances."""
     action = action.strip().lower(); p = _json_obj(payload_json, {})
     extra = json.dumps(p.get("extra_params", {}), ensure_ascii=False)
     if action == "match_roster": return workflow_match_classroom_sieweb_roster(str(p["course_id"]), int(p["class_period_id"]), int(p["root_content_id"]), extra)
     if action == "missing_with_sieweb_ids": return workflow_missing_classroom_with_sieweb_ids(str(p["course_id"]), str(p["course_work_id"]), int(p["class_period_id"]), int(p["root_content_id"]), extra)
     if action == "missing_to_sieweb_recipients": return workflow_missing_classroom_to_sieweb_recipients(str(p["course_id"]), str(p["course_work_id"]), str(p["section"]), int(p["period"]), str(p.get("course_code", "05")), extra)
+    if action == "classroom_grades_to_sieweb": return workflow_classroom_grades_to_sieweb(p)
+    if action == "replicate_performances": return workflow_replicate_performances(p)
     raise ValueError(f"Flujo escolar no soportado: {action}")
 
 def sieweb_list_messages(folder_id: int = 1, search: str = "") -> str:
@@ -1114,27 +1147,38 @@ def sieweb_read_message(message_id: int, folder_id: int = 1) -> str:
 
 
 def sieweb_reply_message(
-    recipient_codes: list[str],
-    subject: str,
-    html_message: str,
     reply_to_message_id: int,
+    html_message: str,
+    recipient_codes: list[str] | None = None,
+    subject: str = "",
+    folder_id: int = 1,
     confirmed: bool = False,
 ) -> str:
-    """Responde un mensaje de SieWeb. Requiere confirmed=true después de confirmación."""
+    """Alias de compatibilidad para responder un mensaje de SieWeb."""
+    prepared = sieweb.prepare_reply(
+        reply_to_message_id=reply_to_message_id,
+        html_message=html_message,
+        recipient_codes=recipient_codes,
+        subject=subject,
+        folder_id=folder_id,
+    )
     preview = {
-        "recipient_codes": recipient_codes,
-        "subject": subject,
-        "reply_to_message_id": reply_to_message_id,
+        "recipient_codes": prepared["recipients"],
+        "subject": prepared["subject"],
+        "reply_to_message_id": prepared["reply_to_message_id"],
+        "edition_id": prepared["edition_id"],
+        "edition_id_source": prepared["edition_id_source"],
         "html_message": html_message,
     }
     if not confirmed:
         return _ok({"requires_confirmation": True, "preview": preview})
     return _ok(
         sieweb.send_reply(
-            recipient_codes=recipient_codes,
-            subject=subject,
+            recipient_codes=prepared["recipients"],
+            subject=prepared["subject"],
             html_message=html_message,
             reply_to_message_id=reply_to_message_id,
+            folder_id=folder_id,
         )
     )
 
@@ -1413,7 +1457,7 @@ def sieweb_gradebook_by_section(section: str, period: int, course_code: str = "0
 def sieweb_capabilities() -> str:
     """Indica explícitamente las capacidades de CIEWEB/SIEWEB disponibles en esta versión."""
     return _ok({
-        "version": "0.7.4",
+        "version": "0.7.5",
         "messaging": {
             "list_inbox": True,
             "read_message": True,
@@ -1749,6 +1793,105 @@ def workflow_missing_classroom_to_sieweb_recipients(course_id: str, course_work_
         })
     return _ok({"context": ctx, "missing": out, "count": len(out),
                 "with_student_recipient": sum(1 for x in out if x["messaging_student"])})
+
+
+def _classroom_grade_to_sieweb_level(value: Any, mapping: dict[str, Any] | None = None) -> str:
+    """Convierte 0–20 a AD/A/B/C. Umbrales configurables; por defecto AD 18+, A 15+, B 11+, C <=10."""
+    cfg = {"AD": 18, "A": 15, "B": 11}
+    cfg.update(mapping or {})
+    n = float(value)
+    if n >= float(cfg["AD"]): return "AD"
+    if n >= float(cfg["A"]): return "A"
+    if n >= float(cfg["B"]): return "B"
+    return "C"
+
+
+def workflow_classroom_grades_to_sieweb(p: dict[str, Any]) -> str:
+    """Importa notas oficiales de una tarea Classroom a UN desempeño SIEweb nivel 3.
+
+    Hace match por userId->correo institucional->alucod, protege Nivel de Logro y verifica persistencia.
+    confirmed debe venir en payload para escribir.
+    """
+    course_id=str(p["course_id"]); work_id=str(p["course_work_id"])
+    section=str(p["section"]); period=int(p["period"]); course_code=str(p.get("course_code","05"))
+    header_id=int(p["header_id"]); confirmed=bool(p.get("confirmed", False))
+    ambitos=p.get("id_ambito_by_section") or {}
+    ctx=sieweb.resolve_class_context(section=section, period=period, course_code=course_code, id_ambito=p.get("id_ambito") or ambitos.get(section))
+    extra=dict(p.get("extra_params") or {}); extra.setdefault("idPeriodoAnt", ctx.get("idPeriodoAnt",0))
+    summary=sieweb.get_gradebook_summary(class_period_id=ctx["idClasePeriodo"], root_content_id=ctx["idContenido"], extra_params=extra)
+    target=sieweb.assert_performance_target(summary, header_id=header_id, performance_level=int(p.get("performance_level",3)))
+    students=classroom.list_students(course_id)
+    user_to_code={str(x.get("userId") or x.get("id") or ""): str(x.get("email") or "").split("@",1)[0] for x in students}
+    subs=classroom.list_submissions(course_id, work_id)
+    grade_map={}; skipped=[]
+    for sub in subs:
+        raw=sub.get("assignedGrade")
+        if raw is None and bool(p.get("allow_draft_grade", False)): raw=sub.get("draftGrade")
+        if raw is None:
+            skipped.append({"userId":sub.get("userId"),"reason":"no_official_grade"}); continue
+        code=user_to_code.get(str(sub.get("userId") or ""),"")
+        if not code:
+            skipped.append({"userId":sub.get("userId"),"reason":"classroom_student_code_not_resolved"}); continue
+        grade_map[code]=_classroom_grade_to_sieweb_level(raw, p.get("grade_thresholds"))
+    if not grade_map: raise ValueError("No se encontraron calificaciones de Classroom transferibles.")
+    preview={"section":section,"context":ctx,"target_performance":target,"grades":grade_map,"skipped":skipped,
+             "protection":"solo nivelEva=3; Nivel de Logro no se modifica"}
+    if not confirmed: return _ok({"requires_confirmation":True,"preview":preview})
+    class_info=summary.get("class") or {}
+    result=sieweb.save_grades_verified(year=str(class_info.get("ano") or p.get("year") or "2026"), course_code=str(class_info.get("cursocod") or course_code),
+        class_period_id=int(ctx["idClasePeriodo"]), root_content_id=int(ctx["idContenido"]), period=period,
+        section_ng=class_info.get("arrNGS") or p.get("section_ng") or [], header_id=header_id,
+        grades_by_student_code=grade_map, class_name=str(ctx.get("nomSalon") or section), extra_params=extra,
+        protect_achievement_level=True, performance_level=int(p.get("performance_level",3)))
+    return _ok({"preview":preview,"result":result})
+
+
+def workflow_replicate_performances(p: dict[str, Any]) -> str:
+    """Replica desempeños entre secciones resolviendo padres/IDs en cada destino, nunca copiando IDs de origen."""
+    source=str(p["source_section"]); targets=[str(x) for x in p.get("target_sections",[])]
+    period=int(p["period"]); course_code=str(p.get("course_code","05")); confirmed=bool(p.get("confirmed",False))
+    specs=list(p.get("performances") or [])
+    if not targets or not specs: raise ValueError("Se requieren target_sections y performances.")
+    plan=[]
+    for section in targets:
+        ambitos=p.get("id_ambito_by_section") or {}
+        ctx=sieweb.resolve_class_context(section=section, period=period, course_code=course_code, id_ambito=p.get("id_ambito") or ambitos.get(section))
+        extra=dict(p.get("extra_params") or {}); extra.setdefault("idPeriodoAnt",ctx.get("idPeriodoAnt",0))
+        summary=sieweb.get_gradebook_summary(class_period_id=ctx["idClasePeriodo"],root_content_id=ctx["idContenido"],extra_params=extra)
+        records=[]; expected=[]; existing=[]
+        for spec in specs:
+            parent_text=str(spec["parent_description"]); desc=str(spec["description"])
+            parents=sieweb.find_exact_criterion(summary,description=parent_text,level=int(spec.get("parent_level",2)))
+            if len(parents)!=1:
+                raise ValueError(f"{section}: no se resolvió de forma única la capacidad padre '{parent_text}'.")
+            parent_id=int(parents[0]["id"])
+            found=sieweb.find_exact_criterion(summary,description=desc,parent_id=parent_id,level=int(spec.get("level",3)))
+            if len(found)>1: raise ValueError(f"{section}: desempeño duplicado '{desc}'.")
+            if len(found)==1:
+                existing.append(found[0]); continue
+            # v0.7.7: NO se reutiliza una plantilla de otra sección. Se clona un desempeño
+            # real de la misma capacidad en la sección destino, conservando el esquema que
+            # dataInicialPesosCriterios exige para que insertar persista de verdad.
+            template=sieweb.build_new_performance_record(
+                class_id=int(ctx["idClase"]), class_period_id=int(ctx["idClasePeriodo"]),
+                root_content_id=int(ctx["idContenido"]), parent_id=parent_id, description=desc,
+                level=int(spec.get("level",3)), id_ambito=p.get("id_ambito") or ambitos.get(section),
+                extra_params=extra, preferred_template=dict(spec.get("record") or {}) or None)
+            records.append(template); expected.append({"description":desc,"parent_id":parent_id,"level":int(spec.get("level",3))})
+        plan.append({"section":section,"ctx":ctx,"extra":extra,"records":records,"expected":expected,"existing":existing})
+    if not confirmed:
+        return _ok({"requires_confirmation":True,"source_section":source,"plan":plan,
+                    "note":"Los IDs se resuelven independientemente en cada sección; no se toca Nivel de Logro."})
+    results=[]
+    for item in plan:
+        if not item["records"]:
+            results.append({"section":item["section"],"already_present":item["existing"],"saved":True}); continue
+        ctx=item["ctx"]
+        res=sieweb.upsert_criteria_verified(class_id=int(ctx["idClase"]),class_period_id=int(ctx["idClasePeriodo"]),
+            root_content_id=int(ctx["idContenido"]),records=item["records"],replica=dict(p.get("replica") or {}),
+            expected=item["expected"],extra_params=item["extra"])
+        results.append({"section":item["section"],"result":res})
+    return _ok({"replicated":True,"results":results})
 
 
 if __name__ == "__main__":

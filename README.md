@@ -1,4 +1,17 @@
-# SieRoom SRC 0.7.4
+# SieRoom SRC 0.7.5
+
+## SIEweb — respuestas dentro del hilo (v0.7.5)
+
+La v0.7.5 corrige el flujo de **Responder** en Mensajería SIEweb. La respuesta ahora relee el mensaje original, conserva el asunto real por defecto, puede resolver el USUCOD del remitente desde el detalle, mantiene `idEdition` como identificador numérico (en v0.7.4 se enviaba como texto) y solo informa `sent=true` cuando SIEweb devuelve `estado=1`.
+
+Herramientas recomendadas:
+
+- `sieweb_messaging action=prepare_reply`: prepara y muestra el contexto del hilo sin enviar.
+- `sieweb_messaging action=reply`: responde el hilo existente después de confirmación.
+- `sieweb_reply_message`: alias directo con la misma preparación segura.
+
+No se crea un correo nuevo cuando se usa `reply`. Si SIEweb responde `estado=0` (por ejemplo `e0001`), SieRoom lo trata como fallo y no afirma que el mensaje fue enviado.
+
 
 ## SIEweb — guardado seguro de notas (v0.7.4)
 
@@ -24,7 +37,7 @@ Esta versión añade `classroom_private_feedback`, una cola segura para retroali
 ### Instalación del puente
 
 1. En Render agrega `CLASSROOM_BRIDGE_SECRET` con un valor aleatorio largo. Puedes generarlo con `python generar_bridge_secret.py`.
-2. Despliega v0.7.4 y espera `LIVE`.
+2. Despliega v0.7.5 y espera `LIVE`.
 3. En Chrome/Brave abre `chrome://extensions`, activa **Modo de desarrollador** y pulsa **Cargar descomprimida**. Selecciona la carpeta `browser_extension`.
 4. Abre la extensión, pega el mismo `CLASSROOM_BRIDGE_SECRET`, pulsa **Guardar y probar** y luego **Iniciar puente**.
 5. Deja abierta la pestaña `SieRoom Classroom Bridge` mientras procesas entregas.
