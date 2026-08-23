@@ -413,7 +413,7 @@
         markers: row.markers,
         structuredFeedback: row.markers.length >= 2,
       })),
-      method: "dom-v0.7.16-read",
+      method: "dom-v0.7.17-read",
       url: location.href,
     };
   }

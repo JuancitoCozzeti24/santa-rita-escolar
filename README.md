@@ -1,17 +1,26 @@
-# SieRoom SRC 0.7.16
+# SieRoom SRC 0.7.17
 
-## Classroom — lectura de comentarios privados mediante SieRoom Bridge
+## Classroom — lectura privada con negociación de capacidades
 
-La v0.7.16 amplía el puente local para que no solo publique retroalimentación, sino que también lea los comentarios privados ya existentes en una entrega.
+La v0.7.17 impide que una copia antigua del puente reclame o complete falsamente trabajos de lectura.
 
 - `classroom_private_feedback action=read` encola la lectura de una entrega.
 - `classroom_private_feedback action=read_all` encola todas las entregas de una tarea.
 - `action=list` permite filtrar los resultados por curso, tarea, operación y estado.
 - cada resultado conserva el `submission_id`, el texto detectado y los marcadores de retroalimentación estructurada;
+- la extensión anuncia `read_private_comments` antes de recibir trabajos de lectura;
+- el servidor solo acepta una lectura si devuelve `operation`, `comments` y `count` coherentes;
+- una extensión antigua ya no puede producir un falso estado `completed`;
 - la lectura no modifica Classroom, no transmite cookies a Render y no altera notas ni estados de devolución;
 - la publicación de comentarios, la calificación y la devolución mantienen el comportamiento anterior.
 
-La suite pasa **51/51 pruebas**. Consulta `SIEROOM_PRIVATE_COMMENTS_V0.7.16.md` y `TEST_REPORT_V0.7.16.txt`.
+La suite pasa **55/55 pruebas**. Consulta `SIEROOM_PRIVATE_COMMENTS_V0.7.17.md` y `TEST_REPORT_V0.7.17.txt`.
+
+---
+
+# Historial — SieRoom SRC 0.7.16
+
+La v0.7.16 introdujo `read`, `read_all` y la extracción DOM de comentarios privados mediante el navegador autenticado.
 
 ---
 

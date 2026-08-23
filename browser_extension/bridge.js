@@ -40,6 +40,11 @@ async function bridgeFetch(path, options = {}) {
   if (!c.secret) throw new Error("Falta configurar CLASSROOM_BRIDGE_SECRET en la extensión.");
   const headers = new Headers(options.headers || {});
   headers.set("X-SieRoom-Bridge-Secret", c.secret);
+  headers.set("X-SieRoom-Bridge-Version", chrome.runtime.getManifest().version);
+  headers.set(
+    "X-SieRoom-Bridge-Capabilities",
+    "post_private_comment,read_private_comments"
+  );
   if (options.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
   const r = await fetch(`${c.endpoint}${path}`, { ...options, headers, cache: "no-store" });
   const data = await r.json().catch(() => ({}));
