@@ -1,0 +1,19 @@
+SieRoom SRC v0.7.13 — TEST REPORT
+=================================
+
+Resultado automatizado: 40/40 pruebas aprobadas.
+
+Comandos ejecutados:
+- PYTHONPATH=/workspace/scratch/9973c29ba487/.deps python -m pytest -q
+- python -m py_compile sieweb.py server.py test_sieweb_sync_v0713.py
+
+Resultado de compilación: sin errores de sintaxis.
+
+Regresiones específicas cubiertas:
+- la lectura envía CURSOCOD y cursocod con el mismo valor;
+- una simulación del proveedor falla si falta cursocod minúsculo;
+- el POST incluye clase, período, contenido, ámbito y ambos alias de curso;
+- datosReplica siempre es una lista y usa [] sin destinos;
+- el POST se bloquea si el contexto de la última lectura pertenece a otra sección;
+- el fallback e0006 relee antes de intentar la siguiente estrategia;
+- las notas y Nivel de Logro permanecen protegidos.
