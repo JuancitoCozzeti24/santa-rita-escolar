@@ -27,4 +27,4 @@ def test_new_performance_record_clones_destination_sibling(monkeypatch):
     assert rec["descripcion"] == "Áreas y perímetros"
     assert rec["idpadre"] == 22 and rec["nivelEva"] == 3
     assert rec["peso"] == 100 and rec["activo"] is True
-    assert rec["id"] == 0 and rec["idClaseContenido"] == 0
+    assert rec["id"] is None and rec["idClaseContenido"] is None

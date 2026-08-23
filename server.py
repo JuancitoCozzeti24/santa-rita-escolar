@@ -50,7 +50,7 @@ mcp = FastMCP(
         "Para GUARDAR NOTAS EN SIEWEB usa preferentemente sieweb_academics action=save_grades_verified: esa acción relee la matrícula real, "
         "preserva la estructura original de cada celda, detiene el lote si falta un alumno/desempeño y verifica la persistencia después del PUT. "
         "Para transferir una calificación oficial de Classroom a un desempeño SIEweb usa workflow_school action=classroom_grades_to_sieweb; "
-        "ese flujo bloquea Nivel de Logro y solo admite desempeños nivelEva=3. Para replicar desempeños entre secciones usa action=replicate_performances (v0.7.8 guarda el modelo completo del editor y verifica persistencia real): "
+        "ese flujo bloquea Nivel de Logro y solo admite desempeños nivelEva=3. Para replicar desempeños entre secciones usa action=replicate_performances (v0.7.10 conserva el idAmbito exacto y escribe el árbol real resCriterios con filas nuevas flExiste=false): "
         "debe resolver los IDs internos de cada sección por separado y nunca copiar IDs de 2.º A a 2.º B. "
         "No construyas manualmente registros mínimos para HyoClasenota/actualizar. Antes de cualquier escritura o acción destructiva, "
         "resume exactamente el cambio al usuario y solo ejecuta cuando haya autorizado ese cambio. "
@@ -91,7 +91,7 @@ async def classroom_bridge_http_status(request: Request):
         return _bridge_unauthorized()
     return JSONResponse({
         "ok": True,
-        "version": "0.7.5",
+        "version": "0.7.10",
         "bridge": "SieRoom Classroom Bridge",
         "queue": bridge_queue.stats(),
     })
@@ -114,7 +114,7 @@ async def classroom_bridge_http_reset(request: Request):
     result = bridge_queue.reset_active(retry_failed=retry_failed)
     return JSONResponse({
         **result,
-        "version": "0.7.5",
+        "version": "0.7.10",
         "message": "Cola desatascada. Los trabajos activos se conservaron y pueden procesarse de nuevo.",
     })
 
@@ -209,7 +209,7 @@ def _require_confirm(action: str, payload: dict[str, Any], confirmed: bool, *, d
 def sieweb_capabilities() -> str:
     """Capacidades de mensajería SieWeb. Confirma lectura, respuesta y creación/envío de correos nuevos."""
     return _ok({
-        "version": "0.7.5",
+        "version": "0.7.10",
         "list_inbox": True,
         "read_message": True,
         "reply_existing_message": True,
@@ -450,7 +450,7 @@ def sieweb_reply_message(
 def classroom_capabilities() -> str:
     """Resume el control práctico de Classroom expuesto por este conector y los límites de la API oficial."""
     return _ok({
-        "version": "0.7.5",
+        "version": "0.7.10",
         "tool_design": "Acciones agrupadas por recurso para reducir errores de selección de herramienta.",
         "implemented": {
             "courses": ["list/get/create/update/delete", "aliases", "gradebookSettings", "gradingPeriodSettings"],
@@ -512,7 +512,7 @@ def classroom_private_feedback(
     p = _json_obj(payload_json, {})
     if action == "status":
         return _ok({
-            "version": "0.7.5",
+            "version": "0.7.10",
             "bridge_configured": bool(settings.classroom_bridge_secret),
             "bridge_endpoint": f"{settings.public_base_url}/bridge/v1",
             "queue": bridge_queue.stats(),
@@ -1016,7 +1016,7 @@ def sieweb_messaging(action: str, payload_json: str = "{}", confirmed: bool = Fa
     action = action.strip().lower(); p = _json_obj(payload_json, {})
     if action == "capabilities":
         return _ok({
-            "version": "0.7.5",
+            "version": "0.7.10",
             "list_inbox": True, "read_message": True, "reply_existing_message": True,
             "search_recipients": True, "compose_new_email": True, "send_new_email": True,
             "new_email_requires_existing_thread": False,
@@ -1103,7 +1103,7 @@ def sieweb_messaging(action: str, payload_json: str = "{}", confirmed: bool = Fa
 
 @mcp.tool()
 def sieweb_academics(action: str, payload_json: str = "{}", confirmed: bool = False) -> str:
-    """Registro académico de SieWeb agrupado. action: login_status|resolve_class_context|gradebook|gradebook_by_section|gradebook_summary|find_students|find_criteria|get_criteria|criteria_write_preflight|upsert_criteria_verified|build_grade_records|save_grades_verified|update_grades|get_conclusion|get_conclusions_batch|save_conclusion|save_conclusions_batch. v0.7.8 deshabilita el upsert_criteria legado para escrituras: usa criteria_write_preflight (solo lectura) y luego upsert_criteria_verified. Para notas nuevas prefiere save_grades_verified."""
+    """Registro académico de SieWeb agrupado. action: login_status|resolve_class_context|gradebook|gradebook_by_section|gradebook_summary|find_students|find_criteria|get_criteria|criteria_write_preflight|upsert_criteria_verified|build_grade_records|save_grades_verified|update_grades|get_conclusion|get_conclusions_batch|save_conclusion|save_conclusions_batch. v0.7.10 exige id_ambito explícito y valida la jerarquía Competencia→Capacidad→Desempeño antes de upsert_criteria_verified para impedir mezclar secciones; el upsert_criteria legado sigue deshabilitado. Para notas nuevas prefiere save_grades_verified."""
     action = action.strip().lower(); p = _json_obj(payload_json, {})
     if action == "login_status": return sieweb_login_status()
     if action == "resolve_class_context": return sieweb_resolve_class_context(str(p["section"]), int(p["period"]), str(p.get("course_code", "05")), p.get("id_ambito"))
@@ -1113,10 +1113,16 @@ def sieweb_academics(action: str, payload_json: str = "{}", confirmed: bool = Fa
     if action == "find_students": return sieweb_find_students(int(p["class_period_id"]), int(p["root_content_id"]), str(p["query"]), json.dumps(p.get("extra_params", {}), ensure_ascii=False))
     if action == "find_criteria": return sieweb_find_criteria(int(p["class_period_id"]), int(p["root_content_id"]), str(p["query"]), json.dumps(p.get("extra_params", {}), ensure_ascii=False))
     if action == "get_criteria": return sieweb_get_criteria(int(p["class_id"]), int(p["class_period_id"]), int(p["root_content_id"]), int(p.get("id_ambito", 518)), json.dumps(p.get("extra_params", {}), ensure_ascii=False))
-    if action == "criteria_write_preflight": return sieweb_criteria_write_preflight(int(p["class_id"]), int(p["class_period_id"]), int(p["root_content_id"]), int(p.get("id_ambito", 518)), json.dumps(p.get("extra_params", {}), ensure_ascii=False))
+    if action == "criteria_write_preflight":
+        if p.get("id_ambito") in (None, ""):
+            return _ok({"error":"v0.7.10 requiere id_ambito explícito para el preflight de escritura; resuelve primero la sección con resolve_class_context.","blocked":True})
+        return sieweb_criteria_write_preflight(int(p["class_id"]), int(p["class_period_id"]), int(p["root_content_id"]), int(p["id_ambito"]), json.dumps(p.get("extra_params", {}), ensure_ascii=False))
     if action == "upsert_criteria":
-        return _ok({"error":"ACCIÓN LEGADA DESHABILITADA EN v0.7.8: upsert_criteria enviaba registros parciales y podía producir e0006/estado:1 falso. Usa criteria_write_preflight y upsert_criteria_verified.","blocked":True})
-    if action == "upsert_criteria_verified": return sieweb_upsert_criteria_verified_tool(int(p["class_id"]), int(p["class_period_id"]), int(p["root_content_id"]), json.dumps(p.get("records", []), ensure_ascii=False), json.dumps(p.get("expected", []), ensure_ascii=False), json.dumps(p.get("replica", {}), ensure_ascii=False), json.dumps(p.get("extra_params", {}), ensure_ascii=False), confirmed)
+        return _ok({"error":"ACCIÓN LEGADA DESHABILITADA EN v0.7.10: upsert_criteria no respeta el árbol real resCriterios. Usa criteria_write_preflight y upsert_criteria_verified con id_ambito explícito.","blocked":True})
+    if action == "upsert_criteria_verified":
+        if p.get("id_ambito") in (None, ""):
+            return _ok({"error":"v0.7.10 bloqueó la escritura porque falta id_ambito. No se usará un ámbito silencioso de otra sección.","blocked":True})
+        return sieweb_upsert_criteria_verified_tool(int(p["class_id"]), int(p["class_period_id"]), int(p["root_content_id"]), int(p["id_ambito"]), json.dumps(p.get("records", []), ensure_ascii=False), json.dumps(p.get("expected", []), ensure_ascii=False), json.dumps(p.get("replica", []), ensure_ascii=False), json.dumps(p.get("extra_params", {}), ensure_ascii=False), confirmed)
     if action == "save_grades_verified": return sieweb_save_grades_verified(str(p["year"]), str(p["course_code"]), int(p["class_period_id"]), int(p["root_content_id"]), int(p["period"]), json.dumps(p["section_ng"], ensure_ascii=False), int(p["header_id"]), json.dumps(p.get("grades_by_student_code", {}), ensure_ascii=False), str(p.get("class_name", "")), json.dumps(p.get("extra_params", {}), ensure_ascii=False), confirmed)
     if action == "update_grades": return sieweb_update_grades(str(p["year"]), str(p["course_code"]), int(p["class_period_id"]), int(p["period"]), json.dumps(p["section_ng"], ensure_ascii=False), json.dumps(p.get("records", []), ensure_ascii=False), str(p.get("class_name", "")), confirmed)
     if action == "build_grade_records": return sieweb_build_grade_records(int(p["class_period_id"]), int(p["root_content_id"]), int(p["header_id"]), json.dumps(p.get("grades_by_student_code", {}), ensure_ascii=False), json.dumps(p.get("extra_params", {}), ensure_ascii=False))
@@ -1460,7 +1466,7 @@ def sieweb_gradebook_by_section(section: str, period: int, course_code: str = "0
 def sieweb_capabilities() -> str:
     """Indica explícitamente las capacidades de CIEWEB/SIEWEB disponibles en esta versión."""
     return _ok({
-        "version": "0.7.5",
+        "version": "0.7.10",
         "messaging": {
             "list_inbox": True,
             "read_message": True,
@@ -1715,54 +1721,71 @@ def sieweb_save_conclusions_batch(records_json: str, confirmed: bool = False) ->
     return _ok(sieweb.update_conclusions_batch(records))
 
 def sieweb_criteria_write_preflight(class_id: int, class_period_id: int, root_content_id: int,
-                                    id_ambito: int = 518, extra_params_json: str = "{}") -> str:
-    """Diagnóstico SOLO LECTURA del modelo que el guardado de criterios usaría. No modifica SIEweb."""
+                                    id_ambito: int, extra_params_json: str = "{}") -> str:
+    """Diagnóstico SOLO LECTURA ligado al idAmbito exacto que luego usará la escritura."""
     extra=json.loads(extra_params_json or "{}")
     raw=sieweb.get_criteria(class_id=class_id,class_period_id=class_period_id,
                             root_content_id=root_content_id,id_ambito=id_ambito,extra_params=extra)
     model=sieweb.extract_criteria_editor_model(raw)
     replica=sieweb.extract_replica_from_editor(raw,None)
+    summary=sieweb.get_gradebook_summary(class_period_id=class_period_id, root_content_id=root_content_id, extra_params=extra)
+    info=summary.get("class") or {}
+    context_ok=(
+        str(info.get("idClase") or class_id)==str(class_id) and
+        str(info.get("idClasePeriodo") or class_period_id)==str(class_period_id) and
+        str(info.get("idContenidoPrin") or root_content_id)==str(root_content_id)
+    )
     rows=[]
-    for i,row in enumerate(model["rows"]):
-        if not isinstance(row,dict): continue
+    for path,row in sieweb._walk_criterion_tree(model["rows"]):
         desc=sieweb._criterion_description(row)
         if not desc: continue
         rows.append({
-            "index":i,
-            "id":row.get("id") or row.get("idClaseContenido") or row.get("idContenido"),
+            "path":list(path),
+            "id":sieweb._criterion_content_id(row),
+            "class_content_id":sieweb._criterion_class_content_id(row),
             "parent_id":sieweb._criterion_parent(row),
             "level":sieweb._criterion_level(row),
             "description":desc,
+            "llave":row.get("LLAVE") or row.get("llave"),
+            "flExiste":row.get("flExiste"),
             "schema_score":sieweb._criterion_row_score(row),
         })
     return _ok({
         "read_only":True,
-        "safe_to_write_probe":bool(rows),
+        "safe_to_write_probe":bool(rows) and context_ok,
+        "idAmbito":int(id_ambito),
+        "context_ok":context_ok,
+        "context":{
+            "requested":{"idClase":class_id,"idClasePeriodo":class_period_id,"idContenido":root_content_id,"idAmbito":int(id_ambito)},
+            "gradebook":{"idClase":info.get("idClase"),"idClasePeriodo":info.get("idClasePeriodo"),"idContenido":info.get("idContenidoPrin"),"nomSalon":info.get("nomSalon")},
+        },
         "editor_model_path":model["path"],
         "editor_model_score":model["score"],
-        "editor_row_count":len(model["rows"]),
+        "editor_root_count":len(model["rows"]),
+        "editor_node_count":sum(1 for _ in sieweb._walk_criterion_tree(model["rows"])),
         "criterion_rows":rows,
         "replica_type":type(replica).__name__ if replica is not None else None,
         "replica_present":replica is not None,
-        "note":"Esta prueba no escribe nada; valida que SieRoom identificó el modelo real antes de intentar insertar.",
+        "note":"v0.7.10: solo lectura; valida idAmbito y recorre el árbol real resCriterios (Competencia→Capacidad→Desempeño).",
     })
 
 
 def sieweb_upsert_criteria_verified_tool(class_id: int, class_period_id: int, root_content_id: int,
-                                         records_json: str, expected_json: str, replica_json: str = "{}",
+                                         id_ambito: int, records_json: str, expected_json: str, replica_json: str = "[]",
                                          extra_params_json: str = "{}", confirmed: bool = False) -> str:
-    """Alta/edición segura de criterios usando el modelo completo y verificación doble."""
+    """Alta/edición segura de criterios ligada al idAmbito exacto y con verificación doble."""
     records=json.loads(records_json or "[]")
     expected=json.loads(expected_json or "[]")
-    replica=json.loads(replica_json or "{}")
+    replica=json.loads(replica_json or "[]")
     extra=json.loads(extra_params_json or "{}")
     preview={"class_id":class_id,"class_period_id":class_period_id,"root_content_id":root_content_id,
-             "records":records,"expected":expected,"mode":"full-editor-model-v0.7.8"}
+             "id_ambito":int(id_ambito),"records":records,"expected":expected,
+             "mode":"hierarchical-rescriterios-v0.7.10","context_guard":"exact-ambito-bound-tree"}
     if not confirmed:
         return _ok({"requires_confirmation":True,"preview":preview})
     return _ok(sieweb.upsert_criteria_verified(
         class_id=class_id,class_period_id=class_period_id,root_content_id=root_content_id,
-        records=records,replica=replica,expected=expected,extra_params=extra))
+        id_ambito=int(id_ambito),records=records,replica=replica,expected=expected,extra_params=extra))
 
 
 def sieweb_build_grade_records(class_period_id: int, root_content_id: int, header_id: int,
@@ -1923,11 +1946,9 @@ def workflow_replicate_performances(p: dict[str, Any]) -> str:
             if len(found)>1: raise ValueError(f"{section}: desempeño duplicado '{desc}'.")
             if len(found)==1:
                 existing.append(found[0]); continue
-            # v0.7.8: no fabricamos aquí una fila a partir de un nodo recursivo.
-            # upsert_criteria_verified relee dataInicialPesosCriterios, identifica la
-            # colección COMPLETA del editor y clona ahí un hermano real del destino.
-            # Solo transportamos la intención pedagógica y campos opcionales que el
-            # modelo real ya reconozca.
+            # v0.7.10: solo transportamos intención pedagógica. El upsert relee
+            # resCriterios, localiza la Capacidad por ID_CONTENIDO y agrega el nuevo
+            # Desempeño dentro de parent.children con LLAVE/INDICE/flExiste correctos.
             requested={
                 "descripcion":desc,
                 "idpadre":parent_id,
@@ -1947,7 +1968,8 @@ def workflow_replicate_performances(p: dict[str, Any]) -> str:
             results.append({"section":item["section"],"already_present":item["existing"],"saved":True}); continue
         ctx=item["ctx"]
         res=sieweb.upsert_criteria_verified(class_id=int(ctx["idClase"]),class_period_id=int(ctx["idClasePeriodo"]),
-            root_content_id=int(ctx["idContenido"]),records=item["records"],replica=dict(p.get("replica") or {}),
+            root_content_id=int(ctx["idContenido"]),id_ambito=int(ctx["idAmbito"]),
+            records=item["records"],replica=list(p.get("replica") or []),
             expected=item["expected"],extra_params=item["extra"])
         results.append({"section":item["section"],"result":res})
     return _ok({"replicated":True,"results":results})

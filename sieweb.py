@@ -32,7 +32,7 @@ class SieWebClient:
         self.session.headers.update(
             {
                 "Accept": "application/json, text/plain, */*",
-                "User-Agent": "Mozilla/5.0 SieRoom-SRC/0.7.8",
+                "User-Agent": "Mozilla/5.0 SieRoom-SRC/0.7.10",
                 "X-Requested-With": "XMLHttpRequest",
                 "Cache-Control": "no-cache",
                 "Pragma": "no-cache",
@@ -1048,16 +1048,68 @@ class SieWebClient:
         return ""
 
     def _criterion_parent(self, row: dict[str, Any]) -> Any:
-        for key in ("idpadre", "idPadre", "ID_PADRE", "idContenidoPadre", "idClaseContenidoPadre"):
+        # En dataInicialPesosCriterios real el padre jerárquico se llama
+        # ID_CONTENIDO_REF (p. ej. Desempeño -> ID_CONTENIDO de su Capacidad).
+        for key in (
+            "idpadre", "idPadre", "ID_PADRE",
+            "idContenidoPadre", "idClaseContenidoPadre",
+            "ID_CONTENIDO_REF", "idContenidoRef", "id_contenido_ref",
+        ):
             if key in row:
                 return row.get(key)
         return None
 
     def _criterion_level(self, row: dict[str, Any]) -> Any:
-        for key in ("nivelEva", "nivel", "NIVEL_EVA", "nivelEvaluacion"):
+        # El editor usa NIVEL=1/2/3 para Competencia/Capacidad/Desempeño.
+        for key in ("nivelEva", "nivel", "NIVEL", "NIVEL_EVA", "nivelEvaluacion"):
             if key in row:
                 return row.get(key)
         return None
+
+    @staticmethod
+    def _criterion_content_id(row: dict[str, Any]) -> Any:
+        for key in ("ID_CONTENIDO", "idContenido", "id_contenido"):
+            if key in row:
+                return row.get(key)
+        return None
+
+    @staticmethod
+    def _criterion_class_content_id(row: dict[str, Any]) -> Any:
+        for key in ("ID_CLASE_CONTENIDO", "idClaseContenido", "id_clase_contenido", "id"):
+            if key in row:
+                return row.get(key)
+        return None
+
+    @classmethod
+    def _walk_criterion_tree(cls, rows: list[Any], path: tuple[Any, ...] = ()):
+        """Recorre el árbol real resCriterios conservando referencias a sus nodos."""
+        if not isinstance(rows, list):
+            return
+        for idx, row in enumerate(rows):
+            if not isinstance(row, dict):
+                continue
+            node_path = path + (idx,)
+            yield node_path, row
+            children = row.get("children")
+            if isinstance(children, list):
+                yield from cls._walk_criterion_tree(children, node_path + ("children",))
+
+    def _find_tree_nodes(self, rows: list[Any], *, content_id: Any | None = None,
+                         description: str | None = None, parent_id: Any | None = None,
+                         level: int | None = None) -> list[tuple[tuple[Any, ...], dict[str, Any]]]:
+        wanted = self._canon_text(description) if description is not None else None
+        out=[]
+        for path, row in self._walk_criterion_tree(rows):
+            if content_id is not None and str(self._criterion_content_id(row)) != str(content_id):
+                continue
+            if wanted is not None and self._canon_text(self._criterion_description(row)) != wanted:
+                continue
+            if parent_id is not None and str(self._criterion_parent(row)) != str(parent_id):
+                continue
+            if level is not None and str(self._criterion_level(row)) != str(level):
+                continue
+            out.append((path,row))
+        return out
 
     def find_raw_criteria(self, raw: dict[str, Any], *, description: str | None = None,
                           parent_id: int | None = None, level: int | None = None) -> list[dict[str, Any]]:
@@ -1100,49 +1152,24 @@ class SieWebClient:
                                      level: int = 3, id_ambito: int | None = None,
                                      extra_params: dict[str, Any] | None = None,
                                      preferred_template: dict[str, Any] | None = None) -> dict[str, Any]:
-        """Construye un alta usando como plantilla un desempeño REAL de la misma capacidad/sección.
-
-        Evita mandar una plantilla procedente de otra sección, causa probable de altas fantasma (estado=1).
-        """
-        raw=self.get_criteria(class_id=class_id, class_period_id=class_period_id,
-                              root_content_id=root_content_id, id_ambito=id_ambito,
+        """Construye una fila nueva con las mismas reglas del guardado jerárquico v0.7.10."""
+        raw=self.get_criteria(class_id=class_id,class_period_id=class_period_id,
+                              root_content_id=root_content_id,id_ambito=id_ambito,
                               extra_params=extra_params)
-        candidates=self.find_raw_criteria(raw, parent_id=parent_id, level=level)
-        template=None
-        if preferred_template:
-            # Solo se admite como fallback; se prefieren siempre campos observados en el destino.
-            template=preferred_template
-        if candidates:
-            # escoger el nodo más rico en campos, normalmente el registro editable completo
-            template=max(candidates, key=lambda x: len(x.keys()))
-        if not template:
-            raise SieWebError(
-                f"No existe un desempeño hermano utilizable bajo la capacidad {parent_id}; "
-                "no se puede inferir de forma segura el esquema de alta de SIEweb."
-            )
-        record=self._strip_identity_for_new_criterion(template)
-        # Reescribir padre/nivel con los nombres de campo que realmente usa la plantilla.
-        parent_key=next((k for k in ("idpadre","idPadre","ID_PADRE","idContenidoPadre","idClaseContenidoPadre") if k in record), "idpadre")
-        level_key=next((k for k in ("nivelEva","nivel","NIVEL_EVA","nivelEvaluacion") if k in record), "nivelEva")
-        desc_key=next((k for k in ("descripcion","desc","descComp","DESCRIPCION","DESC","nombre","nom") if k in record), "descripcion")
-        record[parent_key]=parent_id
-        record[level_key]=level
-        record[desc_key]=description
-        # Muchos formularios Angular distinguen alta/edición mediante estas identidades vacías/cero.
-        # No se inventan campos: solo se ponen a 0 si estaban presentes en la plantilla original.
-        for key in ("id", "idClaseContenido", "idContenido", "idCriterio"):
-            if key in template:
-                record[key]=0
-        return record
+        model=self.extract_criteria_editor_model(raw)
+        merged=self.merge_requested_criteria_into_editor_rows(
+            model["rows"],
+            [{"descripcion":description,"idpadre":parent_id,"nivelEva":level}],
+            [{"description":description,"parent_id":parent_id,"level":level}],
+        )
+        matches=self._find_tree_nodes(merged["rows"],description=description,parent_id=parent_id,level=level)
+        if len(matches)!=1:
+            raise SieWebError("No se pudo construir de forma única el nuevo desempeño.")
+        return copy.deepcopy(matches[0][1])
 
     @staticmethod
     def _criterion_row_score(row: dict[str, Any]) -> int:
-        """Puntúa si un dict parece ser una fila EDITABLE de HyoClaseContenido.
-
-        v0.7.7 elegía el dict con más claves en todo el JSON. Eso puede seleccionar
-        cabeceras/metadatos que se parecen a un criterio pero que no son el modelo que
-        el botón Guardar de SIEweb envía a ``HyoClaseContenido/insertar``.
-        """
+        """Puntúa si un dict parece una fila editable real de HyoClaseContenido."""
         if not isinstance(row, dict):
             return -1000
         keys={str(k).lower() for k in row}
@@ -1151,14 +1178,17 @@ class SieWebClient:
             return -1000
         score=20
         for group, weight in (
-            ({"id","idclasecontenido","idcontenido","idcriterio"}, 10),
-            ({"idpadre","idpadrecontenido","idcontenidopadre","idclasecontenidopadre"}, 9),
-            ({"niveleva","nivel","nivelevaluacion"}, 8),
+            ({"id","idclasecontenido","id_clase_contenido","idcontenido","id_contenido","idcriterio"}, 10),
+            ({"idpadre","id_padre","idpadrecontenido","idcontenidopadre","idclasecontenidopadre",
+              "id_contenido_ref","idcontenidoref"}, 9),
+            ({"niveleva","nivel","nivel_eva","nivelevaluacion"}, 8),
             ({"peso","porcentaje","ponderacion"}, 5),
-            ({"orden","numord","posicion"}, 3),
+            ({"orden","numord","posicion","indice"}, 3),
+            ({"flexiste","editoreg"}, 3),
             ({"activo","estado","habilitado"}, 2),
         ):
-            if keys & group: score += weight
+            if keys & group:
+                score += weight
         return score
 
     @classmethod
@@ -1173,14 +1203,31 @@ class SieWebClient:
                 yield from cls._walk_lists_with_paths(child, path + (idx,))
 
     def extract_criteria_editor_model(self, raw: dict[str, Any]) -> dict[str, Any]:
-        """Extrae la colección COMPLETA que alimenta el editor de criterios.
+        """Extrae el árbol completo que realmente edita SIEweb.
 
-        ``insertar`` es un guardado de pantalla/lote. En v0.7.6-v0.7.7 se enviaba
-        solo el desempeño nuevo, fabricado a partir de un nodo encontrado de forma
-        recursiva. En la interfaz real, el servidor espera el modelo completo que
-        devolvió ``dataInicialPesosCriterios``. Esta función localiza esa lista sin
-        depender del nombre exacto que cambie entre despliegues de SIEweb.
+        En el despliegue observado de SIEweb, dataInicialPesosCriterios devuelve
+        ``json.resCriterios`` como árbol Competencia -> Capacidad -> Desempeño.
+        Se prefiere explícitamente esa ruta; el detector heurístico queda solo como
+        compatibilidad con otros despliegues.
         """
+        observed = None
+        if isinstance(raw, dict):
+            envelope = raw.get("json")
+            if isinstance(envelope, dict) and isinstance(envelope.get("resCriterios"), list):
+                observed = envelope.get("resCriterios")
+        if isinstance(observed, list):
+            nodes=[row for _,row in self._walk_criterion_tree(observed)]
+            useful=[self._criterion_row_score(r) for r in nodes if self._criterion_description(r) != ""]
+            if useful and max(useful) >= 30:
+                return {
+                    "path":["json","resCriterios"],
+                    "score":sum(x for x in useful if x > 0),
+                    "rows":copy.deepcopy(observed),
+                    "candidate_count":1,
+                    "tree":True,
+                    "node_count":len(nodes),
+                }
+
         candidates=[]
         for path, rows in self._walk_lists_with_paths(raw):
             dict_rows=[r for r in rows if isinstance(r, dict)]
@@ -1191,33 +1238,23 @@ class SieWebClient:
             if not useful:
                 continue
             path_text="/".join(str(x).lower() for x in path)
-            path_bonus=0
-            if any(x in path_text for x in ("registro","criter","contenido","peso")):
-                path_bonus += 18
+            path_bonus=18 if any(x in path_text for x in ("registro","criter","contenido","peso")) else 0
             if any(x in path_text for x in ("cabecera","nota","alumno")):
                 path_bonus -= 20
             coverage=len(useful)/max(1,len(dict_rows))
-            score=sum(useful) + int(coverage*30) + path_bonus + min(len(dict_rows),50)
+            score=sum(useful)+int(coverage*30)+path_bonus+min(len(dict_rows),50)
             candidates.append((score,path,rows,dict_rows))
         if not candidates:
             raise SieWebError(
                 "SIEweb devolvió dataInicialPesosCriterios, pero no se pudo identificar "
-                "de forma segura la lista editable completa. No se envió nada."
+                "de forma segura el modelo editable. No se envió nada."
             )
         candidates.sort(key=lambda x:x[0], reverse=True)
         score,path,rows,dict_rows=candidates[0]
-        # Exigimos al menos una identidad fuerte en la colección elegida.
         if max(self._criterion_row_score(r) for r in dict_rows) < 30:
-            raise SieWebError(
-                "El modelo de criterios encontrado no tiene identidad suficiente para un guardado seguro. "
-                "No se envió nada."
-            )
-        return {
-            "path": list(path),
-            "score": score,
-            "rows": copy.deepcopy(rows),
-            "candidate_count": len(candidates),
-        }
+            raise SieWebError("El modelo de criterios encontrado no tiene identidad suficiente; no se envió nada.")
+        return {"path":list(path),"score":score,"rows":copy.deepcopy(rows),
+                "candidate_count":len(candidates),"tree":False,"node_count":len(dict_rows)}
 
     @classmethod
     def _find_named_value(cls, value: Any, names: set[str]) -> Any:
@@ -1239,8 +1276,27 @@ class SieWebClient:
         return None
 
     def extract_replica_from_editor(self, raw: dict[str, Any], fallback: Any = None) -> Any:
+        # Algunos despliegues sí devuelven datosReplica explícitamente. objOrigenReplica
+        # NO es equivalente y no debe enviarse como destino de réplica.
         found=self._find_named_value(raw,{"datosReplica","dataReplica","replica","datos_replicar"})
         return copy.deepcopy(fallback if found is None else found)
+
+    @staticmethod
+    def normalize_replica_for_criteria_write(replica: Any) -> list[Any]:
+        """Normaliza datosReplica al contrato seguro observado: una lista de destinos.
+
+        Este complemento replica 2.º A/2.º B haciendo una escritura independiente por
+        sección, por lo que la ausencia de réplica se envía como ``[]``. Un dict vacío
+        ({}) era otro desajuste de tipo presente hasta v0.7.9 y podía contribuir a e0006.
+        """
+        if replica in (None, {}, []):
+            return []
+        if isinstance(replica, list):
+            return copy.deepcopy(replica)
+        raise SieWebError(
+            "datosReplica debe ser una lista. La réplica entre secciones se realiza de forma "
+            "independiente para no reutilizar IDs internos; no se envió nada."
+        )
 
     @staticmethod
     def _set_existing_alias(row: dict[str, Any], aliases: tuple[str, ...], value: Any,
@@ -1258,97 +1314,320 @@ class SieWebClient:
                          parent_id: int | None, level: int | None) -> bool:
         if self._canon_text(self._criterion_description(row)) != self._canon_text(description):
             return False
-        if parent_id is not None:
-            parent=self._criterion_parent(row)
-            if parent is not None and str(parent) != str(parent_id):
-                return False
-        if level is not None:
-            lev=self._criterion_level(row)
-            if lev is not None and str(lev) != str(level):
-                return False
+        if parent_id is not None and str(self._criterion_parent(row)) != str(parent_id):
+            return False
+        if level is not None and str(self._criterion_level(row)) != str(level):
+            return False
         return True
+
+    def _set_new_row_semantics(self, newrow: dict[str, Any], *, parent: dict[str, Any],
+                               description: str, level: int, index: int,
+                               requested: dict[str, Any]) -> dict[str, Any]:
+        """Convierte un desempeño persistido clonado en una fila NUEVA como la UI real.
+
+        El editor distingue altas mediante IDs nulos + flExiste=false, EDITOREG=1 y una LLAVE/INDICE
+        nuevos. Reutilizar IDs=0, flExiste=true, EDITOREG=0 o la LLAVE del hermano puede provocar e0006/no-op.
+        """
+        out=copy.deepcopy(newrow)
+        # Las filas nuevas observadas en resCriterios usan null, no 0.
+        for key in ("id","ID","idClaseContenido","ID_CLASE_CONTENIDO",
+                    "idContenido","ID_CONTENIDO","idCriterio","ID_CRITERIO"):
+            if key in out:
+                out[key]=None
+        # Padre real del desempeño = ID_CONTENIDO de la capacidad.
+        self._set_existing_alias(out,("ID_CONTENIDO_REF","idContenidoRef","id_contenido_ref",
+                                      "idpadre","idPadre","ID_PADRE","idContenidoPadre",
+                                      "idClaseContenidoPadre"),self._criterion_content_id(parent),"ID_CONTENIDO_REF")
+        self._set_existing_alias(out,("DESCRIPCION","descripcion","desc","descComp","DESC","nombre","nom"),description,"DESCRIPCION")
+        self._set_existing_alias(out,("NIVEL","nivelEva","nivel","NIVEL_EVA","nivelEvaluacion"),level,"NIVEL")
+
+        for key in ("INDICE","indice"):
+            if key in out: out[key]=index
+        if "INDICE" not in out and "indice" not in out: out["INDICE"]=index
+        for key in ("INDICE_ORIGI","indiceOrigi","indice_origi"):
+            if key in out: out[key]=index
+        if "INDICE_ORIGI" not in out: out["INDICE_ORIGI"]=index
+        for key in ("ORDEN","orden"):
+            if key in out: out[key]=index
+        if "ORDEN" not in out and "orden" not in out: out["ORDEN"]=index
+
+        program_id=out.get("ID_PROGRAMA") or out.get("idPrograma") or 5
+        parent_key=str(parent.get("LLAVE") or parent.get("llave") or "").strip()
+        if parent_key:
+            if "LLAVE" in out or "llave" not in out:
+                out["LLAVE"]=f"{program_id}-{index}_{parent_key}"
+            else:
+                out["llave"]=f"{program_id}-{index}_{parent_key}"
+
+        # Marcadores que usa el editor para distinguir alta de fila ya persistida.
+        if "flExiste" in out or "FLEXISTE" not in out:
+            out["flExiste"]=False
+        else:
+            out["FLEXISTE"]=False
+        # La fila nueva ya contiene cambios (descripción/peso). flExiste=false decide INSERT;
+        # EDITOREG=1 indica al guardado por lotes que debe procesarla. Las plazas vacías
+        # sin tocar llegan con EDITOREG=0 y el backend las ignora.
+        if "EDITOREG" in out:
+            out["EDITOREG"]=1
+        elif "editoreg" in out:
+            out["editoreg"]=1
+        else:
+            out["EDITOREG"]=1
+        if "ORIGI" in out: out["ORIGI"]=""
+        if "PESO_ORIGI" in out: out["PESO_ORIGI"]=""
+        if "ABREV_ORIGI" in out: out["ABREV_ORIGI"]=None
+        if "TRAD_ORIGI" in out: out["TRAD_ORIGI"]=None
+        out["children"]=[]
+
+        # Campos pedagógicos opcionales solicitados por el llamador. Se aceptan alias
+        # reales, pero nunca identidades ni marcadores internos de persistencia.
+        forbidden={"id","ID","idClaseContenido","ID_CLASE_CONTENIDO","idContenido","ID_CONTENIDO",
+                   "idCriterio","ID_CRITERIO","LLAVE","llave","flExiste","FLEXISTE","EDITOREG",
+                   "INDICE","INDICE_ORIGI","ORDEN","idpadre","idPadre","ID_PADRE","ID_CONTENIDO_REF",
+                   "nivelEva","nivel","NIVEL","NIVEL_EVA"}
+        for key,value in requested.items():
+            if key in forbidden:
+                continue
+            if key in out:
+                out[key]=copy.deepcopy(value)
+            elif self._canon_text(key) in {"abreviatura","abrev"}:
+                self._set_existing_alias(out,("ABREVIATURA","abreviatura"),value,"ABREVIATURA")
+        return out
 
     def merge_requested_criteria_into_editor_rows(self, rows: list[Any],
                                                   records: list[dict[str, Any]],
                                                   expected: list[dict[str, Any]]) -> dict[str, Any]:
-        """Aplica altas/ediciones SOBRE el modelo completo del editor, sin inventarlo."""
+        """Aplica altas/ediciones en el árbol real Competencia->Capacidad->Desempeño.
+
+        Mantiene compatibilidad con modelos planos antiguos, pero cuando existen ``children``
+        nunca inserta un desempeño en la raíz.
+        """
         if len(records) != len(expected):
             raise SieWebError("records y expected deben tener la misma longitud; no se envió nada.")
         out=copy.deepcopy(rows)
         operations=[]
+        is_tree=any(isinstance(r,dict) and isinstance(r.get("children"),list) for r in out)
+
         for requested, exp in zip(records, expected):
             desc=str(exp["description"])
             parent_id=exp.get("parent_id")
             level=int(exp.get("level",3))
-            matches=[]
-            for idx,row in enumerate(out):
-                if isinstance(row,dict) and self._raw_row_matches(row,description=desc,parent_id=parent_id,level=level):
-                    matches.append((idx,row))
+            matches=self._find_tree_nodes(out,description=desc,parent_id=parent_id,level=level)
             if len(matches)>1:
                 raise SieWebError(f"El editor ya contiene más de un desempeño '{desc}'; no se envió nada.")
             if len(matches)==1:
-                idx,row=matches[0]
-                # Edición: conservar íntegra la fila que SIEweb entregó y reemplazar
-                # solo campos presentes en la petición. Nunca sustituirla por un dict parcial.
-                editable=copy.deepcopy(row)
+                path,row=matches[0]
+                # Edición real: conservar identidad y ORIGINAL, pero marcar EDITOREG=1.
                 for key,value in requested.items():
-                    if key in editable and key not in {"id","ID","idClaseContenido","ID_CLASE_CONTENIDO"}:
-                        editable[key]=copy.deepcopy(value)
-                self._set_existing_alias(editable,("descripcion","desc","descComp","DESCRIPCION","DESC","nombre","nom"),desc,"descripcion")
-                self._set_existing_alias(editable,("idpadre","idPadre","ID_PADRE","idContenidoPadre","idClaseContenidoPadre"),parent_id,"idpadre")
-                self._set_existing_alias(editable,("nivelEva","nivel","NIVEL_EVA","nivelEvaluacion"),level,"nivelEva")
-                out[idx]=editable
-                operations.append({"action":"update","index":idx,"description":desc})
+                    if key in row and key not in {"id","ID","idClaseContenido","ID_CLASE_CONTENIDO",
+                                                  "idContenido","ID_CONTENIDO","LLAVE","llave",
+                                                  "flExiste","EDITOREG"}:
+                        row[key]=copy.deepcopy(value)
+                self._set_existing_alias(row,("DESCRIPCION","descripcion","desc","descComp","DESC","nombre","nom"),desc,"DESCRIPCION")
+                # No se reescribe ID_CONTENIDO_REF ni LLAVE en una edición existente.
+                if "EDITOREG" in row: row["EDITOREG"]=1
+                elif "editoreg" in row: row["editoreg"]=1
+                else: row["EDITOREG"]=1
+                if "flExiste" in row: row["flExiste"]=True
+                operations.append({"action":"update","path":list(path),"description":desc,
+                                   "idContenido":self._criterion_content_id(row),"editoreg":1})
                 continue
 
-            # Alta: clonar un hermano REAL del mismo padre/nivel DENTRO DE LA LISTA
-            # que se enviará completa, no desde un nodo arbitrario del JSON.
+            if is_tree:
+                parents=self._find_tree_nodes(out,content_id=parent_id,level=max(1,level-1))
+                if len(parents)!=1:
+                    raise SieWebError(
+                        f"No se encontró de forma única la capacidad padre ID_CONTENIDO={parent_id} "
+                        f"para crear '{desc}'. No se envió nada."
+                    )
+                parent_path,parent=parents[0]
+                children=parent.get("children")
+                if not isinstance(children,list):
+                    raise SieWebError(f"La capacidad {parent_id} no expone children; no se envió nada.")
+                siblings=[r for r in children if isinstance(r,dict) and str(self._criterion_level(r))==str(level)]
+                if not siblings:
+                    raise SieWebError(
+                        f"La capacidad {parent_id} no tiene un desempeño hermano real para inferir el esquema de alta."
+                    )
+                # El límite real del programa Desempeño observado es 6 por capacidad.
+                indices=[]
+                for sib in siblings:
+                    val=sib.get("INDICE",sib.get("indice"))
+                    try: indices.append(int(val))
+                    except (TypeError,ValueError): pass
+                next_index=(max(indices) if indices else len(siblings))+1
+                if next_index > 6:
+                    raise SieWebError(
+                        f"La capacidad {parent_id} ya alcanzó el límite seguro de 6 desempeños; no se creó '{desc}'."
+                    )
+                sibling=max(siblings,key=self._criterion_row_score)
+                newrow=self._set_new_row_semantics(
+                    sibling,parent=parent,description=desc,level=level,index=next_index,requested=requested
+                )
+                # Revalidación estructural antes de construir el payload.
+                if str(self._criterion_parent(newrow)) != str(parent_id):
+                    raise SieWebError("El nuevo desempeño no quedó enlazado a su capacidad; escritura bloqueada.")
+                expected_llave=f"{newrow.get('ID_PROGRAMA',5)}-{next_index}_{parent.get('LLAVE','')}"
+                if parent.get("LLAVE") and str(newrow.get("LLAVE")) != expected_llave:
+                    raise SieWebError("La LLAVE jerárquica del nuevo desempeño es inconsistente; escritura bloqueada.")
+                children.append(newrow)
+                operations.append({"action":"insert","parent_path":list(parent_path),
+                                   "child_index":len(children)-1,"description":desc,
+                                   "parent_id":parent_id,"indice":next_index,"llave":newrow.get("LLAVE"),
+                                   "flExiste":newrow.get("flExiste")})
+                continue
+
+            # Compatibilidad con builds antiguos que devuelvan una lista plana.
             siblings=[]
             for idx,row in enumerate(out):
                 if not isinstance(row,dict): continue
-                p=self._criterion_parent(row); lev=self._criterion_level(row)
-                if parent_id is not None and p is not None and str(p)!=str(parent_id): continue
-                if lev is not None and str(lev)!=str(level): continue
-                if self._criterion_row_score(row) < 30: continue
+                if str(self._criterion_parent(row))!=str(parent_id): continue
+                if str(self._criterion_level(row))!=str(level): continue
+                if self._criterion_row_score(row)<30: continue
                 siblings.append((idx,row))
             if not siblings:
-                raise SieWebError(
-                    f"No existe una fila hermana editable para crear '{desc}' bajo la capacidad {parent_id}. "
-                    "No se envió nada."
-                )
+                raise SieWebError(f"No existe una fila hermana editable para crear '{desc}' bajo {parent_id}.")
             sibling_idx,sibling=max(siblings,key=lambda ir:self._criterion_row_score(ir[1]))
-            newrow=self._strip_identity_for_new_criterion(sibling)
-            # Algunos builds distinguen alta con 0; solo reponemos aliases que existían
-            # en la fila original para no inventar columnas.
-            for key in ("id","ID","idClaseContenido","ID_CLASE_CONTENIDO","idContenido","ID_CONTENIDO","idCriterio","ID_CRITERIO"):
-                if key in sibling:
-                    newrow[key]=0
-            self._set_existing_alias(newrow,("descripcion","desc","descComp","DESCRIPCION","DESC","nombre","nom"),desc,"descripcion")
-            self._set_existing_alias(newrow,("idpadre","idPadre","ID_PADRE","idContenidoPadre","idClaseContenidoPadre"),parent_id,"idpadre")
-            self._set_existing_alias(newrow,("nivelEva","nivel","NIVEL_EVA","nivelEvaluacion"),level,"nivelEva")
-            # Copiamos únicamente campos adicionales que realmente existen en el hermano.
-            for key,value in requested.items():
-                if key in newrow and key not in {"id","ID","idClaseContenido","ID_CLASE_CONTENIDO"}:
-                    newrow[key]=copy.deepcopy(value)
+            next_index=len(siblings)+1
+            synthetic_parent={"ID_CONTENIDO":parent_id,"LLAVE":"","NIVEL":level-1}
+            newrow=self._set_new_row_semantics(sibling,parent=synthetic_parent,description=desc,
+                                                level=level,index=next_index,requested=requested)
             insert_at=sibling_idx+1
             out.insert(insert_at,newrow)
-            operations.append({"action":"insert","index":insert_at,"description":desc,"template_index":sibling_idx})
-        return {"rows":out,"operations":operations}
+            operations.append({"action":"insert-flat","index":insert_at,"description":desc})
+        return {"rows":out,"operations":operations,"tree":is_tree}
+
+    def validate_criteria_tree_for_write(self, rows: list[Any], *, class_id: int,
+                                         class_period_id: int) -> dict[str, Any]:
+        """Valida invariantes del árbol antes de llamar HyoClaseContenido/insertar."""
+        errors=[]
+        new_nodes=[]
+        edited_nodes=[]
+        seen_content={}
+        seen_class_content={}
+
+        def walk(nodes: list[Any], parent: dict[str, Any] | None = None, path: tuple[Any,...] = ()):
+            sibling_keys=set()
+            for idx,row in enumerate(nodes or []):
+                if not isinstance(row,dict):
+                    continue
+                pth=path+(idx,)
+                desc=self._criterion_description(row)
+                cid=self._criterion_content_id(row)
+                ccid=self._criterion_class_content_id(row)
+                level=self._criterion_level(row)
+                llave=row.get("LLAVE") or row.get("llave")
+                exists=row.get("flExiste") if "flExiste" in row else row.get("FLEXISTE")
+                edit=row.get("EDITOREG") if "EDITOREG" in row else row.get("editoreg")
+
+                if llave not in (None,""):
+                    key=str(llave)
+                    if key in sibling_keys:
+                        errors.append({"path":list(pth),"reason":"duplicate_llave_sibling","llave":key})
+                    sibling_keys.add(key)
+
+                if cid not in (None,"",0,"0"):
+                    key=str(cid)
+                    if key in seen_content:
+                        errors.append({"path":list(pth),"reason":"duplicate_ID_CONTENIDO",
+                                       "id":cid,"other_path":seen_content[key]})
+                    else:
+                        seen_content[key]=list(pth)
+                if ccid not in (None,"",0,"0"):
+                    key=str(ccid)
+                    if key in seen_class_content:
+                        errors.append({"path":list(pth),"reason":"duplicate_ID_CLASE_CONTENIDO",
+                                       "id":ccid,"other_path":seen_class_content[key]})
+                    else:
+                        seen_class_content[key]=list(pth)
+
+                for key in ("ID_CLASE","idClase","idclase"):
+                    if row.get(key) not in (None,"",0,"0") and str(row.get(key)) != str(class_id):
+                        errors.append({"path":list(pth),"reason":"wrong_idClase","actual":row.get(key),"expected":class_id})
+                for key in ("ID_CLASE_PERIODO","idClasePeriodo","idclaseperiodo"):
+                    if row.get(key) not in (None,"",0,"0") and str(row.get(key)) != str(class_period_id):
+                        errors.append({"path":list(pth),"reason":"wrong_idClasePeriodo","actual":row.get(key),"expected":class_period_id})
+
+                if parent is not None and desc:
+                    parent_cid=self._criterion_content_id(parent)
+                    if parent_cid not in (None,"") and str(self._criterion_parent(row)) != str(parent_cid):
+                        errors.append({"path":list(pth),"reason":"broken_parent_ref",
+                                       "actual":self._criterion_parent(row),"expected":parent_cid})
+                    parent_level=self._criterion_level(parent)
+                    if level is not None and parent_level is not None:
+                        try:
+                            if int(level) != int(parent_level)+1:
+                                errors.append({"path":list(pth),"reason":"broken_level_chain",
+                                               "level":level,"parent_level":parent_level})
+                        except (TypeError,ValueError):
+                            pass
+
+                if exists is False and desc:
+                    node={"path":list(pth),"description":desc,"level":level,"parent_id":self._criterion_parent(row),
+                          "llave":llave,"editoreg":edit}
+                    new_nodes.append(node)
+                    if cid not in (None,"") or ccid not in (None,""):
+                        errors.append({**node,"reason":"new_node_has_persisted_identity",
+                                       "ID_CONTENIDO":cid,"ID_CLASE_CONTENIDO":ccid})
+                    if str(edit) != "1":
+                        errors.append({**node,"reason":"new_node_not_marked_edited"})
+                elif exists is True and str(edit) == "1":
+                    edited_nodes.append({"path":list(pth),"description":desc,"level":level,
+                                         "ID_CONTENIDO":cid,"ID_CLASE_CONTENIDO":ccid})
+                    if cid in (None,"",0,"0") or ccid in (None,"",0,"0"):
+                        errors.append({"path":list(pth),"reason":"edited_existing_node_missing_identity"})
+
+                children=row.get("children")
+                if isinstance(children,list):
+                    walk(children,row,pth+("children",))
+
+        walk(rows)
+        return {
+            "ok":not errors,
+            "errors":errors,
+            "new_nodes":new_nodes,
+            "edited_nodes":edited_nodes,
+            "root_count":len(rows or []),
+            "node_count":sum(1 for _ in self._walk_criterion_tree(rows or [])),
+        }
 
     def upsert_criteria_verified(self, *, class_id: int, class_period_id: int,
-                                 root_content_id: int, records: list[dict[str, Any]],
+                                 root_content_id: int, id_ambito: int,
+                                 records: list[dict[str, Any]],
                                  replica: dict[str, Any] | list[Any] | None,
                                  expected: list[dict[str, Any]],
                                  extra_params: dict[str, Any] | None = None,
                                  verification_attempts: int = 3) -> dict[str, Any]:
         """Guarda el MODELO COMPLETO del editor y exige persistencia real.
 
-        Cambio crítico v0.7.8: no manda ``records`` como lote aislado. Primero vuelve
-        a leer ``dataInicialPesosCriterios``, extrae la colección completa usada por
-        la pantalla, aplica ahí las altas/ediciones y recién envía ese modelo completo.
+        v0.7.10 conserva la protección de contexto de v0.7.9 y corrige el árbol real resCriterios: el ``idAmbito``
+        usado por el preflight debe viajar también a TODAS las lecturas que rodean el
+        POST real. Antes, el preflight podía leer 2.º B correctamente pero el guardado
+        releía silenciosamente el ámbito por defecto (518/2.º A), mezclando ``idClase``
+        de una sección con filas/replica de otra y provocando ``e0006``.
         """
+        try:
+            id_ambito = int(id_ambito)
+        except (TypeError, ValueError) as exc:
+            raise SieWebError("id_ambito es obligatorio para guardar desempeños; no se usará un ámbito por defecto.") from exc
+        if id_ambito <= 0:
+            raise SieWebError("id_ambito debe ser positivo para guardar desempeños; no se usará un ámbito por defecto.")
+
         before = self.get_gradebook_summary(class_period_id=class_period_id, root_content_id=root_content_id,
                                             extra_params=extra_params)
+        class_info = before.get("class") or {}
+        context_errors = []
+        if class_info.get("idClase") not in (None, "") and str(class_info.get("idClase")) != str(class_id):
+            context_errors.append({"field":"idClase","expected":class_id,"actual":class_info.get("idClase")})
+        if class_info.get("idClasePeriodo") not in (None, "") and str(class_info.get("idClasePeriodo")) != str(class_period_id):
+            context_errors.append({"field":"idClasePeriodo","expected":class_period_id,"actual":class_info.get("idClasePeriodo")})
+        if class_info.get("idContenidoPrin") not in (None, "") and str(class_info.get("idContenidoPrin")) != str(root_content_id):
+            context_errors.append({"field":"idContenido","expected":root_content_id,"actual":class_info.get("idContenidoPrin")})
+        if context_errors:
+            raise SieWebError(
+                "PROTECCIÓN DE CONTEXTO SIEWEB: los IDs del registro no corresponden al destino solicitado; "
+                "se bloqueó la escritura antes del POST: " + json.dumps(context_errors, ensure_ascii=False)
+            )
         duplicate_preflight=[]
         for e in expected:
             found=self.find_exact_criterion(before,description=str(e["description"]),
@@ -1360,10 +1639,41 @@ class SieWebClient:
                               json.dumps(duplicate_preflight,ensure_ascii=False))
 
         raw_before=self.get_criteria(class_id=class_id,class_period_id=class_period_id,
-                                     root_content_id=root_content_id,extra_params=extra_params)
+                                     root_content_id=root_content_id,id_ambito=id_ambito,
+                                     extra_params=extra_params)
         model=self.extract_criteria_editor_model(raw_before)
+        # Si las filas editables exponen idClase/idClasePeriodo, deben pertenecer al mismo
+        # contexto. Esto detecta exactamente la mezcla de sección que v0.7.8 no veía.
+        row_class_ids=set()
+        row_period_ids=set()
+        for _, row in self._walk_criterion_tree(model["rows"]):
+            for key in ("idClase","ID_CLASE","idclase"):
+                if row.get(key) not in (None, "", 0, "0"):
+                    row_class_ids.add(str(row.get(key)))
+            for key in ("idClasePeriodo","ID_CLASE_PERIODO","idclaseperiodo"):
+                if row.get(key) not in (None, "", 0, "0"):
+                    row_period_ids.add(str(row.get(key)))
+        if row_class_ids and str(class_id) not in row_class_ids:
+            raise SieWebError(
+                f"PROTECCIÓN DE CONTEXTO SIEWEB: el editor leído con idAmbito={id_ambito} "
+                f"pertenece a idClase={sorted(row_class_ids)}, no a {class_id}. No se envió nada."
+            )
+        if row_period_ids and str(class_period_id) not in row_period_ids:
+            raise SieWebError(
+                f"PROTECCIÓN DE CONTEXTO SIEWEB: el editor leído con idAmbito={id_ambito} "
+                f"pertenece a idClasePeriodo={sorted(row_period_ids)}, no a {class_period_id}. No se envió nada."
+            )
         merged=self.merge_requested_criteria_into_editor_rows(model["rows"],records,expected)
-        actual_replica=self.extract_replica_from_editor(raw_before,replica)
+        actual_replica=self.normalize_replica_for_criteria_write(replica)
+        payload_diagnostics=self.validate_criteria_tree_for_write(
+            merged["rows"],class_id=class_id,class_period_id=class_period_id
+        )
+        if not payload_diagnostics["ok"]:
+            raise SieWebError(
+                "PROTECCIÓN ESTRUCTURAL SIEWEB: el árbol a guardar no cumple las invariantes "
+                "de resCriterios; se bloqueó el POST: "+
+                json.dumps(payload_diagnostics["errors"],ensure_ascii=False)
+            )
         payload={"registros":merged["rows"],"idClase":class_id,"datosReplica":actual_replica}
 
         # Guardado único. No hacemos reintentos de escritura a ciegas: un timeout o
@@ -1375,20 +1685,28 @@ class SieWebClient:
         if provider_state != 1:
             raise SieWebError(
                 "SIEweb rechazó el guardado de criterios "
-                f"(estado={provider_state!r}, codigo={provider_code!r}). No se escribirán notas."
+                f"(estado={provider_state!r}, codigo={provider_code!r}). No se escribirán notas. "
+                "Diagnóstico del payload: "+json.dumps({
+                    "root_count":payload_diagnostics["root_count"],
+                    "node_count":payload_diagnostics["node_count"],
+                    "new_nodes":payload_diagnostics["new_nodes"],
+                    "edited_nodes":payload_diagnostics["edited_nodes"],
+                    "datosReplicaType":type(actual_replica).__name__,
+                },ensure_ascii=False)
             )
 
         attempts=[]; final=[]
         max_attempts=max(1,min(int(verification_attempts),5))
         for attempt in range(1,max_attempts+1):
             raw_after=self.get_criteria(class_id=class_id,class_period_id=class_period_id,
-                                        root_content_id=root_content_id,extra_params=extra_params)
+                                        root_content_id=root_content_id,id_ambito=id_ambito,
+                                        extra_params=extra_params)
             editor_after=self.extract_criteria_editor_model(raw_after)
             after=self.get_gradebook_summary(class_period_id=class_period_id,root_content_id=root_content_id,
                                              extra_params=extra_params)
             checks=[]; ok=True
             for e in expected:
-                found_editor=[row for row in editor_after["rows"] if isinstance(row,dict) and
+                found_editor=[row for _,row in self._walk_criterion_tree(editor_after["rows"]) if
                               self._raw_row_matches(row,description=str(e["description"]),
                                                     parent_id=e.get("parent_id"),level=e.get("level",3))]
                 found_gradebook=self.find_exact_criterion(after,description=str(e["description"]),
@@ -1418,8 +1736,12 @@ class SieWebClient:
             "editor_model_path":model["path"],
             "editor_model_score":model["score"],
             "operations":merged["operations"],
+            "payload_diagnostics":payload_diagnostics,
             "sent_record_count":len(merged["rows"]),
-            "mode":"full-editor-model-v0.7.8",
+            "sent_node_count":sum(1 for _ in self._walk_criterion_tree(merged["rows"])),
+            "idAmbito":id_ambito,
+            "context_guard":"exact-ambito-bound-tree-v0.7.10",
+            "mode":"hierarchical-rescriterios-v0.7.10",
         }
 
     # ---------- Conclusiones descriptivas ----------

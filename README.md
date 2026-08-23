@@ -1,4 +1,29 @@
-# SieRoom SRC 0.7.8
+# SieRoom SRC 0.7.10
+
+## SIEweb — corrección estructural real de desempeños (`e0006`)
+
+La v0.7.10 parte de la respuesta real de `dataInicialPesosCriterios` observada en SIEweb. El modelo no es una lista plana: `resCriterios` es un árbol **Competencia → Capacidad → Desempeño**.
+
+Correcciones principales:
+
+- reconoce `ID_CONTENIDO_REF` como padre jerárquico real y `NIVEL` como nivel real del editor;
+- localiza la capacidad por su `ID_CONTENIDO` y añade el desempeño dentro de `parent.children`, nunca en la raíz;
+- un desempeño nuevo usa `ID_CLASE_CONTENIDO=null`, `ID_CONTENIDO=null`, `flExiste=false` y `EDITOREG=1`;
+- genera `INDICE`, `INDICE_ORIGI`, `ORDEN` y `LLAVE` nuevos según la posición real del hijo (por ejemplo `5-2_4-1_3-3_2-1`);
+- limpia los valores `ORIGI`, `ABREV_ORIGI`, `TRAD_ORIGI` y `PESO_ORIGI` propios de una fila todavía no persistida;
+- una edición existente conserva IDs/LLAVE y se marca `EDITOREG=1`, evitando el `estado:1` sin modificación que se observó antes;
+- cuando no se usa la réplica interna de SIEweb, `datosReplica` se envía como lista vacía `[]`, no como objeto `{}`;
+- la réplica 2.º A ↔ 2.º B sigue realizándose como escrituras independientes, resolviendo los IDs de cada sección;
+- `estado=0/e0006` sigue bloqueando todo el flujo y **Nivel de Logro continúa protegido**;
+- un `estado=1` solo se acepta si el desempeño aparece después tanto en el editor como en el Registro de Notas.
+
+La suite v0.7.10 incluye una réplica mínima del esquema real `resCriterios` y prueba específicamente el alta de **AREAS PERIM.** debajo de **Modela**.
+
+Consulta `SIEWEB_SYNC_V0.7.10.md` para el detalle técnico.
+
+---
+
+# Historial — SieRoom SRC 0.7.8
 
 ## SIEweb — criterios/desempeños persistentes (v0.7.8)
 

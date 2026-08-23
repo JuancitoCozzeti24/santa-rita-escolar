@@ -38,8 +38,8 @@ def test_new_performance_is_inserted_into_full_model_and_preserves_sibling_schem
     )
     assert len(merged["rows"]) == 4
     created=[x for x in merged["rows"] if isinstance(x,dict) and x.get("descripcion")=="Áreas y perímetros"][0]
-    assert created["id"] == 0
-    assert created["idClaseContenido"] == 0
+    assert created["id"] is None
+    assert created["idClaseContenido"] is None
     assert created["idpadre"] == 10
     assert created["nivelEva"] == 3
     assert created["campoInterno"] == "SE-CONSERVA"
@@ -82,15 +82,15 @@ def test_verified_save_sends_full_model_and_requires_editor_and_gradebook(monkey
         return {"json":{"estado":1}}
     monkeypatch.setattr(c,"_request",fake_request)
     result=c.upsert_criteria_verified(
-        class_id=123,class_period_id=6305,root_content_id=99,
+        class_id=123,class_period_id=6305,root_content_id=99,id_ambito=518,
         records=[{"descripcion":"Áreas y perímetros","idpadre":10,"nivelEva":3}],
         replica={},expected=[{"description":"Áreas y perímetros","parent_id":10,"level":3}],
         verification_attempts=1,
     )
     assert result["saved"] is True
-    assert result["mode"] == "full-editor-model-v0.7.8"
+    assert result["mode"] == "hierarchical-rescriterios-v0.7.10"
     assert len(sent["registros"]) == 4
-    assert sent["datosReplica"] == [{"idClase":123,"activo":True}]
+    assert sent["datosReplica"] == []
 
 
 def test_false_estado_1_is_rejected_if_gradebook_does_not_persist(monkeypatch):
@@ -110,7 +110,7 @@ def test_false_estado_1_is_rejected_if_gradebook_does_not_persist(monkeypatch):
     monkeypatch.setattr(c,"_request",lambda *a,**k:{"json":{"estado":1}})
     with pytest.raises(SieWebError) as exc:
         c.upsert_criteria_verified(
-            class_id=123,class_period_id=6305,root_content_id=99,
+            class_id=123,class_period_id=6305,root_content_id=99,id_ambito=518,
             records=[{"descripcion":"Áreas y perímetros","idpadre":10,"nivelEva":3}],
             replica={},expected=[{"description":"Áreas y perímetros","parent_id":10,"level":3}],
             verification_attempts=1,
@@ -130,7 +130,7 @@ def test_e0006_or_non_success_is_rejected_before_any_grade_flow(monkeypatch):
     monkeypatch.setattr(c,"_request",lambda *a,**k:{"json":{"estado":0,"codigo":"e0006"}})
     with pytest.raises(SieWebError) as exc:
         c.upsert_criteria_verified(
-            class_id=123,class_period_id=6305,root_content_id=99,
+            class_id=123,class_period_id=6305,root_content_id=99,id_ambito=518,
             records=[{"descripcion":"Áreas y perímetros","idpadre":10,"nivelEva":3}],
             replica={},expected=[{"description":"Áreas y perímetros","parent_id":10,"level":3}],
             verification_attempts=1,
