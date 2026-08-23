@@ -229,10 +229,10 @@ def test_edit_marks_editoreg_instead_of_silent_noop():
     assert row["ABREVIATURA"] == "TRIANG."
 
 
-def test_empty_replica_is_omitted_instead_of_invented():
+def test_empty_replica_is_serialized_as_native_empty_list():
     c = SieWebClient()
-    assert c.normalize_replica_for_criteria_write({}) is None
-    assert c.normalize_replica_for_criteria_write(None) is None
+    assert c.normalize_replica_for_criteria_write({}) == []
+    assert c.normalize_replica_for_criteria_write(None) == []
     with pytest.raises(SieWebError):
         c.normalize_replica_for_criteria_write({"clasesNG": [2043]})
 
@@ -247,6 +247,10 @@ def test_verified_write_payload_matches_hierarchy_and_double_verifies(monkeypatc
     seen_ambitos = []
     def fake_get_criteria(**kwargs):
         seen_ambitos.append(kwargs.get("id_ambito"))
+        c._last_criteria_context = {
+            "idClase": 2030, "idClasePeriodo": 6305, "idContenido": 119598,
+            "idAmbito": 518, "CURSOCOD": "05", "cursocod": "05",
+        }
         return next(raws)
     monkeypatch.setattr(c, "get_criteria", fake_get_criteria)
     sent = {}
@@ -266,10 +270,14 @@ def test_verified_write_payload_matches_hierarchy_and_double_verifies(monkeypatc
         verification_attempts=1,
     )
     assert result["saved"] is True
-    assert result["mode"] == "ui-native-coursecode-roster-v0.7.12"
+    assert result["mode"] == "ui-native-dual-coursecode-replica-v0.7.13"
     assert seen_ambitos == [518, 518]
     assert sent["idClase"] == 2030
-    assert "datosReplica" not in sent
+    assert sent["datosReplica"] == []
+    assert sent["CURSOCOD"] == sent["cursocod"] == "05"
+    assert sent["idClasePeriodo"] == 6305
+    assert sent["idContenido"] == 119598
+    assert sent["idAmbito"] == 518
     assert len(sent["registros"]) == 2  # raíz: competencia + plaza vacía, NO +1
     new = c._find_tree_nodes(sent["registros"], description="AREAS PERIM.",
                              parent_id=133731, level=3)
@@ -282,7 +290,13 @@ def test_verified_write_payload_matches_hierarchy_and_double_verifies(monkeypatc
 def test_e0006_still_blocks_without_post_verification_or_grades(monkeypatch):
     c = SieWebClient()
     monkeypatch.setattr(c, "get_gradebook_summary", lambda **kwargs: gradebook(False))
-    monkeypatch.setattr(c, "get_criteria", lambda **kwargs: real_shape_raw(False))
+    def fake_get_criteria(**kwargs):
+        c._last_criteria_context = {
+            "idClase": 2030, "idClasePeriodo": 6305, "idContenido": 119598,
+            "idAmbito": 518, "CURSOCOD": "05", "cursocod": "05",
+        }
+        return real_shape_raw(False)
+    monkeypatch.setattr(c, "get_criteria", fake_get_criteria)
     monkeypatch.setattr(c, "_request", lambda *a, **k: {"json": {"estado": 0, "codigo": "e0006"}})
     with pytest.raises(SieWebError) as exc:
         c.upsert_criteria_verified(

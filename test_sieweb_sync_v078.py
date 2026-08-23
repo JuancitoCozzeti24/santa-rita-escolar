@@ -77,7 +77,13 @@ def test_verified_save_sends_full_model_and_requires_editor_and_gradebook(monkey
     gradebook_calls=iter([before,after])
     criteria_calls=iter([raw,raw_after])
     monkeypatch.setattr(c,"get_gradebook_summary",lambda **kwargs: next(gradebook_calls))
-    monkeypatch.setattr(c,"get_criteria",lambda **kwargs: next(criteria_calls))
+    def fake_get_criteria(**kwargs):
+        c._last_criteria_context = {
+            "idClase": 123, "idClasePeriodo": 6305, "idContenido": 99,
+            "idAmbito": 518, "CURSOCOD": "05", "cursocod": "05",
+        }
+        return next(criteria_calls)
+    monkeypatch.setattr(c,"get_criteria",fake_get_criteria)
     sent={}
     def fake_request(method,path,**kwargs):
         sent.update(kwargs["json"])
@@ -90,9 +96,9 @@ def test_verified_save_sends_full_model_and_requires_editor_and_gradebook(monkey
         verification_attempts=1,
     )
     assert result["saved"] is True
-    assert result["mode"] == "ui-native-coursecode-roster-v0.7.12"
+    assert result["mode"] == "ui-native-dual-coursecode-replica-v0.7.13"
     assert len(sent["registros"]) == 4
-    assert "datosReplica" not in sent
+    assert sent["datosReplica"] == []
 
 
 def test_false_estado_1_is_rejected_if_gradebook_does_not_persist(monkeypatch):
@@ -108,7 +114,13 @@ def test_false_estado_1_is_rejected_if_gradebook_does_not_persist(monkeypatch):
     gradebook_calls=iter([before,before])
     criteria_calls=iter([raw,raw_after])
     monkeypatch.setattr(c,"get_gradebook_summary",lambda **kwargs: next(gradebook_calls))
-    monkeypatch.setattr(c,"get_criteria",lambda **kwargs: next(criteria_calls))
+    def fake_get_criteria(**kwargs):
+        c._last_criteria_context = {
+            "idClase": 123, "idClasePeriodo": 6305, "idContenido": 99,
+            "idAmbito": 518, "CURSOCOD": "05", "cursocod": "05",
+        }
+        return next(criteria_calls)
+    monkeypatch.setattr(c,"get_criteria",fake_get_criteria)
     monkeypatch.setattr(c,"_request",lambda *a,**k:{"json":{"estado":1}})
     with pytest.raises(SieWebError) as exc:
         c.upsert_criteria_verified(
@@ -128,7 +140,13 @@ def test_e0006_or_non_success_is_rejected_before_any_grade_flow(monkeypatch):
         {"id":20,"idpadre":10,"nivelEva":3,"descripcion":"Desempeño anterior"},
     ],"class":{"idClase":123}}
     monkeypatch.setattr(c,"get_gradebook_summary",lambda **kwargs: before)
-    monkeypatch.setattr(c,"get_criteria",lambda **kwargs: raw)
+    def fake_get_criteria(**kwargs):
+        c._last_criteria_context = {
+            "idClase": 123, "idClasePeriodo": 6305, "idContenido": 99,
+            "idAmbito": 518, "CURSOCOD": "05", "cursocod": "05",
+        }
+        return raw
+    monkeypatch.setattr(c,"get_criteria",fake_get_criteria)
     monkeypatch.setattr(c,"_request",lambda *a,**k:{"json":{"estado":0,"codigo":"e0006"}})
     with pytest.raises(SieWebError) as exc:
         c.upsert_criteria_verified(

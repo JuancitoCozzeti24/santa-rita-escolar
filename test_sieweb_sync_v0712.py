@@ -86,6 +86,7 @@ def test_v0712_get_criteria_auto_resolves_and_sends_cursocod(monkeypatch):
         extra_params={"idPeriodoAnt": 6304},
     )
     assert seen["CURSOCOD"] == "05"
+    assert seen["cursocod"] == "05"
     assert seen["idClase"] == 2030
     assert seen["idClasePeriodo"] == 6305
     assert seen["idContenido"] == 119598

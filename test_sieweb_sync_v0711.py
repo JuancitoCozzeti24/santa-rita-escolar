@@ -40,13 +40,19 @@ def test_v0711_new_performance_uses_exact_sparse_ui_shape():
         assert forbidden not in row
 
 
-def test_v0711_omits_empty_datos_replica_from_post(monkeypatch):
+def test_v0713_sends_empty_datos_replica_and_full_course_context(monkeypatch):
     c = SieWebClient()
     raw_before = real_shape_raw(False)
     raw_after = real_shape_raw(True)
     raw_iter = iter([raw_before, raw_after])
     summary_iter = iter([gradebook(False), gradebook(True)])
-    monkeypatch.setattr(c, "get_criteria", lambda **kwargs: next(raw_iter))
+    def fake_get_criteria(**kwargs):
+        c._last_criteria_context = {
+            "idClase": 2030, "idClasePeriodo": 6305, "idContenido": 119598,
+            "idAmbito": 518, "CURSOCOD": "05", "cursocod": "05",
+        }
+        return next(raw_iter)
+    monkeypatch.setattr(c, "get_criteria", fake_get_criteria)
     monkeypatch.setattr(c, "get_gradebook_summary", lambda **kwargs: next(summary_iter))
     sent = []
 
@@ -66,7 +72,11 @@ def test_v0711_omits_empty_datos_replica_from_post(monkeypatch):
     assert result["saved"] is True
     assert result["write_strategy"] == "ui-sparse-full-tree"
     assert len(sent) == 1
-    assert "datosReplica" not in sent[0]
+    assert sent[0]["datosReplica"] == []
+    assert sent[0]["CURSOCOD"] == sent[0]["cursocod"] == "05"
+    assert sent[0]["idClasePeriodo"] == 6305
+    assert sent[0]["idContenido"] == 119598
+    assert sent[0]["idAmbito"] == 518
 
 
 def test_v0711_adapts_after_e0006_only_when_re_read_confirms_absence(monkeypatch):
@@ -77,7 +87,13 @@ def test_v0711_adapts_after_e0006_only_when_re_read_confirms_absence(monkeypatch
     # 4) verificación tras éxito changed-records.
     raw_iter = iter([raw_before, raw_before, raw_before, raw_after])
     summary_iter = iter([gradebook(False), gradebook(True)])
-    monkeypatch.setattr(c, "get_criteria", lambda **kwargs: next(raw_iter))
+    def fake_get_criteria(**kwargs):
+        c._last_criteria_context = {
+            "idClase": 2030, "idClasePeriodo": 6305, "idContenido": 119598,
+            "idAmbito": 518, "CURSOCOD": "05", "cursocod": "05",
+        }
+        return next(raw_iter)
+    monkeypatch.setattr(c, "get_criteria", fake_get_criteria)
     monkeypatch.setattr(c, "get_gradebook_summary", lambda **kwargs: next(summary_iter))
 
     responses = iter([
@@ -112,12 +128,19 @@ def test_v0711_adapts_after_e0006_only_when_re_read_confirms_absence(monkeypatch
     assert len(sent[2]["registros"]) == 1       # solo la fila nueva
     assert sent[2]["registros"][0]["DESCRIPCION"] == "AREAS PERIM."
     assert sent[2]["registros"][0]["ID_CONTENIDO_REF"] == 133731
-    assert all("datosReplica" not in payload for payload in sent)
+    assert all(payload["datosReplica"] == [] for payload in sent)
+    assert all(payload["CURSOCOD"] == payload["cursocod"] == "05" for payload in sent)
 
 
 def test_v0711_never_falls_back_after_ambiguous_non_e0006_failure(monkeypatch):
     c = SieWebClient()
-    monkeypatch.setattr(c, "get_criteria", lambda **kwargs: real_shape_raw(False))
+    def fake_get_criteria(**kwargs):
+        c._last_criteria_context = {
+            "idClase": 2030, "idClasePeriodo": 6305, "idContenido": 119598,
+            "idAmbito": 518, "CURSOCOD": "05", "cursocod": "05",
+        }
+        return real_shape_raw(False)
+    monkeypatch.setattr(c, "get_criteria", fake_get_criteria)
     monkeypatch.setattr(c, "get_gradebook_summary", lambda **kwargs: gradebook(False))
     calls = []
 
