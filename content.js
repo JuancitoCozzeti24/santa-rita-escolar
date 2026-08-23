@@ -1,4 +1,7 @@
 (() => {
+  if (window.__SIEROOM_CLASSROOM_BRIDGE_080__) return;
+  window.__SIEROOM_CLASSROOM_BRIDGE_080__ = true;
+
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const norm = (s) => String(s || "")
     .normalize("NFD")
@@ -19,7 +22,7 @@
     if (el instanceof HTMLTextAreaElement) return !el.disabled && !el.readOnly;
     if (el instanceof HTMLInputElement) {
       const t = norm(el.type || "text");
-      return !el.disabled && !el.readOnly && ["text", "search", ""].includes(t);
+      return !el.disabled && !el.readOnly && ["text", "search", "number", "tel", ""].includes(t);
     }
     return el.getAttribute("contenteditable") === "true" || el.getAttribute("role") === "textbox";
   };
@@ -296,10 +299,36 @@
     return JSON.stringify({ label: Boolean(label), candidates: cand, url: location.href });
   }
 
+  function directPrivateComposer() {
+    // Classroom puede ocultar el encabezado "Comentarios privados" pero mantener
+    // el editor con aria-label como "Añade un comentario privado…".
+    const selector = 'textarea,input,[role="textbox"],[contenteditable="true"]';
+    const candidates = [...document.querySelectorAll(selector)]
+      .filter((el) => visible(el) && isEditable(el))
+      .map((el) => {
+        const m = meta(el);
+        let score = 0;
+        if (m.includes("comentario privado") || m.includes("private comment")) score += 180;
+        if (m.includes("anade un comentario") || m.includes("add a comment")) score += 90;
+        if ((m.includes("coment") || m.includes("comment")) && !m.includes("calificacion") && !m.includes("grade")) score += 45;
+        return { el, score };
+      })
+      .filter((x) => x.score > 0)
+      .sort((a, b) => b.score - a.score);
+    return candidates[0]?.el || null;
+  }
+
   async function waitForPrivateSection(timeoutMs = 35000) {
     const started = Date.now();
     let lastLabel = null;
     while (Date.now() - started < timeoutMs) {
+      const direct = directPrivateComposer();
+      if (direct) {
+        const label = privateCommentLabel();
+        const container = bestPrivateRegion(label, direct);
+        return { label, composer: direct, container };
+      }
+
       const label = privateCommentLabel();
       if (label) lastLabel = label;
       if (label) {
@@ -309,7 +338,7 @@
           return { label, composer, container };
         }
       }
-      await sleep(500);
+      await sleep(400);
     }
     throw new Error(`No encontré el editor de Comentarios privados en esta entrega. Diagnóstico: ${diagnostics(lastLabel)}`);
   }
@@ -321,7 +350,7 @@
     const { label, composer, container } = await waitForPrivateSection();
     const beforeText = norm(container?.textContent || "");
     if (beforeText.includes(norm(text)) || commentVisibleOutsideComposer(text, composer)) {
-      return { ok: true, alreadyPresent: true, method: "dom-v0.7.3", url: location.href };
+      return { ok: true, alreadyPresent: true, method: "dom-v0.8.1", url: location.href };
     }
 
     composer.scrollIntoView({ block: "nearest", inline: "nearest" });
@@ -338,10 +367,256 @@
     while (Date.now() - started < 18000) {
       await sleep(500);
       if (commentVisibleOutsideComposer(text, composer)) {
-        return { ok: true, alreadyPresent: false, method: "dom-v0.7.3", url: location.href };
+        return { ok: true, alreadyPresent: false, method: "dom-v0.8.1", url: location.href };
       }
     }
     throw new Error("Se pulsó Enviar/Publicar, pero no pude confirmar visualmente que el comentario apareciera.");
+  }
+
+
+  function ancestorText(el, levels = 4) {
+    const parts = [];
+    let cur = el;
+    for (let i = 0; cur && i < levels; i++, cur = cur.parentElement) {
+      const t = String(cur.innerText || cur.textContent || "");
+      if (t && t.length < 1200) parts.push(t);
+    }
+    return norm(parts.join(" "));
+  }
+
+  function gradeCandidateScore(el) {
+    if (!visible(el) || !isEditable(el)) return -9999;
+    const m = meta(el);
+    const ctx = ancestorText(el, 5);
+    if (m.includes("coment") || m.includes("comment") || ctx.includes("comentarios privados")) return -9999;
+
+    let score = 0;
+    const gradeWords = ["calificacion", "calificar", "nota", "grade", "puntos", "points"];
+    for (const w of gradeWords) {
+      if (m.includes(w)) score += 55;
+      if (ctx.includes(w)) score += 20;
+    }
+
+    const aria = norm(el.getAttribute?.("aria-label"));
+    if (aria.includes("calificacion") || aria.includes("grade")) score += 100;
+    if (el instanceof HTMLInputElement && norm(el.type) === "number") score += 35;
+
+    // En la vista individual de Classroom el campo suele estar en un panel lateral
+    // y su contenido actual es vacío, "Sin calificar" o un valor corto.
+    const value = String(el.value ?? el.textContent ?? "").trim();
+    if (value.length <= 6) score += 10;
+
+    return score;
+  }
+
+  function findGradeInput() {
+    const selector = 'input,textarea,[role="textbox"],[contenteditable="true"]';
+    const candidates = [...document.querySelectorAll(selector)]
+      .map((el) => ({ el, score: gradeCandidateScore(el) }))
+      .filter((x) => x.score > 0)
+      .sort((a, b) => b.score - a.score);
+    return candidates[0]?.el || null;
+  }
+
+  function gradeDiagnostics() {
+    const selector = 'input,textarea,[role="textbox"],[contenteditable="true"]';
+    const cand = [...document.querySelectorAll(selector)]
+      .filter((el) => visible(el))
+      .map((el) => ({
+        tag: el.tagName,
+        type: el.getAttribute("type") || "",
+        aria: (el.getAttribute("aria-label") || "").slice(0, 100),
+        placeholder: (el.getAttribute("placeholder") || "").slice(0, 100),
+        value: String(el.value ?? el.textContent ?? "").slice(0, 40),
+        score: gradeCandidateScore(el)
+      }))
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 8);
+    return JSON.stringify({ candidates: cand, url: location.href });
+  }
+
+  async function waitForGradeInput(timeoutMs = 25000) {
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+      const input = findGradeInput();
+      if (input) return input;
+      await sleep(400);
+    }
+    throw new Error(`No encontré el campo de calificación. Diagnóstico: ${gradeDiagnostics()}`);
+  }
+
+  async function applyGradeInBrowser(grade) {
+    if (grade === null || grade === undefined || grade === "") {
+      return { applied: false, skipped: true };
+    }
+    const numeric = Number(grade);
+    if (!Number.isFinite(numeric)) throw new Error(`Calificación inválida: ${grade}`);
+
+    const el = await waitForGradeInput();
+    el.scrollIntoView({ block: "center", inline: "nearest" });
+    el.focus();
+
+    const value = String(numeric);
+    if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
+      setNativeValue(el, value);
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+    } else {
+      setComposerValue(el, value);
+    }
+
+    // Classroom a veces persiste la nota al perder foco o al pulsar Enter.
+    try {
+      el.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", bubbles: true }));
+      el.dispatchEvent(new KeyboardEvent("keyup", { key: "Enter", code: "Enter", bubbles: true }));
+    } catch (_) {}
+    try { el.blur(); } catch (_) {}
+    await sleep(1100);
+
+    const current = String(el.value ?? el.innerText ?? el.textContent ?? "").trim();
+    if (current && current !== value && Number(current) !== numeric) {
+      throw new Error(`Classroom no conservó la calificación ${value}. Valor visible: ${current}`);
+    }
+
+    return { applied: true, grade: numeric, fieldMeta: meta(el).slice(0, 160) };
+  }
+
+  function buttonText(el) {
+    return norm([
+      el?.innerText,
+      el?.textContent,
+      el?.getAttribute?.("aria-label"),
+      el?.getAttribute?.("title")
+    ].filter(Boolean).join(" "));
+  }
+
+  function isReturnText(t) {
+    const s = norm(t);
+    return s === "devolver" || s === "return" ||
+      s.startsWith("devolver ") || s.startsWith("return ") ||
+      s.includes("devolver trabajo") || s.includes("return work");
+  }
+
+  function findReturnButton(root = document) {
+    const buttons = [...root.querySelectorAll('button,[role="button"]')]
+      .filter((b) => visible(b) && !b.disabled && b.getAttribute("aria-disabled") !== "true")
+      .map((b) => {
+        const t = buttonText(b);
+        let score = 0;
+        if (t === "devolver" || t === "return") score += 160;
+        if (t.startsWith("devolver ") || t.startsWith("return ")) score += 110;
+        if (t.includes("devolver trabajo") || t.includes("return work")) score += 80;
+        if (t.includes("todos") || t.includes("all students")) score -= 100;
+        return { b, t, score };
+      })
+      .filter((x) => x.score > 0)
+      .sort((a, b) => b.score - a.score);
+    return buttons[0]?.b || null;
+  }
+
+  function pageLooksReturned() {
+    const visibleTexts = [...document.querySelectorAll("body *")]
+      .filter((el) => visible(el))
+      .map((el) => norm(el.innerText || el.textContent || ""))
+      .filter((t) => t && t.length < 100);
+    return visibleTexts.some((t) =>
+      t === "devuelto" || t === "returned" ||
+      t.includes("trabajo devuelto") || t.includes("work returned")
+    );
+  }
+
+  async function waitForReturnButton(timeoutMs = 25000) {
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+      if (pageLooksReturned()) return null;
+      const b = findReturnButton(document);
+      if (b) return b;
+      await sleep(400);
+    }
+    if (pageLooksReturned()) return null;
+    throw new Error("No encontré el botón Devolver en la entrega.");
+  }
+
+  async function confirmReturnDialog() {
+    const start = Date.now();
+    while (Date.now() - start < 10000) {
+      const dialogs = [...document.querySelectorAll('[role="dialog"],[aria-modal="true"]')]
+        .filter((d) => visible(d));
+      for (const dialog of dialogs) {
+        const b = findReturnButton(dialog);
+        if (b) {
+          b.click();
+          return true;
+        }
+      }
+      // Algunas versiones no exponen role=dialog; si aparece un segundo botón
+      // Devolver visible, usamos el de mayor z-index/último en DOM.
+      const all = [...document.querySelectorAll('button,[role="button"]')]
+        .filter((b) => visible(b) && isReturnText(buttonText(b)) &&
+          !b.disabled && b.getAttribute("aria-disabled") !== "true");
+      if (all.length >= 2) {
+        all[all.length - 1].click();
+        return true;
+      }
+      await sleep(300);
+    }
+    return false;
+  }
+
+  async function returnSubmissionInBrowser() {
+    if (pageLooksReturned()) return { returned: true, alreadyReturned: true };
+
+    const b = await waitForReturnButton();
+    if (!b) return { returned: true, alreadyReturned: true };
+
+    b.scrollIntoView({ block: "center", inline: "nearest" });
+    b.click();
+    await sleep(500);
+    await confirmReturnDialog();
+    await sleep(1200);
+
+    // Aunque Classroom no siempre muestra inmediatamente la palabra "Devuelto",
+    // si el botón desapareció tras confirmar consideramos la acción aceptada.
+    const stillThere = findReturnButton(document);
+    const returned = pageLooksReturned() || !stillThere;
+    if (!returned) {
+      throw new Error("Se pulsó Devolver, pero Classroom no confirmó visualmente la devolución.");
+    }
+    return { returned: true, alreadyReturned: false };
+  }
+
+  async function processSubmission(payload = {}) {
+    const comment = String(payload.comment || "").trim();
+    const grade = payload.grade;
+    const returnAfterComment = Boolean(payload.returnAfterComment);
+
+    let commentResult = { ok: true, skipped: true, alreadyPresent: false };
+    if (comment) {
+      commentResult = await postPrivateComment(comment);
+      if (!commentResult?.ok) throw new Error(commentResult?.error || "No se pudo publicar el comentario privado.");
+      await sleep(500);
+    }
+
+    const gradeResult = await applyGradeInBrowser(grade);
+    if (gradeResult.applied) await sleep(700);
+
+    let returnResult = { returned: false, skipped: true };
+    if (returnAfterComment) {
+      returnResult = await returnSubmissionInBrowser();
+    }
+
+    return {
+      ok: true,
+      method: "dom-v0.8.1",
+      url: location.href,
+      comment: commentResult,
+      grade: gradeResult,
+      return: returnResult,
+      browser_followup_done: true,
+      browser_grade_applied: Boolean(gradeResult.applied),
+      browser_grade: gradeResult.applied ? Number(gradeResult.grade) : null,
+      browser_returned: Boolean(returnResult.returned)
+    };
   }
 
   function cleanCommentText(value) {
@@ -386,9 +661,6 @@
       rows.push({ text, markers, semantic });
     }
 
-    // Los contenedores de Classroom están anidados. Elegimos primero el nodo más
-    // pequeño que conserva el comentario completo y descartamos padres que solo
-    // repiten el mismo texto junto con controles de interfaz.
     rows.sort((a, b) => a.text.length - b.text.length);
     const chosen = [];
     for (const row of rows) {
@@ -413,22 +685,108 @@
         markers: row.markers,
         structuredFeedback: row.markers.length >= 2,
       })),
-      method: "dom-v0.7.17-read",
+      method: "dom-v0.8.1-read",
       url: location.href,
+    };
+  }
+
+  function extractEmailsFromPage() {
+    const found = new Set();
+    const rx = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/ig;
+
+    function addFrom(value) {
+      const text = String(value || "");
+      for (const m of text.matchAll(rx)) found.add(String(m[0]).toLowerCase());
+    }
+
+    addFrom(document.body?.innerText || "");
+    addFrom(document.body?.textContent || "");
+
+    const selector = [
+      "[aria-label]", "[title]", "[data-tooltip]", "[data-tooltip-text]",
+      "[data-email]", "[href]"
+    ].join(",");
+
+    for (const el of document.querySelectorAll(selector)) {
+      addFrom(el.getAttribute("aria-label"));
+      addFrom(el.getAttribute("title"));
+      addFrom(el.getAttribute("data-tooltip"));
+      addFrom(el.getAttribute("data-tooltip-text"));
+      addFrom(el.getAttribute("data-email"));
+      addFrom(el.getAttribute("href"));
+    }
+
+    return [...found];
+  }
+
+  function checkExpectedAccount(expectedEmail) {
+    const expected = String(expectedEmail || "").trim().toLowerCase();
+    const detectedEmails = extractEmailsFromPage();
+    const body = norm(document.body?.innerText || "");
+    const classNotFound =
+      body.includes("no se encontro la clase") ||
+      body.includes("class not found") ||
+      body.includes("couldn't find the class") ||
+      body.includes("could not find the class");
+
+    if (!expected) {
+      return { ok: null, reason: "missing_expected_email", detectedEmails, classNotFound, url: location.href };
+    }
+
+    if (detectedEmails.includes(expected)) {
+      return { ok: true, expectedEmail: expected, detectedEmails, classNotFound, url: location.href };
+    }
+
+    if (detectedEmails.length) {
+      return { ok: false, expectedEmail: expected, detectedEmails, classNotFound, url: location.href };
+    }
+
+    return {
+      ok: null,
+      expectedEmail: expected,
+      detectedEmails: [],
+      classNotFound,
+      reason: "email_not_visible_in_dom",
+      url: location.href
     };
   }
 
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (!msg) return;
-    const task = msg.type === "SIEROOM_POST_PRIVATE_COMMENT"
-      ? postPrivateComment(msg.comment)
-      : msg.type === "SIEROOM_READ_PRIVATE_COMMENTS"
-        ? readPrivateComments()
-        : null;
-    if (!task) return;
-    task
-      .then((result) => sendResponse(result))
-      .catch((err) => sendResponse({ ok: false, error: String(err?.message || err), url: location.href }));
-    return true;
+
+    if (msg.type === "SIEROOM_PING") {
+      sendResponse({ ok: true, version: "0.8.1", url: location.href });
+      return;
+    }
+
+    if (msg.type === "SIEROOM_CHECK_ACCOUNT") {
+      sendResponse(checkExpectedAccount(msg.expectedEmail));
+      return;
+    }
+
+    if (msg.type === "SIEROOM_READ_PRIVATE_COMMENTS") {
+      readPrivateComments()
+        .then((result) => sendResponse(result))
+        .catch((err) => sendResponse({ ok: false, error: String(err?.message || err), url: location.href }));
+      return true;
+    }
+
+    if (msg.type === "SIEROOM_POST_PRIVATE_COMMENT") {
+      postPrivateComment(msg.comment)
+        .then((result) => sendResponse(result))
+        .catch((err) => sendResponse({ ok: false, error: String(err?.message || err), url: location.href }));
+      return true;
+    }
+
+    if (msg.type === "SIEROOM_PROCESS_SUBMISSION") {
+      processSubmission({
+        comment: msg.comment,
+        grade: msg.grade,
+        returnAfterComment: msg.returnAfterComment
+      })
+        .then((result) => sendResponse(result))
+        .catch((err) => sendResponse({ ok: false, error: String(err?.message || err), url: location.href }));
+      return true;
+    }
   });
 })();
