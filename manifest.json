@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "SieRoom Classroom Bridge",
-  "version": "0.7.3",
-  "description": "Puente local de SieRoom para comentarios privados de Classroom. v0.7.3 añade RESET/DESATASCAR de cola, recuperación inmediata de trabajos claimed y procesamiento continuo de pendientes.",
+  "version": "0.7.16",
+  "description": "Puente local de SieRoom para leer y publicar comentarios privados de Classroom, con cola segura y recuperación de trabajos.",
   "permissions": [
     "storage",
     "tabs"
