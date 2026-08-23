@@ -1,17 +1,25 @@
-# SieRoom SRC 0.7.13
+# SieRoom SRC 0.7.14
+
+## SIEWeb — alta nativa de desempeños sin `e0006` ni falso éxito
+
+La v0.7.14 sustituye las tres formas de guardado inferidas por el contrato exacto del componente oficial `pesosCriterios`:
+
+- `registros` contiene un único objeto basado en `defaultDataContenido`, con IDs nuevos en `0`, `ID_CLASE`, `ID_CLASE_PERIODO`, programa, padre, índice, LLAVE y metadatos visuales del programa.
+- `datosReplica` es el objeto `paramDatosReplica`: período, curso, grupo, código de curso, límite anual y `replicar=false`; ya no se envía una lista vacía.
+- el POST contiene únicamente `registros`, `idClase` y `datosReplica`, tal como lo hace la interfaz de SIEWeb.
+- desaparecen los fallbacks árbol completo/rama/fila: una operación autorizada produce como máximo un POST y luego relee SIEWeb.
+- un `estado=1` solo se acepta si el desempeño aparece exactamente una vez tanto en el editor como en el Registro de Notas.
+- las notas y **Nivel de Logro** permanecen bloqueados hasta superar esa verificación; las réplicas se ejecutan como altas independientes por sección.
+
+La suite pasa **42/42 pruebas**. Consulta `SIEWEB_SYNC_V0.7.14.md` y `TEST_REPORT_V0.7.14.txt`.
+
+---
+
+# Historial — SieRoom SRC 0.7.13
 
 ## SIEweb — corrección del binding `cursocod` y del contrato de guardado
 
-La v0.7.13 corrige el `e0006` persistente observado con la versión desplegada 0.7.12:
-
-- `dataInicialPesosCriterios` envía simultáneamente `CURSOCOD` y `cursocod`. El backend real enlaza `CG.CURSOCOD` desde el nombre minúsculo y devolvía HTTP 500 cuando solo recibía el alias mayúsculo.
-- `HyoClaseContenido/insertar` recibe el contexto completo de la edición: `idClase`, `idClasePeriodo`, `idContenido`, `idAmbito`, `CURSOCOD` y `cursocod`.
-- `datosReplica` vuelve a viajar siempre como lista; una escritura independiente envía `[]` y una réplica conserva sus destinos reales.
-- antes del POST se comprueba que el contexto guardado por la lectura corresponde exactamente a la clase, período, contenido y ámbito solicitados.
-- se conservan las tres estrategias controladas frente a `e0006`, con relectura entre intentos para impedir duplicados.
-- las notas siguen bloqueadas hasta que el desempeño aparezca exactamente una vez en el editor y en el Registro de Notas; **Nivel de Logro no se modifica**.
-
-Consulta `SIEWEB_SYNC_V0.7.13.md` y `TEST_REPORT_V0.7.13.txt`.
+La v0.7.13 corrigió el HTTP 500 de lectura enviando simultáneamente `CURSOCOD` y `cursocod`. Sus formas inferidas de escritura fueron reemplazadas por el contrato modal exacto en v0.7.14.
 
 ---
 
