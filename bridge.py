@@ -65,8 +65,13 @@ class ClassroomBridgeQueue:
         if operation not in {"post_private_comment", "read_private_comments"}:
             raise ValueError(f"Operación de Bridge no soportada: {operation}")
         comment = str(comment or "").strip()
-        if operation == "post_private_comment" and not comment:
-            raise ValueError("El comentario privado no puede estar vacío.")
+        if (
+            operation == "post_private_comment"
+            and not comment
+            and grade is None
+            and not return_after_comment
+        ):
+            raise ValueError("El trabajo del puente necesita comentario, nota o devolución.")
         job = BridgeJob(
             id=str(uuid4()),
             course_id=str(course_id),
