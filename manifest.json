@@ -1,11 +1,12 @@
 {
   "manifest_version": 3,
   "name": "SieRoom Classroom Bridge",
-  "version": "0.7.17",
-  "description": "Puente local de SieRoom para leer y publicar comentarios privados de Classroom, con cola segura y recuperación de trabajos.",
+  "version": "0.8.1",
+  "description": "Puente local SieRoom para leer o publicar comentarios privados, calificar y devolver en Classroom bajo la cuenta docente verificada.",
   "permissions": [
     "storage",
-    "tabs"
+    "tabs",
+    "scripting"
   ],
   "host_permissions": [
     "https://classroom.google.com/*",

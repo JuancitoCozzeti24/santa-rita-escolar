@@ -1,39 +1,98 @@
 const endpoint = document.getElementById("endpoint");
+const teacherEmail = document.getElementById("teacherEmail");
 const secret = document.getElementById("secret");
 const msg = document.getElementById("msg");
 
 (async () => {
-  const data = await chrome.storage.local.get(["endpoint", "secret"]);
+  const data = await chrome.storage.local.get(["endpoint", "teacherEmail", "secret"]);
   if (data.endpoint) endpoint.value = data.endpoint;
+  if (data.teacherEmail) teacherEmail.value = data.teacherEmail;
   if (data.secret) secret.value = data.secret;
 })();
 
+function validEmail(v) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(v || "").trim());
+}
+
 async function save() {
   const ep = endpoint.value.trim().replace(/\/$/, "");
+  const email = teacherEmail.value.trim().toLowerCase();
   const sec = secret.value.trim();
-  await chrome.storage.local.set({ endpoint: ep, secret: sec });
-  return { ep, sec };
+
+  if (!validEmail(email)) throw new Error("Falta un correo docente válido.");
+  await chrome.storage.local.set({ endpoint: ep, teacherEmail: email, secret: sec });
+  return { ep, email, sec };
+}
+
+async function checkClassroomAccount(email) {
+  const tabs = await chrome.tabs.query({ url: "https://classroom.google.com/*" });
+  if (!tabs.length) {
+    return {
+      state: "missing",
+      message: `No hay una pestaña de Classroom abierta. Abre Classroom con ${email}.`
+    };
+  }
+
+  // Preferimos una pestaña activa de Classroom.
+  const tab = tabs.find(t => t.active) || tabs[0];
+  try {
+    const r = await chrome.tabs.sendMessage(tab.id, {
+      type: "SIEROOM_CHECK_ACCOUNT",
+      expectedEmail: email
+    });
+    if (!r) return { state: "unknown", message: "No pude verificar todavía la cuenta de Classroom." };
+    if (r.ok === true) {
+      return { state: "ok", message: `Cuenta de Classroom confirmada: ${email}` };
+    }
+    if (r.ok === false) {
+      const detected = (r.detectedEmails || []).join(", ") || "otra cuenta";
+      return {
+        state: "mismatch",
+        message: `CUENTA INCORRECTA. Se esperaba ${email}; Classroom muestra ${detected}.`
+      };
+    }
+    return {
+      state: "unknown",
+      message: `Servidor correcto. No pude leer el correo desde esta pantalla de Classroom; al procesar una entrega volveré a comprobarlo.`
+    };
+  } catch (_) {
+    return {
+      state: "unknown",
+      message: `Classroom está abierto, pero el verificador aún no respondió. Recarga la pestaña de Classroom.`
+    };
+  }
 }
 
 document.getElementById("save").addEventListener("click", async () => {
   try {
-    const { ep, sec } = await save();
+    const { ep, email, sec } = await save();
     if (!sec) throw new Error("Falta el secreto.");
-    const r = await fetch(`${ep}/bridge/v1/status`, { headers: { "X-SieRoom-Bridge-Secret": sec } });
-    const data = await r.json();
+
+    const r = await fetch(`${ep}/bridge/v1/status`, {
+      headers: { "X-SieRoom-Bridge-Secret": sec },
+      cache: "no-store"
+    });
+    const data = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
-    msg.textContent = `Conexión correcta. Servidor ${data.version} · extensión ${chrome.runtime.getManifest().version}.`;
+
+    const account = await checkClassroomAccount(email);
+    msg.textContent =
+      `Conexión correcta. Servidor ${data.version} · extensión ${chrome.runtime.getManifest().version}.\n` +
+      account.message;
   } catch (e) {
     msg.textContent = `Error: ${String(e?.message || e)}`;
   }
 });
 
 document.getElementById("start").addEventListener("click", async () => {
-  await save();
-  await chrome.tabs.create({ url: chrome.runtime.getURL("bridge.html"), active: true });
-  window.close();
+  try {
+    await save();
+    await chrome.tabs.create({ url: chrome.runtime.getURL("bridge.html"), active: true });
+    window.close();
+  } catch (e) {
+    msg.textContent = `Error: ${String(e?.message || e)}`;
+  }
 });
-
 
 async function resetQueueFromPopup() {
   const { ep, sec } = await save();
@@ -46,13 +105,12 @@ async function resetQueueFromPopup() {
       "X-SieRoom-Bridge-Secret": sec,
       "Content-Type": "application/json"
     },
-    body: JSON.stringify({ retry_failed: false })
+    body: JSON.stringify({ retry_failed: true }),
+    cache: "no-store"
   });
   const data = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
 
-  // Recargar las pestañas del puente reinicia cualquier estado local `busy`
-  // que hubiera quedado bloqueado. No cerramos las pestañas normales del usuario.
   const bridgeUrl = chrome.runtime.getURL("bridge.html");
   const tabs = await chrome.tabs.query({ url: bridgeUrl + "*" });
   for (const tab of tabs) {
@@ -60,7 +118,11 @@ async function resetQueueFromPopup() {
   }
 
   const q = data.queue || {};
-  msg.textContent = `RESET correcto. Liberados: ${data.released_count || 0}. Pendientes reales: ${q.work_remaining ?? ((q.queued || 0) + (q.claimed || 0))}. El puente continuará procesando.`;
+  msg.textContent =
+    `RESET correcto. Liberados: ${data.released_count || 0}. ` +
+    `Reintentados: ${data.retried_failed_count || 0}. ` +
+    `Pendientes reales: ${q.work_remaining ?? ((q.queued || 0) + (q.claimed || 0))}. ` +
+    `El puente retomará comentario, calificación y devolución desde Classroom.`;
 }
 
 document.getElementById("reset").addEventListener("click", async () => {
