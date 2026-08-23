@@ -1,4 +1,22 @@
-# SieRoom SRC 0.7.11
+# SieRoom SRC 0.7.12
+
+## SIEweb — CURSOCOD obligatorio + lector de alumnos corregido
+
+La v0.7.12 corrige los dos fallos concretos observados después de instalar v0.7.11:
+
+- `dataInicialPesosCriterios` ya no se llama sin contexto de curso. Si el llamador no envía `CURSOCOD`, SieRoom lo resuelve automáticamente desde `HyoClase/obtListar` usando el `idAmbito` y `idClase` exactos; para Matemática queda `CURSOCOD=05`. El valor se cachea por clase/ámbito para no repetir lecturas innecesarias.
+- el lector del Registro de Notas ya no asume una única capa `{json:{...}}`. Localiza recursivamente `infoClasePeriodo`, `cabeceraNotas` y `dataAlumno`, por lo que no debe devolver `students: []` cuando los alumnos sí están presentes en una respuesta envuelta.
+- el cruce Classroom → SIEweb acepta de forma segura tanto `ALUCOD` como `A+ALUCOD` (solo cuando el resto es numérico), pero el payload de guardado siempre usa el `ALUCOD` real del Registro de Notas.
+- la verificación posterior usa los mismos alias seguros, evitando `student_not_found_after_save` por el prefijo `A`.
+- se mantienen el árbol UI-native, la detección de `e0006`, la verificación de persistencia y la protección de **Nivel de Logro**.
+
+La suite v0.7.12 pasa **38/38 pruebas**. Además se contrastó el nuevo lector contra una captura real previa del Registro de Notas de SIEweb: detectó 49 criterios y 28 alumnos con sus celdas de nota.
+
+Consulta `SIEWEB_SYNC_V0.7.12.md` y `TEST_REPORT_V0.7.12.txt`.
+
+---
+
+# Historial — SieRoom SRC 0.7.11
 
 ## SIEweb — corrección del `e0006` con fila UI-native
 

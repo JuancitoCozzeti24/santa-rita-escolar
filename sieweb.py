@@ -32,7 +32,7 @@ class SieWebClient:
         self.session.headers.update(
             {
                 "Accept": "application/json, text/plain, */*",
-                "User-Agent": "Mozilla/5.0 SieRoom-SRC/0.7.11",
+                "User-Agent": "Mozilla/5.0 SieRoom-SRC/0.7.12",
                 "X-Requested-With": "XMLHttpRequest",
                 "Cache-Control": "no-cache",
                 "Pragma": "no-cache",
@@ -45,6 +45,8 @@ class SieWebClient:
         self._user_code = settings.sieweb_user.upper() if settings.sieweb_user else ""
         self._tab_id = str(uuid.uuid4())
         self._logged_in = False
+        self._criteria_course_cache: dict[tuple[int, int], str] = {}
+        self._last_criteria_context: dict[str, Any] = {}
 
         # Compatibilidad temporal con la primera versión.
         if settings.sieweb_cookie:
@@ -953,6 +955,67 @@ class SieWebClient:
         )
 
     # ---------- Criterios / desempeños ----------
+    def _resolve_criteria_course_context(
+        self,
+        *,
+        class_id: int,
+        id_ambito: int,
+        extra_params: dict[str, Any] | None = None,
+    ) -> tuple[str, dict[str, Any]]:
+        """Resuelve CURSOCOD para el editor de criterios sin depender del llamador.
+
+        La UI real de SIEweb envía CURSOCOD al endpoint
+        ``dataInicialPesosCriterios``. v0.7.11 omitía ese parámetro cuando el
+        preflight recibía solo IDs, lo que podía producir HTTP 500 aunque la sesión
+        y los IDs fueran correctos. Esta rutina conserva cualquier CURSOCOD
+        explícito y, si falta, lo obtiene de ``HyoClase/obtListar`` usando el
+        idAmbito exacto y el ID_CLASE destino.
+        """
+        extra = dict(extra_params or {})
+        explicit = None
+        for key in list(extra):
+            if self._canon_text(key).replace(" ", "") == "cursocod":
+                value = extra.get(key)
+                if value not in (None, ""):
+                    explicit = str(value).strip()
+                # El endpoint observado espera la forma CURSOCOD; normalizamos la
+                # clave para no enviar simultáneamente cursocod/CURSOCOD.
+                if key != "CURSOCOD":
+                    extra.pop(key, None)
+                break
+        if explicit:
+            extra["CURSOCOD"] = explicit
+            self._criteria_course_cache[(int(id_ambito), int(class_id))] = explicit
+            return explicit, extra
+
+        cache_key=(int(id_ambito), int(class_id))
+        cached=self._criteria_course_cache.get(cache_key)
+        if cached:
+            extra["CURSOCOD"] = cached
+            return cached, extra
+
+        classes_payload = self.list_classes(id_ambito=int(id_ambito))
+        classes = (classes_payload.get("json") or []) if isinstance(classes_payload, dict) else []
+        matches = [
+            row for row in classes
+            if isinstance(row, dict) and str(row.get("ID_CLASE") or "").strip() == str(class_id).strip()
+        ]
+        if len(matches) != 1:
+            raise SieWebError(
+                "No se pudo resolver CURSOCOD de forma única para dataInicialPesosCriterios "
+                f"(idAmbito={id_ambito}, idClase={class_id}, coincidencias={len(matches)}). "
+                "No se envió la escritura."
+            )
+        course_code = str(matches[0].get("CURSOCOD") or "").strip()
+        if not course_code:
+            raise SieWebError(
+                "La clase resuelta no contiene CURSOCOD; no es seguro llamar "
+                "dataInicialPesosCriterios sin ese contexto."
+            )
+        self._criteria_course_cache[cache_key] = course_code
+        extra["CURSOCOD"] = course_code
+        return course_code, extra
+
     def get_criteria(
         self,
         *,
@@ -962,13 +1025,25 @@ class SieWebClient:
         id_ambito: int | None = None,
         extra_params: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        ambito = int(id_ambito or settings.sieweb_id_ambito_registro_notas)
+        course_code, normalized_extra = self._resolve_criteria_course_context(
+            class_id=int(class_id), id_ambito=ambito, extra_params=extra_params
+        )
         params: dict[str, Any] = {
             "idClase": class_id,
             "idClasePeriodo": class_period_id,
             "idContenido": root_content_id,
-            "idAmbito": id_ambito or settings.sieweb_id_ambito_registro_notas,
+            "idAmbito": ambito,
+            "CURSOCOD": course_code,
         }
-        params.update(extra_params or {})
+        params.update(normalized_extra)
+        self._last_criteria_context = {
+            "idClase": int(class_id),
+            "idClasePeriodo": int(class_period_id),
+            "idContenido": int(root_content_id),
+            "idAmbito": int(ambito),
+            "CURSOCOD": str(course_code),
+        }
         return self._request(
             "GET", "/lms/api/HyoClaseContenido/dataInicialPesosCriterios", params=params
         )
@@ -1645,7 +1720,7 @@ class SieWebClient:
                                  verification_attempts: int = 3) -> dict[str, Any]:
         """Guarda el MODELO COMPLETO del editor y exige persistencia real.
 
-        v0.7.11 conserva la protección de contexto de v0.7.9 y corrige el árbol real resCriterios: el ``idAmbito``
+        v0.7.12 conserva la protección de contexto de v0.7.11 y corrige el árbol real resCriterios: el ``idAmbito``
         usado por el preflight debe viajar también a TODAS las lecturas que rodean el
         POST real. Antes, el preflight podía leer 2.º B correctamente pero el guardado
         releía silenciosamente el ámbito por defecto (518/2.º A), mezclando ``idClase``
@@ -1876,8 +1951,9 @@ class SieWebClient:
             "write_strategy":successful_strategy,
             "write_attempts":write_attempts,
             "idAmbito":id_ambito,
-            "context_guard":"exact-ambito-ui-sparse-adaptive-v0.7.11",
-            "mode":"ui-native-sparse-adaptive-v0.7.11",
+            "CURSOCOD":((getattr(self, "_last_criteria_context", {}) or {}).get("CURSOCOD")),
+            "context_guard":"exact-ambito-coursecode-roster-v0.7.12",
+            "mode":"ui-native-coursecode-roster-v0.7.12",
         }
 
     # ---------- Conclusiones descriptivas ----------
@@ -1923,51 +1999,234 @@ class SieWebClient:
 
 
     # ---------- Utilidades integrales sobre el registro ----------
-    @staticmethod
-    def _unwrap(payload: dict[str, Any]) -> dict[str, Any]:
-        return (payload.get("json") or payload) if isinstance(payload, dict) else {}
+    @classmethod
+    def _gradebook_container_score(cls, value: Any) -> int:
+        if not isinstance(value, dict):
+            return -1
+        keys={cls._canon_text(k).replace(" ", "") for k in value}
+        score=0
+        if "infoclaseperiodo" in keys: score += 50
+        if "cabeceranotas" in keys: score += 35
+        if "dataalumno" in keys or "dataalumnos" in keys: score += 45
+        if "datapermisoregistro" in keys: score += 10
+        return score
+
+    @classmethod
+    def _locate_gradebook_data(cls, payload: Any) -> dict[str, Any]:
+        """Localiza el objeto real del registro aunque SIEweb agregue wrappers.
+
+        La respuesta histórica llega como ``{json:{...}}``, pero algunas llamadas
+        pueden quedar envueltas una capa adicional. v0.7.11 asumía una única capa;
+        cuando eso no se cumplía el resumen terminaba con ``students: []`` aun
+        existiendo ``dataAlumno`` más abajo.
+        """
+        if not isinstance(payload, dict):
+            return {}
+        best=(cls._gradebook_container_score(payload), payload)
+        queue=[payload]
+        seen=set()
+        while queue:
+            current=queue.pop(0)
+            oid=id(current)
+            if oid in seen:
+                continue
+            seen.add(oid)
+            if isinstance(current, dict):
+                score=cls._gradebook_container_score(current)
+                if score > best[0]:
+                    best=(score,current)
+                for child in current.values():
+                    if isinstance(child,(dict,list)):
+                        queue.append(child)
+            elif isinstance(current, list):
+                for child in current:
+                    if isinstance(child,(dict,list)):
+                        queue.append(child)
+        # Si no apareció ninguna marca de registro, conserva compatibilidad con la
+        # respuesta antigua devolviendo json o el objeto directo.
+        if best[0] <= 0:
+            body=payload.get("json")
+            return body if isinstance(body,dict) else payload
+        return best[1]
+
+    @classmethod
+    def _dict_get_ci(cls, value: dict[str, Any], *names: str) -> Any:
+        wanted={cls._canon_text(n).replace(" ","") for n in names}
+        for key,item in (value or {}).items():
+            if cls._canon_text(key).replace(" ","") in wanted:
+                return item
+        return None
+
+    @classmethod
+    def _student_list_score(cls, rows: Any) -> int:
+        if not isinstance(rows,list) or not rows:
+            return -1
+        sample=[r for r in rows[:8] if isinstance(r,dict)]
+        if not sample:
+            return -1
+        score=0
+        for row in sample:
+            data=cls._dict_get_ci(row,"datos","datosAlumno","alumno","estudiante","infoAlumno")
+            if not isinstance(data,dict):
+                data=row
+            notes=cls._dict_get_ci(row,"notas","notasAlumno","dataNotas","celdas")
+            if isinstance(notes,dict): score += 8
+            if cls._dict_get_ci(data,"idPersona","ID_PERSONA") not in (None,""): score += 6
+            if cls._dict_get_ci(data,"alucod","ALUCOD","codigoAlumno") not in (None,""): score += 6
+            if cls._dict_get_ci(data,"nomcomp","NOMCOMP","nombreCompleto","alumno") not in (None,""): score += 5
+        return score
+
+    @classmethod
+    def _find_student_rows(cls, data: dict[str, Any]) -> tuple[list[dict[str, Any]], str]:
+        # Ruta oficial observada primero.
+        for key in ("dataAlumno","dataAlumnos","alumnos","students"):
+            rows=cls._dict_get_ci(data,key)
+            if isinstance(rows,list) and cls._student_list_score(rows) > 0:
+                return [r for r in rows if isinstance(r,dict)], key
+
+        best=(-1,[],"")
+        queue=[("root",data)]
+        while queue:
+            path,current=queue.pop(0)
+            if isinstance(current,dict):
+                for key,child in current.items():
+                    child_path=f"{path}.{key}"
+                    if isinstance(child,list):
+                        score=cls._student_list_score(child)
+                        if score > best[0]:
+                            best=(score,[r for r in child if isinstance(r,dict)],child_path)
+                    if isinstance(child,(dict,list)):
+                        queue.append((child_path,child))
+            elif isinstance(current,list):
+                for idx,child in enumerate(current):
+                    if isinstance(child,(dict,list)):
+                        queue.append((f"{path}[{idx}]",child))
+        return (best[1],best[2]) if best[0] > 0 else ([],"")
+
+    @classmethod
+    def _find_header_rows(cls, data: dict[str, Any]) -> tuple[list[dict[str, Any]], str]:
+        direct=cls._dict_get_ci(data,"cabeceraNotas","cabecerasNotas","headers","criterios")
+        if isinstance(direct,list):
+            rows=[r for r in direct if isinstance(r,dict)]
+            if rows:
+                return rows,"cabeceraNotas"
+        best=(-1,[],"")
+        queue=[("root",data)]
+        while queue:
+            path,current=queue.pop(0)
+            if isinstance(current,dict):
+                for key,child in current.items():
+                    child_path=f"{path}.{key}"
+                    if isinstance(child,list):
+                        rows=[r for r in child if isinstance(r,dict)]
+                        score=0
+                        for row in rows[:10]:
+                            if cls._dict_get_ci(row,"nivelEva","NIVEL_EVA") is not None: score += 5
+                            if cls._dict_get_ci(row,"id","idClaseContenido","ID_CLASE_CONTENIDO") is not None: score += 4
+                            if cls._dict_get_ci(row,"desc","descripcion","abreviatura") not in (None,""): score += 3
+                        if score > best[0]: best=(score,rows,child_path)
+                    if isinstance(child,(dict,list)):
+                        queue.append((child_path,child))
+            elif isinstance(current,list):
+                for idx,child in enumerate(current):
+                    if isinstance(child,(dict,list)):
+                        queue.append((f"{path}[{idx}]",child))
+        return (best[1],best[2]) if best[0] > 0 else ([],"")
+
+    @classmethod
+    def _student_summary_row(cls, row: dict[str, Any]) -> dict[str, Any]:
+        d=cls._dict_get_ci(row,"datos","datosAlumno","alumno","estudiante","infoAlumno")
+        if not isinstance(d,dict):
+            d=row
+        notes=cls._dict_get_ci(row,"notas","notasAlumno","dataNotas","celdas")
+        if not isinstance(notes,dict):
+            notes={}
+        return {
+            "idPersona": cls._dict_get_ci(d,"idPersona","ID_PERSONA","personaId"),
+            "alucod": cls._dict_get_ci(d,"alucod","ALUCOD","codigoAlumno","codigo"),
+            "nomcomp": cls._dict_get_ci(d,"nomcomp","NOMCOMP","nombreCompleto","nombre","alumno"),
+            "ngs": cls._dict_get_ci(d,"ngs","NGS"),
+            "nemo": cls._dict_get_ci(d,"nemo","NEMO"),
+            "numord": cls._dict_get_ci(d,"numord","NUMORD","orden"),
+            "estadoAnual": cls._dict_get_ci(d,"estadoAnual","ESTADO_ANUAL","estado"),
+            "notas": notes,
+        }
 
     def summarize_gradebook(self, gradebook: dict[str, Any]) -> dict[str, Any]:
-        data = self._unwrap(gradebook)
-        info = data.get("infoClasePeriodo") or {}
+        data = self._locate_gradebook_data(gradebook)
+        info = self._dict_get_ci(data,"infoClasePeriodo","clasePeriodo","infoRegistro") or {}
+        if not isinstance(info,dict):
+            info={}
+
+        header_rows, header_source = self._find_header_rows(data)
         headers = []
-        for h in data.get("cabeceraNotas") or []:
-            inf = h.get("info") or {}
+        for h in header_rows:
+            inf = self._dict_get_ci(h,"info") or {}
+            if not isinstance(inf,dict): inf={}
             headers.append({
-                "id": h.get("id"),
-                "idpadre": h.get("idpadre"),
-                "idClaseContenido": h.get("idClaseContenido"),
-                "desc": h.get("desc"),
-                "abreviatura": h.get("abreviatura"),
-                "programa": inf.get("programa"),
-                "descripcion": inf.get("descComp"),
-                "peso": inf.get("peso"),
-                "nivelEva": h.get("nivelEva"),
-                "esAgrupador": h.get("esAgrupador"),
-                "mostrarConclusion": h.get("mostrarConclusion"),
-                "addConclDescrp": h.get("addConclDescrp"),
+                "id": self._dict_get_ci(h,"id","ID_CONTENIDO","idContenido"),
+                "idpadre": self._dict_get_ci(h,"idpadre","ID_CONTENIDO_REF","idContenidoRef"),
+                "idClaseContenido": self._dict_get_ci(h,"idClaseContenido","ID_CLASE_CONTENIDO"),
+                "desc": self._dict_get_ci(h,"desc","DESCRIPCION","descripcion"),
+                "abreviatura": self._dict_get_ci(h,"abreviatura","ABREVIATURA"),
+                "programa": self._dict_get_ci(inf,"programa","DESCPROGRAMA"),
+                "descripcion": self._dict_get_ci(inf,"descComp","descripcion","DESCRIPCION"),
+                "peso": self._dict_get_ci(inf,"peso","PESO"),
+                "nivelEva": self._dict_get_ci(h,"nivelEva","NIVEL","nivel"),
+                "esAgrupador": self._dict_get_ci(h,"esAgrupador"),
+                "mostrarConclusion": self._dict_get_ci(h,"mostrarConclusion"),
+                "addConclDescrp": self._dict_get_ci(h,"addConclDescrp"),
             })
-        students = []
-        for row in data.get("dataAlumno") or []:
-            d = row.get("datos") or {}
-            notes = row.get("notas") or {}
-            students.append({
-                "idPersona": d.get("idPersona"), "alucod": d.get("alucod"),
-                "nomcomp": d.get("nomcomp"), "ngs": d.get("ngs"), "nemo": d.get("nemo"),
-                "numord": d.get("numord"), "estadoAnual": d.get("estadoAnual"),
-                "notas": notes,
-            })
+
+        student_rows, student_source = self._find_student_rows(data)
+        students=[]
+        for row in student_rows:
+            item=self._student_summary_row(row)
+            # Evita que listas no relacionadas superen el detector heurístico.
+            if item.get("idPersona") in (None,"") and item.get("alucod") in (None,"") and item.get("nomcomp") in (None,""):
+                continue
+            students.append(item)
+
+        # Deduplicación conservadora: la misma persona/alucod puede aparecer dos
+        # veces en wrappers auxiliares; se conserva la fila con más celdas de nota.
+        dedup: dict[str,dict[str,Any]]={}
+        anonymous=[]
+        for item in students:
+            key=str(item.get("alucod") or item.get("idPersona") or "").strip()
+            if not key:
+                anonymous.append(item); continue
+            prev=dedup.get(key)
+            if prev is None or len(item.get("notas") or {}) > len(prev.get("notas") or {}):
+                dedup[key]=item
+        students=list(dedup.values())+anonymous
+
         return {
             "class": {
-                "idClasePeriodo": info.get("idClasePeriodo"), "idClase": info.get("idClase"),
-                "idCurso": info.get("idCurso"), "idContenidoPrin": info.get("idContenidoPrin"),
-                "ano": info.get("ano"), "cursocod": info.get("cursocod"), "cursonom": info.get("cursonom"),
-                "periodo": info.get("periodo"), "nomSalon": info.get("nomSalon"), "arrNGS": info.get("arrNGS"),
-                "arrNemo": info.get("arrNemo"), "nomProfesor": info.get("nomProfesor"),
+                "idClasePeriodo": self._dict_get_ci(info,"idClasePeriodo","ID_CLASE_PERIODO"),
+                "idAmbito": self._dict_get_ci(info,"idAmbito","ID_AMBITO"),
+                "idClase": self._dict_get_ci(info,"idClase","ID_CLASE"),
+                "idCurso": self._dict_get_ci(info,"idCurso","ID_CURSO"),
+                "idContenidoPrin": self._dict_get_ci(info,"idContenidoPrin","idContenido","ID_CONTENIDO"),
+                "ano": self._dict_get_ci(info,"ano","ANIO","year"),
+                "cursocod": self._dict_get_ci(info,"cursocod","CURSOCOD"),
+                "cursonom": self._dict_get_ci(info,"cursonom","CURSONOM"),
+                "periodo": self._dict_get_ci(info,"periodo","PERIODO"),
+                "nomSalon": self._dict_get_ci(info,"nomSalon","NOMSALON","salon"),
+                "arrNGS": self._dict_get_ci(info,"arrNGS","NGS"),
+                "arrNemo": self._dict_get_ci(info,"arrNemo","NEMO"),
+                "nomProfesor": self._dict_get_ci(info,"nomProfesor","profesor"),
             },
-            "permissions": data.get("dataPermisoRegistro") or {},
+            "permissions": self._dict_get_ci(data,"dataPermisoRegistro","permisos") or {},
             "criteria": headers,
             "students": students,
+            "reader_diagnostics": {
+                "mode":"recursive-gradebook-v0.7.12",
+                "header_source":header_source,
+                "header_count":len(headers),
+                "student_source":student_source,
+                "student_row_count":len(student_rows),
+                "student_count":len(students),
+            },
         }
 
     def get_gradebook_summary(self, *, class_period_id: int, root_content_id: int,
@@ -2018,6 +2277,47 @@ class SieWebClient:
             except Exception as exc:
                 errors.append({"record": r, "error": str(exc)})
         return {"updated": results, "errors": errors, "count_updated": len(results), "count_errors": len(errors)}
+
+    @staticmethod
+    def _student_code_aliases(value: Any) -> set[str]:
+        """Alias seguros entre correo/USUCOD de alumno y ALUCOD del registro.
+
+        En el directorio de SIEweb el usuario estudiante suele aparecer como
+        ``A`` + ALUCOD, mientras que el Registro de Notas usa ALUCOD sin esa A.
+        Classroom puede exponer cualquiera de las dos formas como prefijo del
+        correo institucional. Solo se aplica esta equivalencia cuando el resto es
+        estrictamente numérico; no se hacen aproximaciones por nombres/códigos.
+        """
+        raw=str(value or "").strip().upper()
+        if "@" in raw:
+            raw=raw.split("@",1)[0]
+        raw=re.sub(r"\s+","",raw)
+        if not raw:
+            return set()
+        out={raw}
+        if raw.startswith("A") and raw[1:].isdigit():
+            out.add(raw[1:])
+        elif raw.isdigit():
+            out.add("A"+raw)
+        return out
+
+    @classmethod
+    def _students_matching_code(cls, summary: dict[str, Any], code: Any) -> list[dict[str, Any]]:
+        wanted=cls._student_code_aliases(code)
+        if not wanted:
+            return []
+        matches=[]
+        seen=set()
+        for student in summary.get("students") or []:
+            aliases=cls._student_code_aliases(student.get("alucod"))
+            if not (aliases & wanted):
+                continue
+            identity=(str(student.get("idPersona") or ""),str(student.get("alucod") or ""))
+            if identity in seen:
+                continue
+            seen.add(identity)
+            matches.append(student)
+        return matches
 
     @staticmethod
     def _normalize_grade_value(value: Any) -> str:
@@ -2087,12 +2387,6 @@ class SieWebClient:
         if not requested:
             raise SieWebError("No hay calificaciones para construir.")
 
-        by_code: dict[str, list[dict[str, Any]]] = {}
-        for student in summary.get("students") or []:
-            code = str(student.get("alucod") or "").strip()
-            if code:
-                by_code.setdefault(code, []).append(student)
-
         criterion = None
         for item in summary.get("criteria") or []:
             if str(item.get("id")) == str(header_id):
@@ -2103,9 +2397,14 @@ class SieWebClient:
         problems: list[dict[str, Any]] = []
 
         for code, note in requested.items():
-            matches = by_code.get(code) or []
+            matches = self._students_matching_code(summary, code)
             if not matches:
-                problems.append({"alucod": code, "reason": "student_not_found"})
+                problems.append({
+                    "alucod": code,
+                    "reason": "student_not_found",
+                    "aliases": sorted(self._student_code_aliases(code)),
+                    "reader": summary.get("reader_diagnostics") or {},
+                })
                 continue
             if len(matches) != 1:
                 problems.append({
@@ -2128,7 +2427,9 @@ class SieWebClient:
             record = copy.deepcopy(note_obj)
             record["notaNue"] = note
             record["idPersona"] = student.get("idPersona")
-            record["alucod"] = code
+            # El payload debe usar el ALUCOD real del Registro de Notas, no el
+            # alias de Classroom (que puede venir como A+ALUCOD).
+            record["alucod"] = str(student.get("alucod") or code).strip()
             record["nemo"] = student.get("nemo")
 
             if record.get("nivelEva") is None and criterion is not None:
@@ -2154,21 +2455,22 @@ class SieWebClient:
     def verify_grade_changes(self, summary: dict[str, Any], *, header_id: int,
                              grades_by_student_code: dict[str, str]) -> dict[str, Any]:
         """Comprueba que el gradebook releído contenga las notas solicitadas."""
-        by_code = {
-            str(s.get("alucod") or "").strip(): s
-            for s in summary.get("students") or []
-            if str(s.get("alucod") or "").strip()
-        }
         verified: list[dict[str, Any]] = []
         failed: list[dict[str, Any]] = []
 
         for raw_code, raw_expected in (grades_by_student_code or {}).items():
             code = str(raw_code).strip()
             expected = self._normalize_grade_value(raw_expected)
-            student = by_code.get(code)
-            if not student:
-                failed.append({"alucod": code, "reason": "student_not_found_after_save"})
+            matches=self._students_matching_code(summary,code)
+            if len(matches) != 1:
+                failed.append({
+                    "alucod": code,
+                    "reason": "student_not_found_after_save" if not matches else "student_ambiguous_after_save",
+                    "matches": len(matches),
+                    "aliases": sorted(self._student_code_aliases(code)),
+                })
                 continue
+            student=matches[0]
             note_obj = self._note_object_for_header(student, header_id)
             if not note_obj:
                 failed.append({

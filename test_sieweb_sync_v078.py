@@ -90,7 +90,7 @@ def test_verified_save_sends_full_model_and_requires_editor_and_gradebook(monkey
         verification_attempts=1,
     )
     assert result["saved"] is True
-    assert result["mode"] == "ui-native-sparse-adaptive-v0.7.11"
+    assert result["mode"] == "ui-native-coursecode-roster-v0.7.12"
     assert len(sent["registros"]) == 4
     assert "datosReplica" not in sent
 

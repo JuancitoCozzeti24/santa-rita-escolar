@@ -1,0 +1,29 @@
+{
+  "manifest_version": 3,
+  "name": "SieRoom Classroom Bridge",
+  "version": "0.7.3",
+  "description": "Puente local de SieRoom para comentarios privados de Classroom. v0.7.3 añade RESET/DESATASCAR de cola, recuperación inmediata de trabajos claimed y procesamiento continuo de pendientes.",
+  "permissions": [
+    "storage",
+    "tabs"
+  ],
+  "host_permissions": [
+    "https://classroom.google.com/*",
+    "https://santa-rita-escolar-tcpb.onrender.com/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://classroom.google.com/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_title": "SieRoom Classroom Bridge",
+    "default_popup": "popup.html"
+  }
+}

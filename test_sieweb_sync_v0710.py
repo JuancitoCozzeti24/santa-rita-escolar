@@ -266,7 +266,7 @@ def test_verified_write_payload_matches_hierarchy_and_double_verifies(monkeypatc
         verification_attempts=1,
     )
     assert result["saved"] is True
-    assert result["mode"] == "ui-native-sparse-adaptive-v0.7.11"
+    assert result["mode"] == "ui-native-coursecode-roster-v0.7.12"
     assert seen_ambitos == [518, 518]
     assert sent["idClase"] == 2030
     assert "datosReplica" not in sent
