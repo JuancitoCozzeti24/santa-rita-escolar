@@ -73,10 +73,11 @@ def test_v0717_extension_mirrors_and_read_message_are_present():
     assert root_content == extension_content
     assert root_bridge == extension_bridge
     assert "SIEROOM_READ_PRIVATE_COMMENTS" in extension_content
-    assert "dom-v0.8.1-read" in extension_content
+    assert "dom-v0.8.2-read" in extension_content
     assert 'job.operation === "read_private_comments"' in extension_bridge
     assert "X-SieRoom-Bridge-Capabilities" in extension_bridge
-    assert "post_private_comment,read_private_comments,browser_grade_return,teacher_account_guard" in extension_bridge
+    assert "post_private_comment,read_private_comments,verified_private_comment_read_v2,browser_grade_return,teacher_account_guard" in extension_bridge
+    assert 'pong?.version === expectedVersion' in extension_bridge
 
 
 def test_v0717_manifests_advertise_matching_version():
@@ -85,7 +86,7 @@ def test_v0717_manifests_advertise_matching_version():
         (ROOT / "browser_extension" / "manifest.json").read_text(encoding="utf-8")
     )
     assert root_manifest == extension_manifest
-    assert root_manifest["version"] == "0.8.1"
+    assert root_manifest["version"] == "0.8.2"
     assert "scripting" in root_manifest["permissions"]
 
 
@@ -196,6 +197,14 @@ def test_v0717_next_endpoint_requires_read_capability(monkeypatch):
         capabilities="post_private_comment,read_private_comments"
     )))
     payload = _json_response(response)
+    assert payload["job"] is None
+    assert payload["required_capability"] == "verified_private_comment_read_v2"
+    assert queue.stats()["queued"] == 1
+
+    response = asyncio.run(server.classroom_bridge_http_next(_FakeBridgeRequest(
+        capabilities="post_private_comment,read_private_comments,verified_private_comment_read_v2"
+    )))
+    payload = _json_response(response)
     assert payload["job"]["operation"] == "read_private_comments"
 
 
@@ -239,8 +248,14 @@ def test_v0717_accepts_structured_read_result(monkeypatch):
         "ok": True,
         "operation": "read_private_comments",
         "count": 1,
-        "comments": [{"text": "Nota cuantitativa: 14", "markers": ["nota cuantitativa"]}],
-        "method": "dom-v0.8.1-read",
+        "comments": [{
+            "text": "Nota cuantitativa: 14. Calificación cualitativa: B.",
+            "markers": ["nota cuantitativa", "calificacion cualitativa"],
+            "structuredFeedback": True,
+        }],
+        "private_section_verified": False,
+        "structured_fallback_verified": True,
+        "method": "dom-v0.8.2-read",
     }
     response = asyncio.run(server.classroom_bridge_http_complete(_FakeBridgeRequest(
         job_id=job.id, body=read_result
@@ -249,6 +264,39 @@ def test_v0717_accepts_structured_read_result(monkeypatch):
     assert response.status_code == 200
     assert payload["job"]["status"] == "completed"
     assert payload["job"]["bridge_result"] == read_result
+
+
+def test_v082_rejects_classroom_navigation_as_private_comments(monkeypatch):
+    queue = ClassroomBridgeQueue()
+    job = queue.enqueue(
+        course_id="course",
+        course_work_id="work",
+        submission_id="submission",
+        submission_url="https://classroom.google.com/read",
+        operation="read_private_comments",
+    )
+    queue.next_job(allowed_operations={"read_private_comments"})
+    monkeypatch.setattr(server, "bridge_queue", queue)
+    false_read = {
+        "ok": True,
+        "operation": "read_private_comments",
+        "count": 3,
+        "comments": [
+            {"text": "Instrucciones", "markers": [], "structuredFeedback": False},
+            {"text": "Trabajo de los alumnos", "markers": [], "structuredFeedback": False},
+            {"text": "more_vert\nMás opciones", "markers": [], "structuredFeedback": False},
+        ],
+        "private_section_verified": True,
+        "structured_fallback_verified": False,
+        "method": "dom-v0.8.2-read",
+    }
+    response = asyncio.run(server.classroom_bridge_http_complete(_FakeBridgeRequest(
+        job_id=job.id, body=false_read
+    )))
+    payload = _json_response(response)
+    assert response.status_code == 409
+    assert payload["job"]["status"] == "failed"
+    assert "bridge_incompatible_read_result" in payload["job"]["error"]
 
 
 def test_v081_grade_only_browser_job_is_allowed():
@@ -293,7 +341,7 @@ def test_v081_server_accepts_verified_browser_grade_and_return(monkeypatch):
     monkeypatch.setattr(server, "bridge_queue", queue)
     browser_result = {
         "ok": True,
-        "method": "dom-v0.8.1",
+        "method": "dom-v0.8.2",
         "comment": {"ok": True, "alreadyPresent": False},
         "browser_followup_done": True,
         "browser_grade_applied": True,
