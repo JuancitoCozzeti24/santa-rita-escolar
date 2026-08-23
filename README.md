@@ -1,4 +1,16 @@
-# SieRoom SRC 0.7.5
+# SieRoom SRC 0.7.8
+
+## SIEweb — criterios/desempeños persistentes (v0.7.8)
+
+- Corrige el flujo que podía devolver `estado: 1` sin guardar realmente el desempeño y el caso `e0006`.
+- Antes de escribir, relee `dataInicialPesosCriterios` y detecta la colección completa que usa el editor de SIEweb.
+- Las altas se insertan clonando un hermano real dentro de esa colección; las ediciones modifican la fila real existente.
+- El POST a `HyoClaseContenido/insertar` envía el modelo completo del editor y los `datosReplica` reales cuando SIEweb los proporciona.
+- Solo se declara éxito si el desempeño aparece exactamente una vez tanto en el editor como en el Registro de Notas.
+- Un falso `estado: 1` detiene el flujo y bloquea la posterior carga de notas.
+- Classroom → SIEweb continúa limitado a desempeños `nivelEva=3`; **Nivel de Logro no se modifica**.
+
+Consulta `SIEWEB_SYNC_V0.7.8.md` para el detalle técnico.
 
 ## SIEweb — respuestas dentro del hilo (v0.7.5)
 
@@ -37,7 +49,7 @@ Esta versión añade `classroom_private_feedback`, una cola segura para retroali
 ### Instalación del puente
 
 1. En Render agrega `CLASSROOM_BRIDGE_SECRET` con un valor aleatorio largo. Puedes generarlo con `python generar_bridge_secret.py`.
-2. Despliega v0.7.5 y espera `LIVE`.
+2. Despliega v0.7.8 y espera `LIVE`.
 3. En Chrome/Brave abre `chrome://extensions`, activa **Modo de desarrollador** y pulsa **Cargar descomprimida**. Selecciona la carpeta `browser_extension`.
 4. Abre la extensión, pega el mismo `CLASSROOM_BRIDGE_SECRET`, pulsa **Guardar y probar** y luego **Iniciar puente**.
 5. Deja abierta la pestaña `SieRoom Classroom Bridge` mientras procesas entregas.
