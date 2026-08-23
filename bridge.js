@@ -28,11 +28,77 @@ function log(msg) {
 }
 
 async function cfg() {
-  const data = await chrome.storage.local.get(["endpoint", "secret"]);
+  const data = await chrome.storage.local.get(["endpoint", "teacherEmail", "secret"]);
   return {
     endpoint: String(data.endpoint || "https://santa-rita-escolar-tcpb.onrender.com").replace(/\/$/, ""),
+    teacherEmail: String(data.teacherEmail || "").trim().toLowerCase(),
     secret: String(data.secret || "")
   };
+}
+
+class AccountMismatchError extends Error {
+  constructor(message, detail = {}) {
+    super(message);
+    this.detail = detail;
+  }
+}
+
+function addExpectedAccount(url, email) {
+  try {
+    const u = new URL(url);
+    if (email) u.searchParams.set("authuser", email);
+    return u.toString();
+  } catch (_) {
+    return url;
+  }
+}
+
+async function checkAccountOnTab(tabId, expectedEmail, generation = resetGeneration) {
+  if (!expectedEmail) throw new Error("Falta configurar el correo docente de Classroom.");
+  assertGeneration(generation);
+
+  let result = null;
+  try {
+    result = await sendToContent(tabId, {
+      type: "SIEROOM_CHECK_ACCOUNT",
+      expectedEmail
+    }, 4, generation);
+  } catch (_) {
+    return { ok: null, reason: "content_script_not_ready", detectedEmails: [] };
+  }
+
+  if (result?.ok === false) {
+    const detected = (result.detectedEmails || []).join(", ") || "otra cuenta";
+    throw new AccountMismatchError(
+      `Cuenta incorrecta en Classroom. Esperada: ${expectedEmail}. Detectada: ${detected}.`,
+      result
+    );
+  }
+  return result || { ok: null, detectedEmails: [] };
+}
+
+async function preflightAccount(expectedEmail, generation = resetGeneration) {
+  if (!expectedEmail) throw new Error("Falta configurar el correo docente de Classroom.");
+
+  const tabs = await chrome.tabs.query({ url: "https://classroom.google.com/*" });
+  if (!tabs.length) {
+    return {
+      ok: false,
+      missing: true,
+      message: `Abre Google Classroom con ${expectedEmail} antes de iniciar la cola.`
+    };
+  }
+
+  const tab = tabs.find((t) => t.active) || tabs[0];
+  try {
+    const r = await checkAccountOnTab(tab.id, expectedEmail, generation);
+    return { ok: r?.ok !== false, result: r, tabId: tab.id };
+  } catch (e) {
+    if (e instanceof AccountMismatchError) {
+      return { ok: false, mismatch: true, message: e.message, detail: e.detail, tabId: tab.id };
+    }
+    throw e;
+  }
 }
 
 async function bridgeFetch(path, options = {}) {
@@ -43,7 +109,7 @@ async function bridgeFetch(path, options = {}) {
   headers.set("X-SieRoom-Bridge-Version", chrome.runtime.getManifest().version);
   headers.set(
     "X-SieRoom-Bridge-Capabilities",
-    "post_private_comment,read_private_comments"
+    "post_private_comment,read_private_comments,browser_grade_return,teacher_account_guard"
   );
   if (options.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
   const r = await fetch(`${c.endpoint}${path}`, { ...options, headers, cache: "no-store" });
@@ -109,21 +175,46 @@ function promiseTimeout(promise, ms, message) {
   ]);
 }
 
+async function ensureContentScript(tabId, generation = resetGeneration) {
+  assertGeneration(generation);
+  try {
+    const pong = await chrome.tabs.sendMessage(tabId, { type: "SIEROOM_PING" });
+    if (pong?.ok) return true;
+  } catch (_) {}
+
+  // Si Classroom navegó internamente o Chrome descartó el content script,
+  // lo reinyectamos sin pedirle al usuario que recargue manualmente.
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      files: ["content.js"]
+    });
+    await sleep(350);
+    const pong = await chrome.tabs.sendMessage(tabId, { type: "SIEROOM_PING" });
+    return Boolean(pong?.ok);
+  } catch (_) {
+    return false;
+  }
+}
+
 async function sendToContent(tabId, payload, attempts = 12, generation = resetGeneration) {
   let lastErr = null;
   for (let i = 0; i < attempts; i++) {
     assertGeneration(generation);
     try {
+      if (i === 0 || i === 3 || i === 7) {
+        await ensureContentScript(tabId, generation);
+      }
       const response = await promiseTimeout(
         chrome.tabs.sendMessage(tabId, payload),
-        65000,
-        "Classroom tardó demasiado en procesar el panel de comentarios privados."
+        70000,
+        "Classroom tardó demasiado en responder."
       );
       if (response) return response;
     } catch (e) {
       lastErr = e;
     }
-    await sleep(500);
+    await sleep(650);
   }
   throw lastErr || new Error("No pude contactar el content script de Classroom.");
 }
@@ -146,46 +237,108 @@ async function processJob(job, generation) {
   lastJobStartedAt = Date.now();
   try {
     assertGeneration(generation);
-    const tab = await ensureClassroomTab(job.submission_url, generation);
+    const c = await cfg();
+    const forcedUrl = addExpectedAccount(job.submission_url, c.teacherEmail);
+    const tab = await ensureClassroomTab(forcedUrl, generation);
+
+    // Verificación de seguridad: si Google muestra explícitamente otra cuenta,
+    // NO publicamos y devolvemos el trabajo a la cola mediante RESET.
+    const account = await checkAccountOnTab(tab.id, c.teacherEmail, generation);
+    if (account?.ok === true) {
+      log(`Cuenta docente confirmada: ${c.teacherEmail}.`);
+    } else {
+      log(`Cuenta docente no visible en esta pantalla; URL solicitada con authuser=${c.teacherEmail}.`);
+    }
+
     log(`Trabajo ${job.id}: Classroom activo; esperando panel lateral…`);
-    await sleep(2600);
+    await sleep(1700);
     assertGeneration(generation);
 
     const isRead = job.operation === "read_private_comments";
+    // v0.8.1 conserva comentario + calificación + devolución en la MISMA
+    // sesión del navegador y añade lectura segura bajo la cuenta docente.
     const result = await sendToContent(tab.id, isRead ? {
       type: "SIEROOM_READ_PRIVATE_COMMENTS"
     } : {
-      type: "SIEROOM_POST_PRIVATE_COMMENT",
-      comment: job.comment
-    }, 12, generation);
+      type: "SIEROOM_PROCESS_SUBMISSION",
+      comment: job.comment,
+      grade: job.grade,
+      returnAfterComment: Boolean(job.return_after_comment)
+    }, 10, generation);
     assertGeneration(generation);
 
     if (!result?.ok) {
       throw new Error(result?.error || (isRead
         ? "Classroom no devolvió los comentarios privados."
-        : "Classroom no confirmó el comentario privado."));
+        : "Classroom no confirmó el procesamiento de la entrega."));
     }
+
     if (isRead) {
-      log(`Comentarios leídos para ${job.submission_id}: ${Number(result.count || 0)}.`);
-    } else {
-      log(`Comentario publicado para ${job.submission_id}${result.alreadyPresent ? " (ya existía)" : ""}.`);
+      if (result.operation !== "read_private_comments" || !Array.isArray(result.comments) ||
+          Number(result.count) !== result.comments.length) {
+        throw new Error("Classroom devolvió un resultado de lectura incompleto o incompatible.");
+      }
+      log(`Comentarios leídos para ${job.submission_id}: ${result.comments.length}.`);
+      await complete(job, result);
+      assertGeneration(generation);
+      log(`Lectura ${job.id} completada bajo la cuenta ${c.teacherEmail}.`);
+      return { readCompleted: true, count: result.comments.length };
     }
-    const done = await complete(job, result);
+
+    const commentInfo = result.comment || {};
+    if (job.comment) {
+      log(`Comentario privado listo para ${job.submission_id}${commentInfo.alreadyPresent ? " (ya existía)" : ""}.`);
+    }
+    if (job.grade !== null && job.grade !== undefined) {
+      if (!result.browser_grade_applied) throw new Error("Classroom no confirmó la calificación en el navegador.");
+      log(`Calificación ${job.grade} registrada en Classroom.`);
+    }
+    if (job.return_after_comment) {
+      if (!result.browser_returned) throw new Error("Classroom no confirmó la devolución al estudiante.");
+      log("Entrega devuelta al estudiante.");
+    }
+
+    const done = await complete(job, {
+      ...result,
+      browser_followup_done: true,
+      browser_grade_applied: Boolean(result.browser_grade_applied),
+      browser_grade: result.browser_grade,
+      browser_returned: Boolean(result.browser_returned)
+    });
     assertGeneration(generation);
 
-    if (!isRead && (done.status === 207 || done.data?.partial)) {
-      log(`Comentario publicado, pero falló nota/devolución: ${done.data?.job?.error || "error de seguimiento"}`);
-    } else {
-      log(`Trabajo ${job.id} completado.`);
+    if (done.status === 207 || done.data?.partial) {
+      // Compatibilidad temporal con servidor 0.7.x: ese servidor intenta repetir
+      // nota/devolución por API y puede recibir 403. Si el navegador YA confirmó
+      // ambas acciones, no convertimos un éxito real en un fallo local.
+      log(`Trabajo ${job.id} completado en Classroom. El servidor antiguo reportó seguimiento API parcial; actualiza Render a v0.8.1 para limpiar ese estado.`);
+      return { completedInBrowser: true, legacyServerPartial: true };
     }
+    log(`Trabajo ${job.id} completado: comentario/nota/devolución confirmados.`);
   } catch (e) {
     if (e instanceof BridgeResetError) {
       log(`Trabajo ${job.id}: liberado por RESET; volverá a la cola.`);
-      return;
+      return { reset: true };
     }
+
+    if (e instanceof AccountMismatchError) {
+      const message = String(e?.message || e);
+      log(`PAUSA DE SEGURIDAD ${job.id}: ${message}`);
+      statusEl.textContent = message + " Cambia de cuenta en Classroom; el trabajo volverá a pendientes.";
+      statusEl.className = "bad";
+      try {
+        await bridgeFetch("/bridge/v1/reset", {
+          method: "POST",
+          body: JSON.stringify({ retry_failed: false })
+        });
+      } catch (_) {}
+      return { pausedForAccount: true };
+    }
+
     const message = String(e?.message || e);
     log(`ERROR ${job.id}: ${message}`);
     try { await fail(job, message); } catch (_) {}
+    return { failed: true };
   } finally {
     lastJobStartedAt = 0;
     if (previousActiveTabId && previousActiveTabId !== classroomTabId) {
@@ -231,7 +384,8 @@ async function drainQueue(generation, maxJobs = 50) {
     const nxt = await bridgeFetch("/bridge/v1/next");
     const job = nxt.data?.job;
     if (!job) break;
-    await processJob(job, generation);
+    const result = await processJob(job, generation);
+    if (result?.pausedForAccount) break;
     assertGeneration(generation);
     processed += 1;
     // Pequeñísima pausa para que la UI y Chrome respiren, sin meter 3 s por trabajo.
@@ -249,6 +403,18 @@ async function poll(force = false) {
     const c = await cfg();
     if (!c.secret) {
       statusEl.textContent = "Falta configurar el secreto del puente.";
+      statusEl.className = "bad";
+      return;
+    }
+    if (!c.teacherEmail) {
+      statusEl.textContent = "Falta configurar el correo docente de Classroom.";
+      statusEl.className = "bad";
+      return;
+    }
+
+    const account = await preflightAccount(c.teacherEmail, generation);
+    if (!account.ok) {
+      statusEl.textContent = account.message || `Abre Classroom con ${c.teacherEmail}.`;
       statusEl.className = "bad";
       return;
     }
@@ -275,7 +441,7 @@ async function poll(force = false) {
 
 document.getElementById("pollNow").addEventListener("click", () => poll(true));
 document.getElementById("resetQueue").addEventListener("click", async () => {
-  try { await resetQueue({ retryFailed: false, fromButton: true }); }
+  try { await resetQueue({ retryFailed: true, fromButton: true }); }
   catch (e) {
     statusEl.textContent = `RESET falló: ${String(e?.message || e)}`;
     statusEl.className = "bad";
