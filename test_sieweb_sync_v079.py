@@ -1,6 +1,7 @@
 import copy
 import pytest
 from sieweb import SieWebClient, SieWebError
+from test_sieweb_sync_v0710 import gradebook, real_shape_raw
 
 
 def raw_for_class(class_id=222, class_period_id=7002):
@@ -35,33 +36,29 @@ def summary_for_class(class_id=222, class_period_id=7002, root=9002, include_new
 def test_v079_passes_exact_ambito_to_pre_and_post_verification_reads(monkeypatch):
     c=SieWebClient()
     seen=[]
-    raw_before=raw_for_class()
-    raw_after=copy.deepcopy(raw_before)
-    raw_after["json"]["registros"].append({
-        "id":102,"idClaseContenido":102,"idClase":222,"idClasePeriodo":7002,
-        "idpadre":100,"nivelEva":3,"descripcion":"Áreas y perímetros","peso":100,
-    })
+    raw_before=real_shape_raw(False)
+    raw_after=real_shape_raw(True)
     raw_iter=iter([raw_before,raw_after])
-    summaries=iter([summary_for_class(),summary_for_class(include_new=True)])
+    summaries=iter([gradebook(False),gradebook(True)])
     def fake_get_criteria(**kwargs):
         seen.append(kwargs.get("id_ambito"))
         c._last_criteria_context = {
-            "idClase": 222, "idClasePeriodo": 7002, "idContenido": 9002,
-            "idAmbito": 619, "CURSOCOD": "05", "cursocod": "05",
+            "idClase": 2030, "idClasePeriodo": 6305, "idContenido": 119598,
+            "idAmbito": 518, "CURSOCOD": "05", "cursocod": "05",
         }
         return next(raw_iter)
     monkeypatch.setattr(c,"get_criteria",fake_get_criteria)
     monkeypatch.setattr(c,"get_gradebook_summary",lambda **kwargs: next(summaries))
     monkeypatch.setattr(c,"_request",lambda *a,**k:{"json":{"estado":1}})
     result=c.upsert_criteria_verified(
-        class_id=222,class_period_id=7002,root_content_id=9002,id_ambito=619,
-        records=[{"descripcion":"Áreas y perímetros","idpadre":100,"nivelEva":3}],
-        replica={},expected=[{"description":"Áreas y perímetros","parent_id":100,"level":3}],
+        class_id=2030,class_period_id=6305,root_content_id=119598,id_ambito=518,
+        records=[{"descripcion":"AREAS PERIM.","idpadre":133731,"nivelEva":3}],
+        replica={},expected=[{"description":"AREAS PERIM.","parent_id":133731,"level":3}],
         verification_attempts=1,
     )
-    assert seen == [619,619]
-    assert result["idAmbito"] == 619
-    assert result["context_guard"] == "exact-ambito-dual-coursecode-roster-v0.7.13"
+    assert seen == [518,518]
+    assert result["idAmbito"] == 518
+    assert result["context_guard"] == "exact-ambito-native-modal-roster-v0.7.14"
 
 
 def test_v079_blocks_editor_rows_from_another_section_before_post(monkeypatch):

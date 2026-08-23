@@ -62,77 +62,7 @@ def test_edit_updates_real_row_inside_full_model_without_destroying_identity():
     assert row["campoInterno"] == "SE-CONSERVA"
 
 
-def test_verified_save_sends_full_model_and_requires_editor_and_gradebook(monkeypatch):
-    c=SieWebClient()
-    raw=sample_raw()
-    before={"criteria":[
-        {"id":10,"idpadre":1,"nivelEva":2,"descripcion":"Modela objetos"},
-        {"id":20,"idpadre":10,"nivelEva":3,"descripcion":"Desempeño anterior"},
-    ],"class":{"idClase":123}}
-    after=copy.deepcopy(before)
-    after["criteria"].append({"id":21,"idpadre":10,"nivelEva":3,"descripcion":"Áreas y perímetros"})
-    raw_after=sample_raw()
-    raw_after["json"]["registros"].insert(2,{"id":21,"idClaseContenido":21,"idpadre":10,"nivelEva":3,
-        "descripcion":"Áreas y perímetros","peso":100,"activo":True,"orden":2,"campoInterno":"SE-CONSERVA"})
-    gradebook_calls=iter([before,after])
-    criteria_calls=iter([raw,raw_after])
-    monkeypatch.setattr(c,"get_gradebook_summary",lambda **kwargs: next(gradebook_calls))
-    def fake_get_criteria(**kwargs):
-        c._last_criteria_context = {
-            "idClase": 123, "idClasePeriodo": 6305, "idContenido": 99,
-            "idAmbito": 518, "CURSOCOD": "05", "cursocod": "05",
-        }
-        return next(criteria_calls)
-    monkeypatch.setattr(c,"get_criteria",fake_get_criteria)
-    sent={}
-    def fake_request(method,path,**kwargs):
-        sent.update(kwargs["json"])
-        return {"json":{"estado":1}}
-    monkeypatch.setattr(c,"_request",fake_request)
-    result=c.upsert_criteria_verified(
-        class_id=123,class_period_id=6305,root_content_id=99,id_ambito=518,
-        records=[{"descripcion":"Áreas y perímetros","idpadre":10,"nivelEva":3}],
-        replica={},expected=[{"description":"Áreas y perímetros","parent_id":10,"level":3}],
-        verification_attempts=1,
-    )
-    assert result["saved"] is True
-    assert result["mode"] == "ui-native-dual-coursecode-replica-v0.7.13"
-    assert len(sent["registros"]) == 4
-    assert sent["datosReplica"] == []
-
-
-def test_false_estado_1_is_rejected_if_gradebook_does_not_persist(monkeypatch):
-    c=SieWebClient()
-    raw=sample_raw()
-    before={"criteria":[
-        {"id":10,"idpadre":1,"nivelEva":2,"descripcion":"Modela objetos"},
-        {"id":20,"idpadre":10,"nivelEva":3,"descripcion":"Desempeño anterior"},
-    ],"class":{"idClase":123}}
-    raw_after=sample_raw()
-    raw_after["json"]["registros"].insert(2,{"id":21,"idClaseContenido":21,"idpadre":10,"nivelEva":3,
-        "descripcion":"Áreas y perímetros","peso":100,"activo":True,"orden":2,"campoInterno":"SE-CONSERVA"})
-    gradebook_calls=iter([before,before])
-    criteria_calls=iter([raw,raw_after])
-    monkeypatch.setattr(c,"get_gradebook_summary",lambda **kwargs: next(gradebook_calls))
-    def fake_get_criteria(**kwargs):
-        c._last_criteria_context = {
-            "idClase": 123, "idClasePeriodo": 6305, "idContenido": 99,
-            "idAmbito": 518, "CURSOCOD": "05", "cursocod": "05",
-        }
-        return next(criteria_calls)
-    monkeypatch.setattr(c,"get_criteria",fake_get_criteria)
-    monkeypatch.setattr(c,"_request",lambda *a,**k:{"json":{"estado":1}})
-    with pytest.raises(SieWebError) as exc:
-        c.upsert_criteria_verified(
-            class_id=123,class_period_id=6305,root_content_id=99,id_ambito=518,
-            records=[{"descripcion":"Áreas y perímetros","idpadre":10,"nivelEva":3}],
-            replica={},expected=[{"description":"Áreas y perímetros","parent_id":10,"level":3}],
-            verification_attempts=1,
-        )
-    assert "FALSO ÉXITO SIEWEB" in str(exc.value)
-
-
-def test_e0006_or_non_success_is_rejected_before_any_grade_flow(monkeypatch):
+def test_legacy_flat_editor_is_readable_but_blocked_for_native_modal_write(monkeypatch):
     c=SieWebClient()
     raw=sample_raw()
     before={"criteria":[
@@ -147,7 +77,11 @@ def test_e0006_or_non_success_is_rejected_before_any_grade_flow(monkeypatch):
         }
         return raw
     monkeypatch.setattr(c,"get_criteria",fake_get_criteria)
-    monkeypatch.setattr(c,"_request",lambda *a,**k:{"json":{"estado":0,"codigo":"e0006"}})
+    sent=[]
+    def fake_request(method,path,**kwargs):
+        sent.append(kwargs["json"])
+        return {"json":{"estado":1}}
+    monkeypatch.setattr(c,"_request",fake_request)
     with pytest.raises(SieWebError) as exc:
         c.upsert_criteria_verified(
             class_id=123,class_period_id=6305,root_content_id=99,id_ambito=518,
@@ -155,4 +89,5 @@ def test_e0006_or_non_success_is_rejected_before_any_grade_flow(monkeypatch):
             replica={},expected=[{"description":"Áreas y perímetros","parent_id":10,"level":3}],
             verification_attempts=1,
         )
-    assert "e0006" in str(exc.value)
+    assert "capacidad padre" in str(exc.value)
+    assert sent == []

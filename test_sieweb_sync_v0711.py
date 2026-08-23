@@ -40,7 +40,7 @@ def test_v0711_new_performance_uses_exact_sparse_ui_shape():
         assert forbidden not in row
 
 
-def test_v0713_sends_empty_datos_replica_and_full_course_context(monkeypatch):
+def test_v0714_sends_native_modal_record_and_replica_context(monkeypatch):
     c = SieWebClient()
     raw_before = real_shape_raw(False)
     raw_after = real_shape_raw(True)
@@ -70,23 +70,25 @@ def test_v0713_sends_empty_datos_replica_and_full_course_context(monkeypatch):
         verification_attempts=1,
     )
     assert result["saved"] is True
-    assert result["write_strategy"] == "ui-sparse-full-tree"
+    assert result["write_strategy"] == "ui-native-modal-new-record"
     assert len(sent) == 1
-    assert sent[0]["datosReplica"] == []
-    assert sent[0]["CURSOCOD"] == sent[0]["cursocod"] == "05"
-    assert sent[0]["idClasePeriodo"] == 6305
-    assert sent[0]["idContenido"] == 119598
-    assert sent[0]["idAmbito"] == 518
+    assert set(sent[0]) == {"registros", "idClase", "datosReplica"}
+    assert sent[0]["datosReplica"] == {
+        "periodo": 2, "idCurso": 24, "grupocod": "001", "cursocod": "05",
+        "limiteReplica": 1, "replicar": False,
+    }
+    assert len(sent[0]["registros"]) == 1
+    assert sent[0]["registros"][0]["DESCRIPCION"] == "AREAS PERIM."
+    assert sent[0]["registros"][0]["ID_CLASE_PERIODO"] == 6305
 
 
-def test_v0711_adapts_after_e0006_only_when_re_read_confirms_absence(monkeypatch):
+def test_v0714_never_retries_post_after_e0006(monkeypatch):
     c = SieWebClient()
     raw_before = real_shape_raw(False)
     raw_after = real_shape_raw(True)
-    # 1) lectura inicial; 2) probe tras e0006 full-tree; 3) probe tras e0006 changed-root;
-    # 4) verificación tras éxito changed-records.
-    raw_iter = iter([raw_before, raw_before, raw_before, raw_after])
-    summary_iter = iter([gradebook(False), gradebook(True)])
+    # 1) lectura inicial; 2) única relectura tras el rechazo.
+    raw_iter = iter([raw_before, raw_before])
+    summary_iter = iter([gradebook(False), gradebook(False)])
     def fake_get_criteria(**kwargs):
         c._last_criteria_context = {
             "idClase": 2030, "idClasePeriodo": 6305, "idContenido": 119598,
@@ -96,40 +98,28 @@ def test_v0711_adapts_after_e0006_only_when_re_read_confirms_absence(monkeypatch
     monkeypatch.setattr(c, "get_criteria", fake_get_criteria)
     monkeypatch.setattr(c, "get_gradebook_summary", lambda **kwargs: next(summary_iter))
 
-    responses = iter([
-        {"json": {"estado": 0, "codigo": "e0006"}},
-        {"json": {"estado": 0, "codigo": "e0006"}},
-        {"json": {"estado": 1}},
-    ])
     sent = []
 
     def fake_request(method, path, **kwargs):
         sent.append(copy.deepcopy(kwargs["json"]))
-        return next(responses)
+        return {"json": {"estado": 0, "codigo": "e0006"}}
 
     monkeypatch.setattr(c, "_request", fake_request)
-    result = c.upsert_criteria_verified(
-        class_id=2030, class_period_id=6305, root_content_id=119598, id_ambito=518,
-        records=[{"descripcion": "AREAS PERIM.", "idpadre": 133731, "nivelEva": 3,
-                  "ABREVIATURA": "AREAS PERIM."}],
-        replica=None,
-        expected=[{"description": "AREAS PERIM.", "parent_id": 133731, "level": 3}],
-        verification_attempts=1,
-    )
-    assert result["saved"] is True
-    assert result["write_strategy"] == "ui-sparse-changed-records"
-    assert [x["strategy"] for x in result["write_attempts"]] == [
-        "ui-sparse-full-tree", "ui-sparse-changed-root", "ui-sparse-changed-records"
-    ]
-    assert [x["estado"] for x in result["write_attempts"]] == [0, 0, 1]
-    assert len(sent) == 3
-    assert len(sent[0]["registros"]) == 2       # árbol completo
-    assert len(sent[1]["registros"]) == 1       # solo la competencia que contiene el cambio
-    assert len(sent[2]["registros"]) == 1       # solo la fila nueva
-    assert sent[2]["registros"][0]["DESCRIPCION"] == "AREAS PERIM."
-    assert sent[2]["registros"][0]["ID_CONTENIDO_REF"] == 133731
-    assert all(payload["datosReplica"] == [] for payload in sent)
-    assert all(payload["CURSOCOD"] == payload["cursocod"] == "05" for payload in sent)
+    try:
+        c.upsert_criteria_verified(
+            class_id=2030, class_period_id=6305, root_content_id=119598, id_ambito=518,
+            records=[{"descripcion": "AREAS PERIM.", "idpadre": 133731, "nivelEva": 3,
+                      "ABREVIATURA": "AREAS PERIM."}],
+            replica=None,
+            expected=[{"description": "AREAS PERIM.", "parent_id": 133731, "level": 3}],
+            verification_attempts=1,
+        )
+        assert False, "debió bloquear e0006"
+    except Exception as exc:
+        assert "e0006" in str(exc)
+        assert "un solo POST" in str(exc)
+    assert len(sent) == 1
+    assert set(sent[0]) == {"registros", "idClase", "datosReplica"}
 
 
 def test_v0711_never_falls_back_after_ambiguous_non_e0006_failure(monkeypatch):
@@ -159,5 +149,6 @@ def test_v0711_never_falls_back_after_ambiguous_non_e0006_failure(monkeypatch):
         )
         assert False, "debió bloquear un error no e0006"
     except Exception as exc:
-        assert "no es seguro probar otra forma" in str(exc)
+        assert "un solo POST" in str(exc)
+        assert "otro_error" in str(exc)
     assert len(calls) == 1

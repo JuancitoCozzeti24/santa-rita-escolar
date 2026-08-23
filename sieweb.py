@@ -32,7 +32,7 @@ class SieWebClient:
         self.session.headers.update(
             {
                 "Accept": "application/json, text/plain, */*",
-                "User-Agent": "Mozilla/5.0 SieRoom-SRC/0.7.13",
+                "User-Agent": "Mozilla/5.0 SieRoom-SRC/0.7.14",
                 "X-Requested-With": "XMLHttpRequest",
                 "Cache-Control": "no-cache",
                 "Pragma": "no-cache",
@@ -1367,21 +1367,176 @@ class SieWebClient:
         return copy.deepcopy(fallback if found is None else found)
 
     @staticmethod
-    def normalize_replica_for_criteria_write(replica: Any) -> list[Any]:
-        """Normaliza destinos de réplica al contrato de la UI de SIEweb.
+    def normalize_replica_for_criteria_write(replica: Any) -> dict[str, Any]:
+        """Acepta únicamente el objeto ``paramDatosReplica`` de la UI oficial.
 
-        ``HyoClaseContenido/insertar`` espera siempre la propiedad
-        ``datosReplica``. Una escritura independiente usa la lista vacía; una
-        réplica real usa la lista de destinos recibida del editor.
+        La captura del cliente de SIEWeb demuestra que ``datosReplica`` no es una
+        lista de destinos. Es un objeto con el contexto de la clase y el flag
+        ``replicar``. Los valores vacíos se completan después desde las lecturas
+        autenticadas; una lista no vacía se rechaza para no replicar por error.
         """
         if replica in (None, {}, []):
-            return []
-        if isinstance(replica, list):
+            return {}
+        if isinstance(replica, dict):
             return copy.deepcopy(replica)
-        raise SieWebError(
-            "datosReplica debe ser una lista de destinos reales o estar vacío. "
-            "La réplica entre secciones se realiza de forma independiente; no se envió nada."
-        )
+        if isinstance(replica, list):
+            raise SieWebError(
+                "datosReplica no admite una lista de destinos en el contrato nativo de SIEWeb. "
+                "La réplica entre secciones debe hacerse como altas independientes; no se envió nada."
+            )
+        raise SieWebError("datosReplica debe ser un objeto de contexto; no se envió nada.")
+
+    @staticmethod
+    def _criteria_json(raw: dict[str, Any]) -> dict[str, Any]:
+        envelope=(raw or {}).get("json") if isinstance(raw,dict) else None
+        return envelope if isinstance(envelope,dict) else {}
+
+    def _native_child_program(self, raw: dict[str, Any], parent: dict[str, Any]) -> dict[str, Any]:
+        """Obtiene el programa hijo igual que ``mostrarPrograma`` en la UI."""
+        envelope=self._criteria_json(raw)
+        data_program=envelope.get("dataPrograma") or {}
+        obj_programs=data_program.get("objProgramas") if isinstance(data_program,dict) else None
+        parent_program=parent.get("ID_PROGRAMA",parent.get("idPrograma"))
+        choices=(obj_programs or {}).get(str(parent_program)) if isinstance(obj_programs,dict) else None
+        program=copy.deepcopy(choices[0]) if isinstance(choices,list) and choices and isinstance(choices[0],dict) else None
+
+        # Compatibilidad defensiva con despliegues que omitan dataPrograma: un
+        # desempeño hermano persistido aporta los mismos metadatos de programa.
+        if not isinstance(program,dict):
+            children=parent.get("children") or []
+            sibling=next((x for x in children if isinstance(x,dict) and self._criterion_level(x)==3),None)
+            if sibling:
+                program={
+                    "ID_PROGRAMA":sibling.get("ID_PROGRAMA",5),
+                    "ID_PROGRAMA_REF":parent_program,
+                    "DESCRIPCION":sibling.get("DESCPROGRAMA") or "Desempeño",
+                    "ICONO":sibling.get("ICONO") or "simbolo5",
+                    "COLOR":sibling.get("COLOR") or "#ffffff",
+                    "LIMITE":6,
+                }
+        if not isinstance(program,dict):
+            raise SieWebError("SIEWeb no devolvió el programa hijo de la capacidad; no se envió nada.")
+        if str(program.get("ID_PROGRAMA_REF")) != str(parent_program):
+            raise SieWebError("El programa hijo no corresponde a la capacidad seleccionada; no se envió nada.")
+        if str(program.get("ID_PROGRAMA")) != "5":
+            raise SieWebError(
+                f"PROTECCIÓN NIVEL DE LOGRO: el programa hijo es {program.get('ID_PROGRAMA')}, "
+                "no Desempeño (5). No se envió nada."
+            )
+        return program
+
+    @classmethod
+    def _requested_value(cls, requested: dict[str, Any], names: set[str], default: Any) -> Any:
+        wanted={cls._canon_text(x).replace(" ","") for x in names}
+        for key,value in (requested or {}).items():
+            if cls._canon_text(key).replace(" ","") in wanted:
+                return copy.deepcopy(value)
+        return copy.deepcopy(default)
+
+    def build_native_new_criterion_record(
+        self, *, raw: dict[str, Any], parent: dict[str, Any], requested: dict[str, Any],
+        description: str, class_id: int, class_period_id: int,
+        reserved_indices: set[int] | None = None,
+    ) -> dict[str, Any]:
+        """Reproduce el objeto ``defaultDataContenido`` del modal oficial."""
+        program=self._native_child_program(raw,parent)
+        limit=int(program.get("LIMITE") or 0)
+        if limit <= 0:
+            raise SieWebError("El programa Desempeño no permite nuevas filas; no se envió nada.")
+        used=set(reserved_indices or set())
+        for child in parent.get("children") or []:
+            if not isinstance(child,dict) or str(child.get("ID_PROGRAMA"))!="5":
+                continue
+            try: used.add(int(child.get("INDICE")))
+            except (TypeError,ValueError): pass
+        index=next((candidate for candidate in range(1,limit+1) if candidate not in used),None)
+        if index is None:
+            raise SieWebError(
+                f"La capacidad {self._criterion_content_id(parent)} alcanzó el límite de {limit} desempeños; "
+                f"no se creó '{description}'."
+            )
+        parent_id=self._criterion_content_id(parent)
+        parent_key=str(parent.get("LLAVE") or "").strip()
+        if parent_id in (None,"",0,"0") or not parent_key:
+            raise SieWebError("La capacidad padre no tiene ID_CONTENIDO/LLAVE persistidos; no se envió nada.")
+        parent_level=self._criterion_level(parent)
+        if str(parent_level)!="2":
+            raise SieWebError(
+                f"PROTECCIÓN NIVEL DE LOGRO: el padre tiene nivel {parent_level}, no Capacidad (2). "
+                "No se envió nada."
+            )
+        abbreviation=self._requested_value(requested,{"ABREVIATURA","abrev","abrevComp"},"")
+        record={
+            "ID_CLASE_CONTENIDO":0,
+            "ID_CLASE":int(class_id),
+            "ID_CLASE_PERIODO":int(class_period_id),
+            "EXCLUIR":self._requested_value(requested,{"EXCLUIR"},0),
+            "SUMATIVO":self._requested_value(requested,{"SUMATIVO"},0),
+            "PESO":self._requested_value(requested,{"PESO"},1),
+            "ID_CONTENIDO":0,
+            "DESCRIPCION":str(description),
+            "ID_PROGRAMA":int(program["ID_PROGRAMA"]),
+            "ID_CONTENIDO_REF":parent_id,
+            "ABREVIATURA":"" if abbreviation is None else abbreviation,
+            "INCLUSIVO":self._requested_value(requested,{"INCLUSIVO"},0),
+            "ORDEN":1,
+            "BASE":0,
+            "INDICE":index,
+            "replicar":False,
+            "TRADUCCION":self._requested_value(requested,{"TRADUCCION"},None),
+            "NIVEL_PADRE":int(parent_level),
+            "LLAVE":f"{program['ID_PROGRAMA']}-{index}_{parent_key}",
+            "COLORP":program.get("COLOR") or "#ffffff",
+            "DESCP":program.get("DESCRIPCION") or "Desempeño",
+            "ICONOP":program.get("ICONO") or "simbolo5",
+        }
+        return record
+
+    def build_native_replica_context(
+        self, *, raw: dict[str, Any], class_info: dict[str, Any], parent: dict[str, Any],
+        criteria_context: dict[str, Any], supplied: Any = None,
+    ) -> dict[str, Any]:
+        """Construye ``paramDatosReplica`` exactamente como el componente oficial."""
+        override=self.normalize_replica_for_criteria_write(supplied)
+        envelope=self._criteria_json(raw)
+        annual=envelope.get("nivelReplicaAnual") or []
+        annual_first=annual[0] if isinstance(annual,list) and annual and isinstance(annual[0],dict) else {}
+        derived={
+            "periodo":class_info.get("periodo",class_info.get("PERIODO")),
+            "idCurso":class_info.get("idCurso") or parent.get("ID_CURSO") or parent.get("idCurso"),
+            "grupocod":class_info.get("grupocod") or parent.get("GRUPOCOD") or parent.get("grupocod"),
+            "cursocod":class_info.get("cursocod") or class_info.get("CURSOCOD")
+                       or criteria_context.get("cursocod") or criteria_context.get("CURSOCOD"),
+            "limiteReplica":annual_first.get("LIMITE"),
+            "replicar":False,
+        }
+        # Se permiten overrides solo si no cambian la identidad resuelta de la clase.
+        for key,value in override.items():
+            if key=="replicar" and bool(value):
+                raise SieWebError(
+                    "La réplica automática del modal está deshabilitada por seguridad; "
+                    "se deben crear altas verificadas por sección. No se envió nada."
+                )
+            if key in derived and derived[key] not in (None,"") and value not in (None,"") \
+                    and str(value)!=str(derived[key]):
+                raise SieWebError(
+                    f"datosReplica.{key}={value!r} no coincide con el contexto leído "
+                    f"({derived[key]!r}); no se envió nada."
+                )
+            if key in derived and value not in (None,""):
+                derived[key]=copy.deepcopy(value)
+        missing=[key for key in ("periodo","idCurso","grupocod","cursocod","limiteReplica")
+                 if derived.get(key) in (None,"")]
+        if missing:
+            raise SieWebError(
+                "No se pudo construir paramDatosReplica nativo; faltan "+", ".join(missing)+". No se envió nada."
+            )
+        for key in ("periodo","idCurso","limiteReplica"):
+            derived[key]=int(derived[key])
+        derived["grupocod"]=str(derived["grupocod"])
+        derived["cursocod"]=str(derived["cursocod"])
+        derived["replicar"]=False
+        return derived
 
     @staticmethod
     def _set_existing_alias(row: dict[str, Any], aliases: tuple[str, ...], value: Any,
@@ -1715,12 +1870,13 @@ class SieWebClient:
                                  expected: list[dict[str, Any]],
                                  extra_params: dict[str, Any] | None = None,
                                  verification_attempts: int = 3) -> dict[str, Any]:
-        """Guarda el MODELO COMPLETO del editor y exige persistencia real.
+        """Crea desempeños con el contrato exacto del modal y verifica persistencia.
 
-        v0.7.13 conserva las protecciones de contexto y transmite en la lectura y
-        escritura los dos alias reales del código de curso. También mantiene
-        ``datosReplica=[]`` cuando no hay destinos, porque el controlador nativo
-        de ``insertar`` espera la propiedad aun en una escritura independiente.
+        La UI oficial llama ``HyoClaseContenido/insertar`` con exactamente tres
+        propiedades: ``registros``, ``idClase`` y ``datosReplica``. Para una alta,
+        ``registros`` contiene el objeto ``defaultDataContenido`` del modal, no el
+        árbol ``resCriterios`` ni una plaza ``flExiste=false``. v0.7.14 replica ese
+        contrato y elimina los fallbacks que causaban e0006/falsos éxitos.
         """
         try:
             id_ambito = int(id_ambito)
@@ -1728,6 +1884,8 @@ class SieWebClient:
             raise SieWebError("id_ambito es obligatorio para guardar desempeños; no se usará un ámbito por defecto.") from exc
         if id_ambito <= 0:
             raise SieWebError("id_ambito debe ser positivo para guardar desempeños; no se usará un ámbito por defecto.")
+        if not records or len(records)!=len(expected):
+            raise SieWebError("records y expected deben ser listas no vacías de igual longitud; no se envió nada.")
 
         before = self.get_gradebook_summary(class_period_id=class_period_id, root_content_id=root_content_id,
                                             extra_params=extra_params)
@@ -1779,38 +1937,6 @@ class SieWebClient:
                 f"PROTECCIÓN DE CONTEXTO SIEWEB: el editor leído con idAmbito={id_ambito} "
                 f"pertenece a idClasePeriodo={sorted(row_period_ids)}, no a {class_period_id}. No se envió nada."
             )
-        merged=self.merge_requested_criteria_into_editor_rows(model["rows"],records,expected)
-        actual_replica=self.normalize_replica_for_criteria_write(replica)
-        payload_diagnostics=self.validate_criteria_tree_for_write(
-            merged["rows"],class_id=class_id,class_period_id=class_period_id
-        )
-        if not payload_diagnostics["ok"]:
-            raise SieWebError(
-                "PROTECCIÓN ESTRUCTURAL SIEWEB: el árbol a guardar no cumple las invariantes "
-                "de resCriterios; se bloqueó el POST: "+
-                json.dumps(payload_diagnostics["errors"],ensure_ascii=False)
-            )
-        def _is_changed_node(row: dict[str, Any]) -> bool:
-            exists = row.get("flExiste") if "flExiste" in row else row.get("FLEXISTE")
-            edit = row.get("EDITOREG") if "EDITOREG" in row else row.get("editoreg")
-            desc = self._criterion_description(row)
-            return bool(desc) and (exists is False or str(edit) == "1")
-
-        def _root_has_change(row: dict[str, Any]) -> bool:
-            if _is_changed_node(row):
-                return True
-            for child in row.get("children") or []:
-                if isinstance(child, dict) and _root_has_change(child):
-                    return True
-            return False
-
-        changed_roots=[copy.deepcopy(r) for r in merged["rows"]
-                       if isinstance(r,dict) and _root_has_change(r)]
-        changed_rows=[copy.deepcopy(r) for _,r in self._walk_criterion_tree(merged["rows"])
-                      if _is_changed_node(r)]
-        if not changed_rows:
-            raise SieWebError("No se detectó ninguna fila nueva/editada para guardar; no se envió nada.")
-
         criteria_context = dict(getattr(self, "_last_criteria_context", {}) or {})
         expected_context = {
             "idClase": int(class_id),
@@ -1837,136 +1963,174 @@ class SieWebClient:
                 "No se resolvió cursocod para HyoClaseContenido/insertar; "
                 "se bloqueó la escritura antes del POST."
             )
-        replica_for_post = copy.deepcopy(actual_replica)
 
-        # El escritor adaptativo solo avanza ante rechazo explícito e0006.
-        # Cada estrategia se intenta únicamente si la anterior fue rechazada Y una
-        # relectura confirma que no persistió nada. Así evitamos escrituras dobles.
-        strategies=[
-            ("ui-sparse-full-tree", copy.deepcopy(merged["rows"])),
-            ("ui-sparse-changed-root", changed_roots),
-            ("ui-sparse-changed-records", changed_rows),
-        ]
-        write_attempts=[]
-        result=None
-        successful_strategy=None
-
-        for strategy_name, strategy_records in strategies:
-            payload={
-                "registros":strategy_records,
-                "idClase":class_id,
-                "idClasePeriodo":class_period_id,
-                "idContenido":root_content_id,
-                "idAmbito":id_ambito,
-                "CURSOCOD":write_course_code,
-                "cursocod":write_course_code,
-                "datosReplica":copy.deepcopy(replica_for_post),
-            }
-
-            current=self._request("POST","/lms/api/HyoClaseContenido/insertar",json=payload)
-            body=(current.get("json") or {}) if isinstance(current,dict) else {}
-            provider_state=body.get("estado")
-            provider_code=body.get("codigo") or body.get("code") or body.get("error") or body.get("mensaje")
-            attempt_diag={
-                "strategy":strategy_name,
-                "estado":provider_state,
-                "codigo":provider_code,
-                "record_count":len(strategy_records),
-                "node_count":sum(1 for _ in self._walk_criterion_tree(strategy_records)),
-                "datosReplica":f"list:{len(replica_for_post)}",
-                "course_context":"CURSOCOD+cursocod",
-            }
-            write_attempts.append(attempt_diag)
-
-            if provider_state == 1:
-                result=current
-                successful_strategy=strategy_name
-                break
-
-            # Solo un rechazo explícito e0006/estado=0 habilita el fallback.
-            # Antes de volver a escribir se relee el servidor para descartar que,
-            # pese al estado, la fila haya sido persistida.
-            code_text=self._canon_text(provider_code).replace(" ","")
-            explicit_reject=(provider_state == 0 and (not code_text or "e0006" in code_text))
-            if not explicit_reject:
+        # Construir únicamente altas de modal. Si el criterio ya existe, el flujo
+        # es idempotente; no se convierte una petición de alta en edición implícita.
+        native_records=[]
+        operations=[]
+        parents_for_new=[]
+        reserved_by_parent: dict[str,set[int]]={}
+        for requested,exp in zip(records,expected):
+            if not isinstance(requested,dict) or not isinstance(exp,dict):
+                raise SieWebError("Cada registro/expectativa debe ser un objeto; no se envió nada.")
+            desc=str(exp.get("description") or "").strip()
+            parent_id=exp.get("parent_id")
+            level=int(exp.get("level",3))
+            if not desc or parent_id in (None,"",0,"0"):
+                raise SieWebError("description y parent_id son obligatorios; no se envió nada.")
+            if level!=3:
                 raise SieWebError(
-                    "SIEweb rechazó el guardado de criterios y no es seguro probar otra forma "
-                    f"(estado={provider_state!r}, codigo={provider_code!r}). No se escribirán notas. "
-                    "Intentos: "+json.dumps(write_attempts,ensure_ascii=False)
+                    f"PROTECCIÓN NIVEL DE LOGRO: solo se crean desempeños nivel 3; se recibió nivel {level}."
                 )
-
-            raw_probe=self.get_criteria(
+            matches=self._find_tree_nodes(
+                model["rows"],description=desc,parent_id=parent_id,level=level
+            )
+            if len(matches)>1:
+                raise SieWebError(f"El editor contiene más de un desempeño '{desc}'; no se envió nada.")
+            if len(matches)==1:
+                row=matches[0][1]
+                if self._criterion_content_id(row) in (None,"",0,"0"):
+                    raise SieWebError(f"'{desc}' aparece sin identidad persistida; no se envió nada.")
+                operations.append({"action":"already-present","description":desc,
+                                   "parent_id":parent_id,"idContenido":self._criterion_content_id(row)})
+                continue
+            parents=self._find_tree_nodes(model["rows"],content_id=parent_id,level=2)
+            if len(parents)!=1:
+                raise SieWebError(
+                    f"No se encontró de forma única la capacidad padre ID_CONTENIDO={parent_id} "
+                    f"para crear '{desc}'. No se envió nada."
+                )
+            parent=parents[0][1]
+            key=str(parent_id)
+            record=self.build_native_new_criterion_record(
+                raw=raw_before,parent=parent,requested=requested,description=desc,
                 class_id=class_id,class_period_id=class_period_id,
-                root_content_id=root_content_id,id_ambito=id_ambito,
-                extra_params=extra_params
+                reserved_indices=reserved_by_parent.setdefault(key,set()),
             )
-            probe_model=self.extract_criteria_editor_model(raw_probe)
-            probe_persisted=[]
-            for exp in expected:
-                found=[
-                    row for _,row in self._walk_criterion_tree(probe_model["rows"])
-                    if self._raw_row_matches(
-                        row,description=str(exp["description"]),
-                        parent_id=exp.get("parent_id"),level=exp.get("level",3)
-                    )
-                    and (
-                        row.get("flExiste") is True
-                        or self._criterion_content_id(row) not in (None,"",0,"0")
-                        or self._criterion_class_content_id(row) not in (None,"",0,"0")
-                    )
-                ]
-                probe_persisted.append({"expected":exp,"count":len(found)})
-            if all(x["count"] == 1 for x in probe_persisted):
-                # El proveedor reportó rechazo pero la relectura dice que persistió.
-                # No se intenta ninguna segunda escritura; pasamos a la verificación
-                # fuerte editor+registro de notas.
-                result=current
-                successful_strategy=strategy_name+"-provider-false-negative"
-                break
+            reserved_by_parent[key].add(int(record["INDICE"]))
+            native_records.append(record)
+            parents_for_new.append(parent)
+            operations.append({"action":"insert-native-modal","description":desc,
+                               "parent_id":parent_id,"indice":record["INDICE"],
+                               "llave":record["LLAVE"]})
 
-        if result is None:
-            sparse_keys=sorted(changed_rows[0].keys()) if changed_rows else []
-            raise SieWebError(
-                "SIEweb rechazó las tres formas contextuales de guardado con e0006 y la relectura "
-                "confirmó que el desempeño no persistió. No se escribirán notas. "
-                "Esto ya no es un error de idAmbito ni de jerarquía: se aisló el contrato de "
-                "HyoClaseContenido/insertar. Intentos: "+json.dumps(write_attempts,ensure_ascii=False)+
-                ". Claves de la fila UI-native: "+json.dumps(sparse_keys,ensure_ascii=False)
+        def verify_once() -> tuple[list[dict[str,Any]],bool]:
+            raw_after=self.get_criteria(
+                class_id=class_id,class_period_id=class_period_id,
+                root_content_id=root_content_id,id_ambito=id_ambito,extra_params=extra_params
             )
+            editor_after=self.extract_criteria_editor_model(raw_after)
+            after=self.get_gradebook_summary(
+                class_period_id=class_period_id,root_content_id=root_content_id,extra_params=extra_params
+            )
+            checks=[]
+            for exp in expected:
+                found_editor=[row for _,row in self._walk_criterion_tree(editor_after["rows"])
+                              if self._raw_row_matches(
+                                  row,description=str(exp["description"]),
+                                  parent_id=exp.get("parent_id"),level=exp.get("level",3)
+                              ) and self._criterion_content_id(row) not in (None,"",0,"0")]
+                found_gradebook=self.find_exact_criterion(
+                    after,description=str(exp["description"]),
+                    parent_id=exp.get("parent_id"),level=exp.get("level",3)
+                )
+                checks.append({"expected":exp,"editor_count":len(found_editor),
+                               "gradebook_count":len(found_gradebook)})
+            return checks,all(x["editor_count"]==1 and x["gradebook_count"]==1 for x in checks)
+
+        if not native_records:
+            checks=[]
+            for exp in expected:
+                editor_count=len(self._find_tree_nodes(
+                    model["rows"],description=str(exp["description"]),
+                    parent_id=exp.get("parent_id"),level=exp.get("level",3)
+                ))
+                gradebook_count=len(self.find_exact_criterion(
+                    before,description=str(exp["description"]),
+                    parent_id=exp.get("parent_id"),level=exp.get("level",3)
+                ))
+                checks.append({"expected":exp,"editor_count":editor_count,
+                               "gradebook_count":gradebook_count})
+            if not all(x["editor_count"]==1 and x["gradebook_count"]==1 for x in checks):
+                raise SieWebError(
+                    "El desempeño aparece en el editor pero no simultáneamente en el registro de notas; "
+                    "se bloqueó la operación idempotente. Verificación: "+
+                    json.dumps(checks,ensure_ascii=False)
+                )
+            return {
+                "saved":True,"already_present":True,"verification":checks,"attempts":[],
+                "editor_model_path":model["path"],"editor_model_score":model["score"],
+                "operations":operations,"sent_record_count":0,"sent_node_count":0,
+                "write_strategy":"no-post-already-present","write_attempts":[],
+                "idAmbito":id_ambito,"CURSOCOD":write_course_code,
+                "context_guard":"exact-ambito-native-modal-roster-v0.7.14",
+                "mode":"ui-native-modal-coursecode-roster-v0.7.14",
+            }
+
+        replica_for_post=self.build_native_replica_context(
+            raw=raw_before,class_info=class_info,parent=parents_for_new[0],
+            criteria_context=criteria_context,supplied=replica,
+        )
+        native_keys={
+            "ID_CLASE_CONTENIDO","ID_CLASE","ID_CLASE_PERIODO","EXCLUIR","SUMATIVO","PESO",
+            "ID_CONTENIDO","DESCRIPCION","ID_PROGRAMA","ID_CONTENIDO_REF","ABREVIATURA",
+            "INCLUSIVO","ORDEN","BASE","INDICE","replicar","TRADUCCION","NIVEL_PADRE",
+            "LLAVE","COLORP","DESCP","ICONOP",
+        }
+        malformed=[{"index":idx,"missing":sorted(native_keys-set(row)),
+                    "extra":sorted(set(row)-native_keys)}
+                   for idx,row in enumerate(native_records) if set(row)!=native_keys]
+        if malformed:
+            raise SieWebError(
+                "El registro modal no coincide con defaultDataContenido; se bloqueó el POST: "+
+                json.dumps(malformed,ensure_ascii=False)
+            )
+        payload={"registros":copy.deepcopy(native_records),"idClase":int(class_id),
+                 "datosReplica":copy.deepcopy(replica_for_post)}
+        result=self._request("POST","/lms/api/HyoClaseContenido/insertar",json=payload)
+        body=(result.get("json") or {}) if isinstance(result,dict) else {}
+        provider_state=body.get("estado")
+        provider_code=body.get("codigo") or body.get("code") or body.get("error") or body.get("mensaje")
+        write_attempts=[{
+            "strategy":"ui-native-modal-new-record","estado":provider_state,"codigo":provider_code,
+            "record_count":len(native_records),"node_count":len(native_records),
+            "payload_keys":sorted(payload),"record_keys":sorted(native_keys),
+            "datosReplica":"native-object","replicar":False,
+        }]
 
         attempts=[]; final=[]
         max_attempts=max(1,min(int(verification_attempts),5))
+        # Incluso si el proveedor devuelve error, una sola relectura decide si fue
+        # un falso negativo. Nunca se realiza un segundo POST automático.
         for attempt in range(1,max_attempts+1):
-            raw_after=self.get_criteria(class_id=class_id,class_period_id=class_period_id,
-                                        root_content_id=root_content_id,id_ambito=id_ambito,
-                                        extra_params=extra_params)
-            editor_after=self.extract_criteria_editor_model(raw_after)
-            after=self.get_gradebook_summary(class_period_id=class_period_id,root_content_id=root_content_id,
-                                             extra_params=extra_params)
-            checks=[]; ok=True
-            for e in expected:
-                found_editor=[row for _,row in self._walk_criterion_tree(editor_after["rows"]) if
-                              self._raw_row_matches(row,description=str(e["description"]),
-                                                    parent_id=e.get("parent_id"),level=e.get("level",3))]
-                found_gradebook=self.find_exact_criterion(after,description=str(e["description"]),
-                                                          parent_id=e.get("parent_id"),level=e.get("level",3))
-                check={"expected":e,"editor_count":len(found_editor),"gradebook_count":len(found_gradebook)}
-                checks.append(check)
-                # La persistencia debe aparecer en AMBAS fuentes; esto elimina el
-                # "estado:1" falso que v0.7.7 todavía podía aceptar.
-                if len(found_editor)!=1 or len(found_gradebook)!=1:
-                    ok=False
-            attempts.append({"attempt":attempt,"ok":ok,"checks":checks})
-            final=checks
+            final,ok=verify_once()
+            attempts.append({"attempt":attempt,"ok":ok,"checks":final})
             if ok: break
+            if provider_state!=1: break
             if attempt<max_attempts: time.sleep(0.6*attempt)
         if not attempts[-1]["ok"]:
+            if provider_state!=1:
+                raise SieWebError(
+                    "SIEWeb rechazó el alta nativa del desempeño "
+                    f"(estado={provider_state!r}, codigo={provider_code!r}). Se realizó un solo POST, "
+                    "la relectura confirmó que no persistió y NO se escribirán notas. Diagnóstico: "+
+                    json.dumps(write_attempts,ensure_ascii=False)
+                )
             raise SieWebError(
                 "FALSO ÉXITO SIEWEB: insertar devolvió estado=1, pero el desempeño no quedó "
                 "persistido simultáneamente en el editor y el registro de notas. "
                 "Se detuvo el flujo y NO se escribirán calificaciones. Verificación: "+
                 json.dumps(final,ensure_ascii=False)
             )
+        successful_strategy="ui-native-modal-new-record"
+        if provider_state!=1:
+            successful_strategy+="-provider-false-negative"
+        payload_diagnostics={
+            "ok":True,"contract":"defaultDataContenido+paramDatosReplica",
+            "top_level_keys":sorted(payload),"record_keys":sorted(native_keys),
+            "replicar":False,
+        }
+
         return {
             "saved":True,
             "update":result,
@@ -1974,16 +2138,16 @@ class SieWebClient:
             "attempts":attempts,
             "editor_model_path":model["path"],
             "editor_model_score":model["score"],
-            "operations":merged["operations"],
+            "operations":operations,
             "payload_diagnostics":payload_diagnostics,
-            "sent_record_count":next((x["record_count"] for x in write_attempts if x["strategy"]==successful_strategy.replace("-provider-false-negative","")), len(merged["rows"])),
-            "sent_node_count":next((x["node_count"] for x in write_attempts if x["strategy"]==successful_strategy.replace("-provider-false-negative","")), sum(1 for _ in self._walk_criterion_tree(merged["rows"]))),
+            "sent_record_count":len(native_records),
+            "sent_node_count":len(native_records),
             "write_strategy":successful_strategy,
             "write_attempts":write_attempts,
             "idAmbito":id_ambito,
             "CURSOCOD":((getattr(self, "_last_criteria_context", {}) or {}).get("CURSOCOD")),
-            "context_guard":"exact-ambito-dual-coursecode-roster-v0.7.13",
-            "mode":"ui-native-dual-coursecode-replica-v0.7.13",
+            "context_guard":"exact-ambito-native-modal-roster-v0.7.14",
+            "mode":"ui-native-modal-coursecode-roster-v0.7.14",
         }
 
     # ---------- Conclusiones descriptivas ----------
@@ -2250,7 +2414,7 @@ class SieWebClient:
             "criteria": headers,
             "students": students,
             "reader_diagnostics": {
-                "mode":"recursive-gradebook-v0.7.13",
+                "mode":"recursive-gradebook-v0.7.14",
                 "header_source":header_source,
                 "header_count":len(headers),
                 "student_source":student_source,

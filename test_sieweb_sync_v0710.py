@@ -159,7 +159,8 @@ def gradebook(include_new=False):
                          "descripcion": "AREAS PERIM."})
     return {
         "class": {"idClase": 2030, "idClasePeriodo": 6305,
-                  "idContenidoPrin": 119598, "nomSalon": "S2A"},
+                  "idContenidoPrin": 119598, "nomSalon": "S2A",
+                  "idCurso": 24, "cursocod": "05", "periodo": 2},
         "criteria": criteria,
     }
 
@@ -229,12 +230,12 @@ def test_edit_marks_editoreg_instead_of_silent_noop():
     assert row["ABREVIATURA"] == "TRIANG."
 
 
-def test_empty_replica_is_serialized_as_native_empty_list():
+def test_empty_replica_is_deferred_to_native_context_builder():
     c = SieWebClient()
-    assert c.normalize_replica_for_criteria_write({}) == []
-    assert c.normalize_replica_for_criteria_write(None) == []
+    assert c.normalize_replica_for_criteria_write({}) == {}
+    assert c.normalize_replica_for_criteria_write(None) == {}
     with pytest.raises(SieWebError):
-        c.normalize_replica_for_criteria_write({"clasesNG": [2043]})
+        c.normalize_replica_for_criteria_write([{"idClase": 2043}])
 
 
 def test_verified_write_payload_matches_hierarchy_and_double_verifies(monkeypatch):
@@ -270,21 +271,23 @@ def test_verified_write_payload_matches_hierarchy_and_double_verifies(monkeypatc
         verification_attempts=1,
     )
     assert result["saved"] is True
-    assert result["mode"] == "ui-native-dual-coursecode-replica-v0.7.13"
+    assert result["mode"] == "ui-native-modal-coursecode-roster-v0.7.14"
     assert seen_ambitos == [518, 518]
+    assert set(sent) == {"registros", "idClase", "datosReplica"}
     assert sent["idClase"] == 2030
-    assert sent["datosReplica"] == []
-    assert sent["CURSOCOD"] == sent["cursocod"] == "05"
-    assert sent["idClasePeriodo"] == 6305
-    assert sent["idContenido"] == 119598
-    assert sent["idAmbito"] == 518
-    assert len(sent["registros"]) == 2  # raíz: competencia + plaza vacía, NO +1
-    new = c._find_tree_nodes(sent["registros"], description="AREAS PERIM.",
-                             parent_id=133731, level=3)
-    assert len(new) == 1
-    assert new[0][1]["flExiste"] is False
-    assert new[0][1]["ID_CONTENIDO"] is None
-    assert new[0][1]["LLAVE"] == "5-2_4-1_3-3_2-1"
+    assert sent["datosReplica"] == {
+        "periodo": 2, "idCurso": 24, "grupocod": "001", "cursocod": "05",
+        "limiteReplica": 1, "replicar": False,
+    }
+    assert len(sent["registros"]) == 1
+    new = sent["registros"][0]
+    assert new["ID_CLASE_CONTENIDO"] == new["ID_CONTENIDO"] == 0
+    assert new["ID_CLASE"] == 2030 and new["ID_CLASE_PERIODO"] == 6305
+    assert new["ID_CONTENIDO_REF"] == 133731 and new["NIVEL_PADRE"] == 2
+    assert new["INDICE"] == 2 and new["ORDEN"] == 1
+    assert new["LLAVE"] == "5-2_4-1_3-3_2-1"
+    assert new["COLORP"] == "#ffffff" and new["DESCP"] == "Desempeño"
+    assert new["ICONOP"] == "simbolo5" and new["replicar"] is False
 
 
 def test_e0006_still_blocks_without_post_verification_or_grades(monkeypatch):
