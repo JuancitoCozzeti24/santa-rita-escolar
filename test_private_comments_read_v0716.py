@@ -1,5 +1,6 @@
 import json
 import os
+import asyncio
 from pathlib import Path
 
 import pytest
@@ -17,7 +18,7 @@ import server
 ROOT = Path(__file__).parent
 
 
-def test_v0716_read_job_accepts_empty_comment_and_exposes_operation():
+def test_v0717_read_job_accepts_empty_comment_and_exposes_operation():
     queue = ClassroomBridgeQueue()
     job = queue.enqueue(
         course_id="course",
@@ -32,7 +33,7 @@ def test_v0716_read_job_accepts_empty_comment_and_exposes_operation():
     assert public["status"] == "queued"
 
 
-def test_v0716_post_job_still_rejects_empty_comment():
+def test_v0717_post_job_still_rejects_empty_comment():
     queue = ClassroomBridgeQueue()
     with pytest.raises(ValueError, match="no puede estar vacío"):
         queue.enqueue(
@@ -44,7 +45,7 @@ def test_v0716_post_job_still_rejects_empty_comment():
         )
 
 
-def test_v0716_read_result_is_preserved_on_completion():
+def test_v0717_read_result_is_preserved_on_completion():
     queue = ClassroomBridgeQueue()
     job = queue.enqueue(
         course_id="course",
@@ -64,7 +65,7 @@ def test_v0716_read_result_is_preserved_on_completion():
     assert completed.classroom_result == {}
 
 
-def test_v0716_extension_mirrors_and_read_message_are_present():
+def test_v0717_extension_mirrors_and_read_message_are_present():
     root_content = (ROOT / "content.js").read_text(encoding="utf-8")
     extension_content = (ROOT / "browser_extension" / "content.js").read_text(encoding="utf-8")
     root_bridge = (ROOT / "bridge.js").read_text(encoding="utf-8")
@@ -72,20 +73,22 @@ def test_v0716_extension_mirrors_and_read_message_are_present():
     assert root_content == extension_content
     assert root_bridge == extension_bridge
     assert "SIEROOM_READ_PRIVATE_COMMENTS" in extension_content
-    assert "dom-v0.7.16-read" in extension_content
+    assert "dom-v0.7.17-read" in extension_content
     assert 'job.operation === "read_private_comments"' in extension_bridge
+    assert "X-SieRoom-Bridge-Capabilities" in extension_bridge
+    assert "post_private_comment,read_private_comments" in extension_bridge
 
 
-def test_v0716_manifests_advertise_matching_version():
+def test_v0717_manifests_advertise_matching_version():
     root_manifest = json.loads((ROOT / "manifest.json").read_text(encoding="utf-8"))
     extension_manifest = json.loads(
         (ROOT / "browser_extension" / "manifest.json").read_text(encoding="utf-8")
     )
     assert root_manifest == extension_manifest
-    assert root_manifest["version"] == "0.7.16"
+    assert root_manifest["version"] == "0.7.17"
 
 
-def test_v0716_read_all_previews_every_submission(monkeypatch):
+def test_v0717_read_all_previews_every_submission(monkeypatch):
     monkeypatch.setattr(server, "bridge_queue", ClassroomBridgeQueue())
     monkeypatch.setattr(
         server.classroom,
@@ -104,7 +107,7 @@ def test_v0716_read_all_previews_every_submission(monkeypatch):
     assert result["preview"]["submission_ids"] == ["s1", "s2"]
 
 
-def test_v0716_read_all_queues_read_jobs_and_list_filters_them(monkeypatch):
+def test_v0717_read_all_queues_read_jobs_and_list_filters_them(monkeypatch):
     monkeypatch.setattr(server, "bridge_queue", ClassroomBridgeQueue())
     monkeypatch.setattr(
         server.classroom,
@@ -129,3 +132,119 @@ def test_v0716_read_all_queues_read_jobs_and_list_filters_them(monkeypatch):
     ))
     assert len(listed["jobs"]) == 2
     assert {job["submission_id"] for job in listed["jobs"]} == {"s1", "s2"}
+
+
+def test_v0717_old_bridge_cannot_claim_read_jobs():
+    queue = ClassroomBridgeQueue()
+    read_job = queue.enqueue(
+        course_id="course",
+        course_work_id="work",
+        submission_id="read",
+        submission_url="https://classroom.google.com/read",
+        operation="read_private_comments",
+    )
+    post_job = queue.enqueue(
+        course_id="course",
+        course_work_id="work",
+        submission_id="post",
+        submission_url="https://classroom.google.com/post",
+        comment="Retroalimentación",
+        operation="post_private_comment",
+    )
+    claimed = queue.next_job(allowed_operations={"post_private_comment"})
+    assert claimed.id == post_job.id
+    assert read_job.status == "queued"
+    assert queue.has_queued_operation("read_private_comments") is True
+
+
+class _FakeBridgeRequest:
+    def __init__(self, *, job_id="", body=None, capabilities=""):
+        self.path_params = {"job_id": job_id}
+        self._body = body or {}
+        self.headers = {
+            "x-sieroom-bridge-secret": "test-bridge-secret",
+            "x-sieroom-bridge-capabilities": capabilities,
+            "X-SieRoom-Bridge-Capabilities": capabilities,
+        }
+
+    async def json(self):
+        return self._body
+
+
+def _json_response(response):
+    return json.loads(response.body.decode("utf-8"))
+
+
+def test_v0717_next_endpoint_requires_read_capability(monkeypatch):
+    queue = ClassroomBridgeQueue()
+    queue.enqueue(
+        course_id="course",
+        course_work_id="work",
+        submission_id="submission",
+        submission_url="https://classroom.google.com/read",
+        operation="read_private_comments",
+    )
+    monkeypatch.setattr(server, "bridge_queue", queue)
+    response = asyncio.run(server.classroom_bridge_http_next(_FakeBridgeRequest()))
+    payload = _json_response(response)
+    assert payload["job"] is None
+    assert payload["read_waiting_for_compatible_bridge"] is True
+    assert queue.stats()["queued"] == 1
+
+    response = asyncio.run(server.classroom_bridge_http_next(_FakeBridgeRequest(
+        capabilities="post_private_comment,read_private_comments"
+    )))
+    payload = _json_response(response)
+    assert payload["job"]["operation"] == "read_private_comments"
+
+
+def test_v0717_rejects_false_post_result_for_read_job(monkeypatch):
+    queue = ClassroomBridgeQueue()
+    job = queue.enqueue(
+        course_id="course",
+        course_work_id="work",
+        submission_id="submission",
+        submission_url="https://classroom.google.com/read",
+        operation="read_private_comments",
+    )
+    queue.next_job(allowed_operations={"read_private_comments"})
+    monkeypatch.setattr(server, "bridge_queue", queue)
+    false_post_result = {
+        "ok": True,
+        "method": "dom-v0.8.0",
+        "comment": {"ok": True, "skipped": True},
+    }
+    response = asyncio.run(server.classroom_bridge_http_complete(_FakeBridgeRequest(
+        job_id=job.id, body=false_post_result
+    )))
+    payload = _json_response(response)
+    assert response.status_code == 409
+    assert payload["job"]["status"] == "failed"
+    assert "bridge_incompatible_read_result" in payload["job"]["error"]
+
+
+def test_v0717_accepts_structured_read_result(monkeypatch):
+    queue = ClassroomBridgeQueue()
+    job = queue.enqueue(
+        course_id="course",
+        course_work_id="work",
+        submission_id="submission",
+        submission_url="https://classroom.google.com/read",
+        operation="read_private_comments",
+    )
+    queue.next_job(allowed_operations={"read_private_comments"})
+    monkeypatch.setattr(server, "bridge_queue", queue)
+    read_result = {
+        "ok": True,
+        "operation": "read_private_comments",
+        "count": 1,
+        "comments": [{"text": "Nota cuantitativa: 14", "markers": ["nota cuantitativa"]}],
+        "method": "dom-v0.7.17-read",
+    }
+    response = asyncio.run(server.classroom_bridge_http_complete(_FakeBridgeRequest(
+        job_id=job.id, body=read_result
+    )))
+    payload = _json_response(response)
+    assert response.status_code == 200
+    assert payload["job"]["status"] == "completed"
+    assert payload["job"]["bridge_result"] == read_result
