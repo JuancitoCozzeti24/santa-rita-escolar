@@ -1,0 +1,12 @@
+SieRoom SRC 0.7.17
+
+Resultado: 55 passed
+
+Cobertura nueva:
+- una extensión sin la capacidad read_private_comments no puede reclamar trabajos de lectura;
+- los trabajos incompatibles permanecen en cola para un Bridge actualizado;
+- el servidor rechaza resultados de publicación presentados como lectura;
+- el servidor acepta y conserva únicamente resultados estructurados con operation, comments y count coherentes;
+- content.js, bridge.js y manifest.json permanecen sincronizados entre la raíz y browser_extension/;
+- py_compile y node --check finalizan correctamente;
+- las pruebas anteriores de Classroom y SIEWeb siguen pasando.
