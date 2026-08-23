@@ -32,7 +32,7 @@ class SieWebClient:
         self.session.headers.update(
             {
                 "Accept": "application/json, text/plain, */*",
-                "User-Agent": "Mozilla/5.0 SieRoom-SRC/0.7.12",
+                "User-Agent": "Mozilla/5.0 SieRoom-SRC/0.7.13",
                 "X-Requested-With": "XMLHttpRequest",
                 "Cache-Control": "no-cache",
                 "Pragma": "no-cache",
@@ -962,29 +962,25 @@ class SieWebClient:
         id_ambito: int,
         extra_params: dict[str, Any] | None = None,
     ) -> tuple[str, dict[str, Any]]:
-        """Resuelve CURSOCOD para el editor de criterios sin depender del llamador.
+        """Resuelve el código de curso para el editor de criterios.
 
-        La UI real de SIEweb envía CURSOCOD al endpoint
-        ``dataInicialPesosCriterios``. v0.7.11 omitía ese parámetro cuando el
-        preflight recibía solo IDs, lo que podía producir HTTP 500 aunque la sesión
-        y los IDs fueran correctos. Esta rutina conserva cualquier CURSOCOD
-        explícito y, si falta, lo obtiene de ``HyoClase/obtListar`` usando el
-        idAmbito exacto y el ID_CLASE destino.
+        El backend actual de SIEweb distingue el nombre del parámetro por
+        mayúsculas/minúsculas: la consulta SQL enlaza ``CG.CURSOCOD`` desde
+        ``cursocod``. v0.7.12 enviaba únicamente ``CURSOCOD`` y el proveedor
+        terminaba compilando el SELECT con un binding indefinido. Conservamos
+        ambos alias porque otros despliegues sí consumen la forma mayúscula.
         """
         extra = dict(extra_params or {})
         explicit = None
         for key in list(extra):
             if self._canon_text(key).replace(" ", "") == "cursocod":
                 value = extra.get(key)
-                if value not in (None, ""):
+                if explicit is None and value not in (None, ""):
                     explicit = str(value).strip()
-                # El endpoint observado espera la forma CURSOCOD; normalizamos la
-                # clave para no enviar simultáneamente cursocod/CURSOCOD.
-                if key != "CURSOCOD":
-                    extra.pop(key, None)
-                break
+                extra.pop(key, None)
         if explicit:
             extra["CURSOCOD"] = explicit
+            extra["cursocod"] = explicit
             self._criteria_course_cache[(int(id_ambito), int(class_id))] = explicit
             return explicit, extra
 
@@ -992,6 +988,7 @@ class SieWebClient:
         cached=self._criteria_course_cache.get(cache_key)
         if cached:
             extra["CURSOCOD"] = cached
+            extra["cursocod"] = cached
             return cached, extra
 
         classes_payload = self.list_classes(id_ambito=int(id_ambito))
@@ -1014,6 +1011,7 @@ class SieWebClient:
             )
         self._criteria_course_cache[cache_key] = course_code
         extra["CURSOCOD"] = course_code
+        extra["cursocod"] = course_code
         return course_code, extra
 
     def get_criteria(
@@ -1035,6 +1033,7 @@ class SieWebClient:
             "idContenido": root_content_id,
             "idAmbito": ambito,
             "CURSOCOD": course_code,
+            "cursocod": course_code,
         }
         params.update(normalized_extra)
         self._last_criteria_context = {
@@ -1043,6 +1042,7 @@ class SieWebClient:
             "idContenido": int(root_content_id),
             "idAmbito": int(ambito),
             "CURSOCOD": str(course_code),
+            "cursocod": str(course_code),
         }
         return self._request(
             "GET", "/lms/api/HyoClaseContenido/dataInicialPesosCriterios", params=params
@@ -1367,18 +1367,15 @@ class SieWebClient:
         return copy.deepcopy(fallback if found is None else found)
 
     @staticmethod
-    def normalize_replica_for_criteria_write(replica: Any) -> list[Any] | None:
-        """Normaliza destinos de réplica sin inventar un valor vacío.
+    def normalize_replica_for_criteria_write(replica: Any) -> list[Any]:
+        """Normaliza destinos de réplica al contrato de la UI de SIEweb.
 
-        En v0.7.10 se forzaba ``datosReplica=[]`` incluso cuando SieRoom replica
-        2.º A/2.º B mediante escrituras independientes. El contrato real de
-        ``HyoClaseContenido/insertar`` no está documentado y el editor inicial
-        expone ``objOrigenReplica`` pero no un ``datosReplica`` vacío explícito.
-        Por eso, si no hay destinos reales, v0.7.11 OMITE por completo la clave
-        ``datosReplica``. Si el llamador sí entrega destinos, deben ser una lista.
+        ``HyoClaseContenido/insertar`` espera siempre la propiedad
+        ``datosReplica``. Una escritura independiente usa la lista vacía; una
+        réplica real usa la lista de destinos recibida del editor.
         """
         if replica in (None, {}, []):
-            return None
+            return []
         if isinstance(replica, list):
             return copy.deepcopy(replica)
         raise SieWebError(
@@ -1720,11 +1717,10 @@ class SieWebClient:
                                  verification_attempts: int = 3) -> dict[str, Any]:
         """Guarda el MODELO COMPLETO del editor y exige persistencia real.
 
-        v0.7.12 conserva la protección de contexto de v0.7.11 y corrige el árbol real resCriterios: el ``idAmbito``
-        usado por el preflight debe viajar también a TODAS las lecturas que rodean el
-        POST real. Antes, el preflight podía leer 2.º B correctamente pero el guardado
-        releía silenciosamente el ámbito por defecto (518/2.º A), mezclando ``idClase``
-        de una sección con filas/replica de otra y provocando ``e0006``.
+        v0.7.13 conserva las protecciones de contexto y transmite en la lectura y
+        escritura los dos alias reales del código de curso. También mantiene
+        ``datosReplica=[]`` cuando no hay destinos, porque el controlador nativo
+        de ``insertar`` espera la propiedad aun en una escritura independiente.
         """
         try:
             id_ambito = int(id_ambito)
@@ -1815,7 +1811,35 @@ class SieWebClient:
         if not changed_rows:
             raise SieWebError("No se detectó ninguna fila nueva/editada para guardar; no se envió nada.")
 
-        # v0.7.11 usa un escritor adaptativo SOLO ante rechazo explícito e0006.
+        criteria_context = dict(getattr(self, "_last_criteria_context", {}) or {})
+        expected_context = {
+            "idClase": int(class_id),
+            "idClasePeriodo": int(class_period_id),
+            "idContenido": int(root_content_id),
+            "idAmbito": int(id_ambito),
+        }
+        stale_context = [
+            {"field": key, "expected": value, "actual": criteria_context.get(key)}
+            for key, value in expected_context.items()
+            if str(criteria_context.get(key)) != str(value)
+        ]
+        if stale_context:
+            raise SieWebError(
+                "PROTECCIÓN DE CONTEXTO SIEWEB: la lectura del editor no dejó el "
+                "contexto exacto requerido para insertar; se bloqueó el POST: "
+                + json.dumps(stale_context, ensure_ascii=False)
+            )
+        write_course_code = str(
+            criteria_context.get("cursocod") or criteria_context.get("CURSOCOD") or ""
+        ).strip()
+        if not write_course_code:
+            raise SieWebError(
+                "No se resolvió cursocod para HyoClaseContenido/insertar; "
+                "se bloqueó la escritura antes del POST."
+            )
+        replica_for_post = copy.deepcopy(actual_replica)
+
+        # El escritor adaptativo solo avanza ante rechazo explícito e0006.
         # Cada estrategia se intenta únicamente si la anterior fue rechazada Y una
         # relectura confirma que no persistió nada. Así evitamos escrituras dobles.
         strategies=[
@@ -1828,11 +1852,16 @@ class SieWebClient:
         successful_strategy=None
 
         for strategy_name, strategy_records in strategies:
-            payload={"registros":strategy_records,"idClase":class_id}
-            # Si no existen destinos reales, NO inventamos datosReplica=[]/{};
-            # el campo se omite como lo haría una petición sin réplica.
-            if actual_replica is not None:
-                payload["datosReplica"]=actual_replica
+            payload={
+                "registros":strategy_records,
+                "idClase":class_id,
+                "idClasePeriodo":class_period_id,
+                "idContenido":root_content_id,
+                "idAmbito":id_ambito,
+                "CURSOCOD":write_course_code,
+                "cursocod":write_course_code,
+                "datosReplica":copy.deepcopy(replica_for_post),
+            }
 
             current=self._request("POST","/lms/api/HyoClaseContenido/insertar",json=payload)
             body=(current.get("json") or {}) if isinstance(current,dict) else {}
@@ -1844,7 +1873,8 @@ class SieWebClient:
                 "codigo":provider_code,
                 "record_count":len(strategy_records),
                 "node_count":sum(1 for _ in self._walk_criterion_tree(strategy_records)),
-                "datosReplica":"omitted" if actual_replica is None else f"list:{len(actual_replica)}",
+                "datosReplica":f"list:{len(replica_for_post)}",
+                "course_context":"CURSOCOD+cursocod",
             }
             write_attempts.append(attempt_diag)
 
@@ -1897,7 +1927,7 @@ class SieWebClient:
         if result is None:
             sparse_keys=sorted(changed_rows[0].keys()) if changed_rows else []
             raise SieWebError(
-                "SIEweb rechazó las tres formas seguras de guardado con e0006 y la relectura "
+                "SIEweb rechazó las tres formas contextuales de guardado con e0006 y la relectura "
                 "confirmó que el desempeño no persistió. No se escribirán notas. "
                 "Esto ya no es un error de idAmbito ni de jerarquía: se aisló el contrato de "
                 "HyoClaseContenido/insertar. Intentos: "+json.dumps(write_attempts,ensure_ascii=False)+
@@ -1952,8 +1982,8 @@ class SieWebClient:
             "write_attempts":write_attempts,
             "idAmbito":id_ambito,
             "CURSOCOD":((getattr(self, "_last_criteria_context", {}) or {}).get("CURSOCOD")),
-            "context_guard":"exact-ambito-coursecode-roster-v0.7.12",
-            "mode":"ui-native-coursecode-roster-v0.7.12",
+            "context_guard":"exact-ambito-dual-coursecode-roster-v0.7.13",
+            "mode":"ui-native-dual-coursecode-replica-v0.7.13",
         }
 
     # ---------- Conclusiones descriptivas ----------
@@ -2220,7 +2250,7 @@ class SieWebClient:
             "criteria": headers,
             "students": students,
             "reader_diagnostics": {
-                "mode":"recursive-gradebook-v0.7.12",
+                "mode":"recursive-gradebook-v0.7.13",
                 "header_source":header_source,
                 "header_count":len(headers),
                 "student_source":student_source,
