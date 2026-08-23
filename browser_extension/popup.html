@@ -3,25 +3,36 @@
 <head>
 <meta charset="utf-8" />
 <style>
-  body { width: 360px; font: 14px system-ui, sans-serif; padding: 14px; }
+  body { width: 380px; font: 14px system-ui, sans-serif; padding: 14px; }
   label { display:block; margin-top:10px; font-weight:600; }
   input { width:100%; box-sizing:border-box; padding:8px; margin-top:4px; }
   button { margin-top:12px; padding:8px 10px; width:100%; }
   #msg { margin-top:10px; white-space:pre-wrap; }
   .danger { background:#b3261e; color:white; border:0; font-weight:700; }
-  small { color:#555; }
+  small { color:#555; display:block; margin-top:4px; line-height:1.35; }
 </style>
 </head>
 <body>
-  <h3>SieRoom Classroom Bridge 0.7.3</h3>
+  <h3>SieRoom Classroom Bridge 0.8.1</h3>
+
   <label>Servidor SieRoom</label>
   <input id="endpoint" value="https://santa-rita-escolar-tcpb.onrender.com" />
+
+  <label>Correo docente de Classroom</label>
+  <input id="teacherEmail" type="email" autocomplete="email"
+         placeholder="tu.correo@colegio.edu.pe" />
+  <small>
+    Es la cuenta con la que deben leerse o publicarse los comentarios. El Bridge
+    se detiene si detecta otra cuenta activa en Classroom.
+  </small>
+
   <label>CLASSROOM_BRIDGE_SECRET</label>
   <input id="secret" type="password" autocomplete="off" />
   <small>Debe ser exactamente el mismo valor guardado en Render. No es tu contraseña de Google.</small>
+
   <button id="save">Guardar y probar</button>
   <button id="start">Iniciar puente</button>
-  <button id="reset" class="danger">RESET / DESATASCAR COLA</button>
+  <button id="reset" class="danger">RESET / REINTENTAR TODO</button>
   <div id="msg"></div>
   <script src="popup.js"></script>
 </body>
