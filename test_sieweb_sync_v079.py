@@ -57,7 +57,7 @@ def test_v079_passes_exact_ambito_to_pre_and_post_verification_reads(monkeypatch
     )
     assert seen == [619,619]
     assert result["idAmbito"] == 619
-    assert result["context_guard"] == "exact-ambito-bound-tree-v0.7.10"
+    assert result["context_guard"] == "exact-ambito-ui-sparse-adaptive-v0.7.11"
 
 
 def test_v079_blocks_editor_rows_from_another_section_before_post(monkeypatch):

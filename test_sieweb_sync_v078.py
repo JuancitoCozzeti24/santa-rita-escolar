@@ -37,12 +37,14 @@ def test_new_performance_is_inserted_into_full_model_and_preserves_sibling_schem
         [{"description":"Áreas y perímetros","parent_id":10,"level":3}],
     )
     assert len(merged["rows"]) == 4
-    created=[x for x in merged["rows"] if isinstance(x,dict) and x.get("descripcion")=="Áreas y perímetros"][0]
-    assert created["id"] is None
-    assert created["idClaseContenido"] is None
-    assert created["idpadre"] == 10
-    assert created["nivelEva"] == 3
-    assert created["campoInterno"] == "SE-CONSERVA"
+    created=[x for x in merged["rows"] if isinstance(x,dict)
+             and c._raw_row_matches(x,description="Áreas y perímetros",parent_id=10,level=3)][0]
+    assert created["ID_CONTENIDO"] is None
+    assert created["ID_CLASE_CONTENIDO"] is None
+    assert created["ID_CONTENIDO_REF"] == 10
+    assert c._criterion_level(created) == 3
+    assert created["flExiste"] is False and created["EDITOREG"] == 1
+    assert "campoInterno" not in created and "activo" not in created
     # Las demás filas originales permanecen intactas.
     assert merged["rows"][0] == model["rows"][0]
 
@@ -88,9 +90,9 @@ def test_verified_save_sends_full_model_and_requires_editor_and_gradebook(monkey
         verification_attempts=1,
     )
     assert result["saved"] is True
-    assert result["mode"] == "hierarchical-rescriterios-v0.7.10"
+    assert result["mode"] == "ui-native-sparse-adaptive-v0.7.11"
     assert len(sent["registros"]) == 4
-    assert sent["datosReplica"] == []
+    assert "datosReplica" not in sent
 
 
 def test_false_estado_1_is_rejected_if_gradebook_does_not_persist(monkeypatch):

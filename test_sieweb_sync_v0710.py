@@ -197,7 +197,10 @@ def test_new_performance_is_child_of_modela_not_root_and_uses_unsaved_markers():
     assert row["ID_CLASE_CONTENIDO"] is None
     assert row["ID_CONTENIDO"] is None
     assert row["ID_CONTENIDO_REF"] == 133731
-    assert row["NIVEL"] == 3
+    assert "NIVEL" not in row
+    assert c._criterion_level(row) == 3
+    for forbidden in ("ID_CLASE","ID_CURSO","GRUPOCOD","ID_CLASE_PERIODO","TIPO_EVA","FL_CONCLUSION","ORDEN_PROG"):
+        assert forbidden not in row
     assert row["INDICE"] == 2 and row["INDICE_ORIGI"] == 2 and row["ORDEN"] == 2
     assert row["LLAVE"] == "5-2_4-1_3-3_2-1"
     assert row["flExiste"] is False
@@ -226,10 +229,10 @@ def test_edit_marks_editoreg_instead_of_silent_noop():
     assert row["ABREVIATURA"] == "TRIANG."
 
 
-def test_empty_replica_is_sent_as_list_not_object():
+def test_empty_replica_is_omitted_instead_of_invented():
     c = SieWebClient()
-    assert c.normalize_replica_for_criteria_write({}) == []
-    assert c.normalize_replica_for_criteria_write(None) == []
+    assert c.normalize_replica_for_criteria_write({}) is None
+    assert c.normalize_replica_for_criteria_write(None) is None
     with pytest.raises(SieWebError):
         c.normalize_replica_for_criteria_write({"clasesNG": [2043]})
 
@@ -263,10 +266,10 @@ def test_verified_write_payload_matches_hierarchy_and_double_verifies(monkeypatc
         verification_attempts=1,
     )
     assert result["saved"] is True
-    assert result["mode"] == "hierarchical-rescriterios-v0.7.10"
+    assert result["mode"] == "ui-native-sparse-adaptive-v0.7.11"
     assert seen_ambitos == [518, 518]
     assert sent["idClase"] == 2030
-    assert sent["datosReplica"] == []
+    assert "datosReplica" not in sent
     assert len(sent["registros"]) == 2  # raíz: competencia + plaza vacía, NO +1
     new = c._find_tree_nodes(sent["registros"], description="AREAS PERIM.",
                              parent_id=133731, level=3)

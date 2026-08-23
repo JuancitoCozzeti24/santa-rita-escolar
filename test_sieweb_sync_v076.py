@@ -24,7 +24,10 @@ def test_new_performance_record_clones_destination_sibling(monkeypatch):
     raw={"json":{"rows":[{"id":99,"idClaseContenido":88,"idpadre":22,"nivelEva":3,"descripcion":"Anterior","peso":100,"activo":True}]}}
     monkeypatch.setattr(c,"get_criteria",lambda **kwargs: raw)
     rec=c.build_new_performance_record(class_id=1,class_period_id=2,root_content_id=3,parent_id=22,description="Áreas y perímetros",level=3)
-    assert rec["descripcion"] == "Áreas y perímetros"
-    assert rec["idpadre"] == 22 and rec["nivelEva"] == 3
-    assert rec["peso"] == 100 and rec["activo"] is True
-    assert rec["id"] is None and rec["idClaseContenido"] is None
+    assert rec["DESCRIPCION"] == "Áreas y perímetros"
+    assert rec["ID_CONTENIDO_REF"] == 22
+    assert c._criterion_level(rec) == 3
+    assert rec["ID_CONTENIDO"] is None and rec["ID_CLASE_CONTENIDO"] is None
+    assert rec["flExiste"] is False and rec["EDITOREG"] == 1
+    assert "ID_CLASE" not in rec and "ID_CLASE_PERIODO" not in rec
+    assert "activo" not in rec

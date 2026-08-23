@@ -32,7 +32,7 @@ class SieWebClient:
         self.session.headers.update(
             {
                 "Accept": "application/json, text/plain, */*",
-                "User-Agent": "Mozilla/5.0 SieRoom-SRC/0.7.10",
+                "User-Agent": "Mozilla/5.0 SieRoom-SRC/0.7.11",
                 "X-Requested-With": "XMLHttpRequest",
                 "Cache-Control": "no-cache",
                 "Pragma": "no-cache",
@@ -1060,10 +1060,20 @@ class SieWebClient:
         return None
 
     def _criterion_level(self, row: dict[str, Any]) -> Any:
-        # El editor usa NIVEL=1/2/3 para Competencia/Capacidad/Desempeño.
+        # Filas persistidas exponen NIVEL=1/2/3 para
+        # Competencia/Capacidad/Desempeño. Las filas NUEVAS que construye la UI
+        # real son más espartanas y pueden omitir NIVEL; en ese caso se infiere
+        # desde ID_PROGRAMA (3->1, 4->2, 5->3, 6->4).
         for key in ("nivelEva", "nivel", "NIVEL", "NIVEL_EVA", "nivelEvaluacion"):
-            if key in row:
+            if key in row and row.get(key) not in (None, ""):
                 return row.get(key)
+        prog = row.get("ID_PROGRAMA", row.get("idPrograma"))
+        try:
+            prog_int = int(prog)
+        except (TypeError, ValueError):
+            return None
+        if 3 <= prog_int <= 6:
+            return prog_int - 2
         return None
 
     @staticmethod
@@ -1152,7 +1162,7 @@ class SieWebClient:
                                      level: int = 3, id_ambito: int | None = None,
                                      extra_params: dict[str, Any] | None = None,
                                      preferred_template: dict[str, Any] | None = None) -> dict[str, Any]:
-        """Construye una fila nueva con las mismas reglas del guardado jerárquico v0.7.10."""
+        """Construye una fila nueva con las mismas reglas del guardado jerárquico v0.7.11."""
         raw=self.get_criteria(class_id=class_id,class_period_id=class_period_id,
                               root_content_id=root_content_id,id_ambito=id_ambito,
                               extra_params=extra_params)
@@ -1282,20 +1292,23 @@ class SieWebClient:
         return copy.deepcopy(fallback if found is None else found)
 
     @staticmethod
-    def normalize_replica_for_criteria_write(replica: Any) -> list[Any]:
-        """Normaliza datosReplica al contrato seguro observado: una lista de destinos.
+    def normalize_replica_for_criteria_write(replica: Any) -> list[Any] | None:
+        """Normaliza destinos de réplica sin inventar un valor vacío.
 
-        Este complemento replica 2.º A/2.º B haciendo una escritura independiente por
-        sección, por lo que la ausencia de réplica se envía como ``[]``. Un dict vacío
-        ({}) era otro desajuste de tipo presente hasta v0.7.9 y podía contribuir a e0006.
+        En v0.7.10 se forzaba ``datosReplica=[]`` incluso cuando SieRoom replica
+        2.º A/2.º B mediante escrituras independientes. El contrato real de
+        ``HyoClaseContenido/insertar`` no está documentado y el editor inicial
+        expone ``objOrigenReplica`` pero no un ``datosReplica`` vacío explícito.
+        Por eso, si no hay destinos reales, v0.7.11 OMITE por completo la clave
+        ``datosReplica``. Si el llamador sí entrega destinos, deben ser una lista.
         """
         if replica in (None, {}, []):
-            return []
+            return None
         if isinstance(replica, list):
             return copy.deepcopy(replica)
         raise SieWebError(
-            "datosReplica debe ser una lista. La réplica entre secciones se realiza de forma "
-            "independiente para no reutilizar IDs internos; no se envió nada."
+            "datosReplica debe ser una lista de destinos reales o estar vacío. "
+            "La réplica entre secciones se realiza de forma independiente; no se envió nada."
         )
 
     @staticmethod
@@ -1323,75 +1336,86 @@ class SieWebClient:
     def _set_new_row_semantics(self, newrow: dict[str, Any], *, parent: dict[str, Any],
                                description: str, level: int, index: int,
                                requested: dict[str, Any]) -> dict[str, Any]:
-        """Convierte un desempeño persistido clonado en una fila NUEVA como la UI real.
+        """Construye una fila NUEVA con la forma espartana que genera la UI real.
 
-        El editor distingue altas mediante IDs nulos + flExiste=false, EDITOREG=1 y una LLAVE/INDICE
-        nuevos. Reutilizar IDs=0, flExiste=true, EDITOREG=0 o la LLAVE del hermano puede provocar e0006/no-op.
+        v0.7.10 clonaba un desempeño persistido y solo anulaba sus IDs. La captura
+        real de ``dataInicialPesosCriterios`` muestra otra cosa: las plazas nuevas
+        ``flExiste=false`` NO incluyen campos de identidad/contexto del servidor
+        (ID_CLASE, ID_CURSO, GRUPOCOD, ID_CLASE_PERIODO, NIVEL, TIPO_EVA,
+        FL_CONCLUSION, ORDEN_PROG, etc.). Esos campos aparecen recién cuando el
+        backend persiste la fila.
+
+        Por ello v0.7.11 construye una fila *sparse/UI-native* desde cero y usa el
+        hermano solo para recuperar metadatos visuales/de programa.
         """
-        out=copy.deepcopy(newrow)
-        # Las filas nuevas observadas en resCriterios usan null, no 0.
-        for key in ("id","ID","idClaseContenido","ID_CLASE_CONTENIDO",
-                    "idContenido","ID_CONTENIDO","idCriterio","ID_CRITERIO"):
-            if key in out:
-                out[key]=None
-        # Padre real del desempeño = ID_CONTENIDO de la capacidad.
-        self._set_existing_alias(out,("ID_CONTENIDO_REF","idContenidoRef","id_contenido_ref",
-                                      "idpadre","idPadre","ID_PADRE","idContenidoPadre",
-                                      "idClaseContenidoPadre"),self._criterion_content_id(parent),"ID_CONTENIDO_REF")
-        self._set_existing_alias(out,("DESCRIPCION","descripcion","desc","descComp","DESC","nombre","nom"),description,"DESCRIPCION")
-        self._set_existing_alias(out,("NIVEL","nivelEva","nivel","NIVEL_EVA","nivelEvaluacion"),level,"NIVEL")
+        schema = copy.deepcopy(newrow or {})
+        program_id = schema.get("ID_PROGRAMA") or schema.get("idPrograma") or 5
+        parent_id = self._criterion_content_id(parent)
+        parent_key = str(parent.get("LLAVE") or parent.get("llave") or "").strip()
 
-        for key in ("INDICE","indice"):
-            if key in out: out[key]=index
-        if "INDICE" not in out and "indice" not in out: out["INDICE"]=index
-        for key in ("INDICE_ORIGI","indiceOrigi","indice_origi"):
-            if key in out: out[key]=index
-        if "INDICE_ORIGI" not in out: out["INDICE_ORIGI"]=index
-        for key in ("ORDEN","orden"):
-            if key in out: out[key]=index
-        if "ORDEN" not in out and "orden" not in out: out["ORDEN"]=index
+        # La UI observada crea plazas vacías con este conjunto compacto de claves.
+        out: dict[str, Any] = {
+            "ABREVIATURA": None,
+            "ABREV_ORIGI": None,
+            "COLOR": schema.get("COLOR") or "#ffffff",
+            "DESCPROGRAMA": schema.get("DESCPROGRAMA") or "Desempeño",
+            "DESCRIPCION": description,
+            "EDITOREG": 1,
+            "EXCLUIR": schema.get("EXCLUIR", 0) if schema.get("EXCLUIR") not in (None, "") else 0,
+            "ICONO": schema.get("ICONO") or "simbolo5",
+            "ID_CLASE_CONTENIDO": None,
+            "ID_CONTENIDO": None,
+            "ID_CONTENIDO_REF": parent_id,
+            "ID_PROGRAMA": int(program_id) if str(program_id).isdigit() else program_id,
+            "INCLUSIVO": schema.get("INCLUSIVO", 0) if schema.get("INCLUSIVO") not in (None, "") else 0,
+            "INDICE": index,
+            "INDICE_ORIGI": index,
+            "ORDEN": index,
+            "ORIGI": "",
+            # Una fila vacía llega con PESO=""; al editar un desempeño la UI termina
+            # guardando el peso efectivo. Si el llamador no indica uno, heredamos el
+            # peso real del hermano (normalmente 1) en lugar de copiar su identidad.
+            "PESO": schema.get("PESO", 1) if schema.get("PESO") not in (None, "") else 1,
+            "PESO_ORIGI": "",
+            "SUMATIVO": schema.get("SUMATIVO", 0) if schema.get("SUMATIVO") not in (None, "") else 0,
+            "EXCLUIR_PORCENTAJE": (
+                schema.get("EXCLUIR_PORCENTAJE", 0)
+                if schema.get("EXCLUIR_PORCENTAJE") not in (None, "") else 0
+            ),
+            "TRADUCCION": None,
+            "TRAD_ORIGI": None,
+            "LLAVE": f"{program_id}-{index}_{parent_key}" if parent_key else f"{program_id}-{index}",
+            "flExiste": False,
+            "bloquearCriterio": False,
+            "children": [],
+        }
 
-        program_id=out.get("ID_PROGRAMA") or out.get("idPrograma") or 5
-        parent_key=str(parent.get("LLAVE") or parent.get("llave") or "").strip()
-        if parent_key:
-            if "LLAVE" in out or "llave" not in out:
-                out["LLAVE"]=f"{program_id}-{index}_{parent_key}"
-            else:
-                out["llave"]=f"{program_id}-{index}_{parent_key}"
+        # Alias pedagógicos permitidos. No se aceptan identidades ni campos de
+        # contexto que la plaza nueva real todavía no posee.
+        for key, value in requested.items():
+            canon = self._canon_text(key).replace(" ", "")
+            if canon in {"abreviatura", "abrev", "abrevcomp"}:
+                out["ABREVIATURA"] = copy.deepcopy(value)
+            elif canon in {"peso"} and value not in (None, ""):
+                out["PESO"] = copy.deepcopy(value)
+            elif canon in {"inclusivo"} and value not in (None, ""):
+                out["INCLUSIVO"] = copy.deepcopy(value)
+            elif canon in {"sumativo"} and value not in (None, ""):
+                out["SUMATIVO"] = copy.deepcopy(value)
+            elif canon in {"excluir"} and value not in (None, ""):
+                out["EXCLUIR"] = copy.deepcopy(value)
+            elif canon in {"excluirporcentaje"} and value not in (None, ""):
+                out["EXCLUIR_PORCENTAJE"] = copy.deepcopy(value)
+            elif canon in {"traduccion"}:
+                out["TRADUCCION"] = copy.deepcopy(value)
 
-        # Marcadores que usa el editor para distinguir alta de fila ya persistida.
-        if "flExiste" in out or "FLEXISTE" not in out:
-            out["flExiste"]=False
-        else:
-            out["FLEXISTE"]=False
-        # La fila nueva ya contiene cambios (descripción/peso). flExiste=false decide INSERT;
-        # EDITOREG=1 indica al guardado por lotes que debe procesarla. Las plazas vacías
-        # sin tocar llegan con EDITOREG=0 y el backend las ignora.
-        if "EDITOREG" in out:
-            out["EDITOREG"]=1
-        elif "editoreg" in out:
-            out["editoreg"]=1
-        else:
-            out["EDITOREG"]=1
-        if "ORIGI" in out: out["ORIGI"]=""
-        if "PESO_ORIGI" in out: out["PESO_ORIGI"]=""
-        if "ABREV_ORIGI" in out: out["ABREV_ORIGI"]=None
-        if "TRAD_ORIGI" in out: out["TRAD_ORIGI"]=None
-        out["children"]=[]
-
-        # Campos pedagógicos opcionales solicitados por el llamador. Se aceptan alias
-        # reales, pero nunca identidades ni marcadores internos de persistencia.
-        forbidden={"id","ID","idClaseContenido","ID_CLASE_CONTENIDO","idContenido","ID_CONTENIDO",
-                   "idCriterio","ID_CRITERIO","LLAVE","llave","flExiste","FLEXISTE","EDITOREG",
-                   "INDICE","INDICE_ORIGI","ORDEN","idpadre","idPadre","ID_PADRE","ID_CONTENIDO_REF",
-                   "nivelEva","nivel","NIVEL","NIVEL_EVA"}
-        for key,value in requested.items():
-            if key in forbidden:
-                continue
-            if key in out:
-                out[key]=copy.deepcopy(value)
-            elif self._canon_text(key) in {"abreviatura","abrev"}:
-                self._set_existing_alias(out,("ABREVIATURA","abreviatura"),value,"ABREVIATURA")
+        # El nivel NO se serializa en una fila nueva UI-native. Se valida/infiere
+        # internamente por ID_PROGRAMA (5 => desempeño/nivel 3).
+        inferred = self._criterion_level(out)
+        if str(inferred) != str(level):
+            raise SieWebError(
+                f"El programa de la fila nueva infiere nivel {inferred}, no {level}; no se envió nada."
+            )
         return out
 
     def merge_requested_criteria_into_editor_rows(self, rows: list[Any],
@@ -1571,6 +1595,27 @@ class SieWebClient:
                                        "ID_CONTENIDO":cid,"ID_CLASE_CONTENIDO":ccid})
                     if str(edit) != "1":
                         errors.append({**node,"reason":"new_node_not_marked_edited"})
+                    # La captura real de las plazas flExiste=false demuestra que
+                    # estos campos pertenecen a filas YA persistidas. Si aparecen
+                    # en una alta, estamos volviendo al clone-payload de v0.7.10.
+                    persisted_only={
+                        "ID_CLASE","idClase","ID_CURSO","idCurso","GRUPOCOD",
+                        "ID_CLASE_PERIODO","idClasePeriodo","NIVEL","nivel",
+                        "nivelEva","TIPO_EVA","FL_CONCLUSION","ORDEN_PROG",
+                    }
+                    leaked=sorted(k for k in persisted_only if k in row)
+                    if leaked:
+                        errors.append({**node,"reason":"new_node_leaks_persisted_server_fields",
+                                       "keys":leaked})
+                    required_new={
+                        "ID_CLASE_CONTENIDO","ID_CONTENIDO","ID_CONTENIDO_REF",
+                        "ID_PROGRAMA","DESCRIPCION","INDICE","INDICE_ORIGI",
+                        "ORDEN","LLAVE","flExiste","EDITOREG",
+                    }
+                    missing=sorted(k for k in required_new if k not in row)
+                    if missing:
+                        errors.append({**node,"reason":"new_node_missing_ui_fields",
+                                       "keys":missing})
                 elif exists is True and str(edit) == "1":
                     edited_nodes.append({"path":list(pth),"description":desc,"level":level,
                                          "ID_CONTENIDO":cid,"ID_CLASE_CONTENIDO":ccid})
@@ -1600,7 +1645,7 @@ class SieWebClient:
                                  verification_attempts: int = 3) -> dict[str, Any]:
         """Guarda el MODELO COMPLETO del editor y exige persistencia real.
 
-        v0.7.10 conserva la protección de contexto de v0.7.9 y corrige el árbol real resCriterios: el ``idAmbito``
+        v0.7.11 conserva la protección de contexto de v0.7.9 y corrige el árbol real resCriterios: el ``idAmbito``
         usado por el preflight debe viajar también a TODAS las lecturas que rodean el
         POST real. Antes, el preflight podía leer 2.º B correctamente pero el guardado
         releía silenciosamente el ámbito por defecto (518/2.º A), mezclando ``idClase``
@@ -1674,25 +1719,114 @@ class SieWebClient:
                 "de resCriterios; se bloqueó el POST: "+
                 json.dumps(payload_diagnostics["errors"],ensure_ascii=False)
             )
-        payload={"registros":merged["rows"],"idClase":class_id,"datosReplica":actual_replica}
+        def _is_changed_node(row: dict[str, Any]) -> bool:
+            exists = row.get("flExiste") if "flExiste" in row else row.get("FLEXISTE")
+            edit = row.get("EDITOREG") if "EDITOREG" in row else row.get("editoreg")
+            desc = self._criterion_description(row)
+            return bool(desc) and (exists is False or str(edit) == "1")
 
-        # Guardado único. No hacemos reintentos de escritura a ciegas: un timeout o
-        # error ambiguo se verifica primero para evitar duplicados.
-        result=self._request("POST","/lms/api/HyoClaseContenido/insertar",json=payload)
-        body=(result.get("json") or {}) if isinstance(result,dict) else {}
-        provider_state=body.get("estado")
-        provider_code=body.get("codigo") or body.get("code") or body.get("error") or body.get("mensaje")
-        if provider_state != 1:
+        def _root_has_change(row: dict[str, Any]) -> bool:
+            if _is_changed_node(row):
+                return True
+            for child in row.get("children") or []:
+                if isinstance(child, dict) and _root_has_change(child):
+                    return True
+            return False
+
+        changed_roots=[copy.deepcopy(r) for r in merged["rows"]
+                       if isinstance(r,dict) and _root_has_change(r)]
+        changed_rows=[copy.deepcopy(r) for _,r in self._walk_criterion_tree(merged["rows"])
+                      if _is_changed_node(r)]
+        if not changed_rows:
+            raise SieWebError("No se detectó ninguna fila nueva/editada para guardar; no se envió nada.")
+
+        # v0.7.11 usa un escritor adaptativo SOLO ante rechazo explícito e0006.
+        # Cada estrategia se intenta únicamente si la anterior fue rechazada Y una
+        # relectura confirma que no persistió nada. Así evitamos escrituras dobles.
+        strategies=[
+            ("ui-sparse-full-tree", copy.deepcopy(merged["rows"])),
+            ("ui-sparse-changed-root", changed_roots),
+            ("ui-sparse-changed-records", changed_rows),
+        ]
+        write_attempts=[]
+        result=None
+        successful_strategy=None
+
+        for strategy_name, strategy_records in strategies:
+            payload={"registros":strategy_records,"idClase":class_id}
+            # Si no existen destinos reales, NO inventamos datosReplica=[]/{};
+            # el campo se omite como lo haría una petición sin réplica.
+            if actual_replica is not None:
+                payload["datosReplica"]=actual_replica
+
+            current=self._request("POST","/lms/api/HyoClaseContenido/insertar",json=payload)
+            body=(current.get("json") or {}) if isinstance(current,dict) else {}
+            provider_state=body.get("estado")
+            provider_code=body.get("codigo") or body.get("code") or body.get("error") or body.get("mensaje")
+            attempt_diag={
+                "strategy":strategy_name,
+                "estado":provider_state,
+                "codigo":provider_code,
+                "record_count":len(strategy_records),
+                "node_count":sum(1 for _ in self._walk_criterion_tree(strategy_records)),
+                "datosReplica":"omitted" if actual_replica is None else f"list:{len(actual_replica)}",
+            }
+            write_attempts.append(attempt_diag)
+
+            if provider_state == 1:
+                result=current
+                successful_strategy=strategy_name
+                break
+
+            # Solo un rechazo explícito e0006/estado=0 habilita el fallback.
+            # Antes de volver a escribir se relee el servidor para descartar que,
+            # pese al estado, la fila haya sido persistida.
+            code_text=self._canon_text(provider_code).replace(" ","")
+            explicit_reject=(provider_state == 0 and (not code_text or "e0006" in code_text))
+            if not explicit_reject:
+                raise SieWebError(
+                    "SIEweb rechazó el guardado de criterios y no es seguro probar otra forma "
+                    f"(estado={provider_state!r}, codigo={provider_code!r}). No se escribirán notas. "
+                    "Intentos: "+json.dumps(write_attempts,ensure_ascii=False)
+                )
+
+            raw_probe=self.get_criteria(
+                class_id=class_id,class_period_id=class_period_id,
+                root_content_id=root_content_id,id_ambito=id_ambito,
+                extra_params=extra_params
+            )
+            probe_model=self.extract_criteria_editor_model(raw_probe)
+            probe_persisted=[]
+            for exp in expected:
+                found=[
+                    row for _,row in self._walk_criterion_tree(probe_model["rows"])
+                    if self._raw_row_matches(
+                        row,description=str(exp["description"]),
+                        parent_id=exp.get("parent_id"),level=exp.get("level",3)
+                    )
+                    and (
+                        row.get("flExiste") is True
+                        or self._criterion_content_id(row) not in (None,"",0,"0")
+                        or self._criterion_class_content_id(row) not in (None,"",0,"0")
+                    )
+                ]
+                probe_persisted.append({"expected":exp,"count":len(found)})
+            if all(x["count"] == 1 for x in probe_persisted):
+                # El proveedor reportó rechazo pero la relectura dice que persistió.
+                # No se intenta ninguna segunda escritura; pasamos a la verificación
+                # fuerte editor+registro de notas.
+                result=current
+                successful_strategy=strategy_name+"-provider-false-negative"
+                break
+
+        if result is None:
+            sparse_keys=sorted(changed_rows[0].keys()) if changed_rows else []
             raise SieWebError(
-                "SIEweb rechazó el guardado de criterios "
-                f"(estado={provider_state!r}, codigo={provider_code!r}). No se escribirán notas. "
-                "Diagnóstico del payload: "+json.dumps({
-                    "root_count":payload_diagnostics["root_count"],
-                    "node_count":payload_diagnostics["node_count"],
-                    "new_nodes":payload_diagnostics["new_nodes"],
-                    "edited_nodes":payload_diagnostics["edited_nodes"],
-                    "datosReplicaType":type(actual_replica).__name__,
-                },ensure_ascii=False)
+                "SIEweb rechazó las tres formas seguras de guardado con e0006 y la relectura "
+                "confirmó que el desempeño no persistió. No se escribirán notas. "
+                "Esto ya no es un error de idAmbito ni de jerarquía: se aisló el contrato de "
+                "HyoClaseContenido/insertar. Intentos: "+json.dumps(write_attempts,ensure_ascii=False)+
+                ". Claves de la fila UI-native: "+json.dumps(sparse_keys,ensure_ascii=False)
             )
 
         attempts=[]; final=[]
@@ -1737,11 +1871,13 @@ class SieWebClient:
             "editor_model_score":model["score"],
             "operations":merged["operations"],
             "payload_diagnostics":payload_diagnostics,
-            "sent_record_count":len(merged["rows"]),
-            "sent_node_count":sum(1 for _ in self._walk_criterion_tree(merged["rows"])),
+            "sent_record_count":next((x["record_count"] for x in write_attempts if x["strategy"]==successful_strategy.replace("-provider-false-negative","")), len(merged["rows"])),
+            "sent_node_count":next((x["node_count"] for x in write_attempts if x["strategy"]==successful_strategy.replace("-provider-false-negative","")), sum(1 for _ in self._walk_criterion_tree(merged["rows"]))),
+            "write_strategy":successful_strategy,
+            "write_attempts":write_attempts,
             "idAmbito":id_ambito,
-            "context_guard":"exact-ambito-bound-tree-v0.7.10",
-            "mode":"hierarchical-rescriterios-v0.7.10",
+            "context_guard":"exact-ambito-ui-sparse-adaptive-v0.7.11",
+            "mode":"ui-native-sparse-adaptive-v0.7.11",
         }
 
     # ---------- Conclusiones descriptivas ----------

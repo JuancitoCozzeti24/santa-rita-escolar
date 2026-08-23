@@ -1,25 +1,24 @@
-# SieRoom SRC 0.7.10
+# SieRoom SRC 0.7.11
 
-## SIEweb — corrección estructural real de desempeños (`e0006`)
+## SIEweb — corrección del `e0006` con fila UI-native
 
-La v0.7.10 parte de la respuesta real de `dataInicialPesosCriterios` observada en SIEweb. El modelo no es una lista plana: `resCriterios` es un árbol **Competencia → Capacidad → Desempeño**.
+La v0.7.11 corrige un desajuste que todavía permanecía en v0.7.10: el desempeño nuevo se construía clonando una fila ya persistida. La respuesta real de `dataInicialPesosCriterios` muestra que una fila nueva (`flExiste=false`) tiene un esquema más pequeño y no debe llevar varios campos que el servidor agrega recién después de guardar.
 
-Correcciones principales:
+Cambios principales:
 
-- reconoce `ID_CONTENIDO_REF` como padre jerárquico real y `NIVEL` como nivel real del editor;
-- localiza la capacidad por su `ID_CONTENIDO` y añade el desempeño dentro de `parent.children`, nunca en la raíz;
-- un desempeño nuevo usa `ID_CLASE_CONTENIDO=null`, `ID_CONTENIDO=null`, `flExiste=false` y `EDITOREG=1`;
-- genera `INDICE`, `INDICE_ORIGI`, `ORDEN` y `LLAVE` nuevos según la posición real del hijo (por ejemplo `5-2_4-1_3-3_2-1`);
-- limpia los valores `ORIGI`, `ABREV_ORIGI`, `TRAD_ORIGI` y `PESO_ORIGI` propios de una fila todavía no persistida;
-- una edición existente conserva IDs/LLAVE y se marca `EDITOREG=1`, evitando el `estado:1` sin modificación que se observó antes;
-- cuando no se usa la réplica interna de SIEweb, `datosReplica` se envía como lista vacía `[]`, no como objeto `{}`;
-- la réplica 2.º A ↔ 2.º B sigue realizándose como escrituras independientes, resolviendo los IDs de cada sección;
-- `estado=0/e0006` sigue bloqueando todo el flujo y **Nivel de Logro continúa protegido**;
-- un `estado=1` solo se acepta si el desempeño aparece después tanto en el editor como en el Registro de Notas.
+- construye el desempeño nuevo con una **fila sparse/UI-native** desde cero;
+- no serializa en una alta `ID_CLASE`, `ID_CURSO`, `GRUPOCOD`, `ID_CLASE_PERIODO`, `NIVEL`, `TIPO_EVA`, `FL_CONCLUSION` ni `ORDEN_PROG`;
+- conserva `ID_CONTENIDO_REF` como padre real, `ID_PROGRAMA=5`, LLAVE/INDICE/ORDEN nuevos, `flExiste=false` y `EDITOREG=1`;
+- si no hay réplica interna, **omite** `datosReplica` en vez de inventar `[]` o `{}`;
+- ante `estado=0/e0006` explícito, relee SIEweb para confirmar que no se guardó nada y recién entonces prueba, de forma controlada, tres scopes de payload: árbol completo, raíz modificada y fila modificada;
+- no reintenta ante errores ambiguos distintos de e0006;
+- `estado=1` sigue requiriendo verificación doble en editor + Registro de Notas;
+- la réplica 2.º A ↔ 2.º B continúa resolviendo cada sección por separado;
+- **Nivel de Logro permanece protegido** y no se escriben notas hasta confirmar el desempeño.
 
-La suite v0.7.10 incluye una réplica mínima del esquema real `resCriterios` y prueba específicamente el alta de **AREAS PERIM.** debajo de **Modela**.
+La suite v0.7.11 pasa **32/32 pruebas**, incluida una prueba de fallback adaptativo e0006 y una validación adicional contra una captura real de `resCriterios`.
 
-Consulta `SIEWEB_SYNC_V0.7.10.md` para el detalle técnico.
+Consulta `SIEWEB_SYNC_V0.7.11.md` y `TEST_REPORT_V0.7.11.txt`.
 
 ---
 
