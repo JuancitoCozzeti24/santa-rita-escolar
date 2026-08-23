@@ -1,4 +1,21 @@
-# SieRoom SRC 0.7.12
+# SieRoom SRC 0.7.13
+
+## SIEweb — corrección del binding `cursocod` y del contrato de guardado
+
+La v0.7.13 corrige el `e0006` persistente observado con la versión desplegada 0.7.12:
+
+- `dataInicialPesosCriterios` envía simultáneamente `CURSOCOD` y `cursocod`. El backend real enlaza `CG.CURSOCOD` desde el nombre minúsculo y devolvía HTTP 500 cuando solo recibía el alias mayúsculo.
+- `HyoClaseContenido/insertar` recibe el contexto completo de la edición: `idClase`, `idClasePeriodo`, `idContenido`, `idAmbito`, `CURSOCOD` y `cursocod`.
+- `datosReplica` vuelve a viajar siempre como lista; una escritura independiente envía `[]` y una réplica conserva sus destinos reales.
+- antes del POST se comprueba que el contexto guardado por la lectura corresponde exactamente a la clase, período, contenido y ámbito solicitados.
+- se conservan las tres estrategias controladas frente a `e0006`, con relectura entre intentos para impedir duplicados.
+- las notas siguen bloqueadas hasta que el desempeño aparezca exactamente una vez en el editor y en el Registro de Notas; **Nivel de Logro no se modifica**.
+
+Consulta `SIEWEB_SYNC_V0.7.13.md` y `TEST_REPORT_V0.7.13.txt`.
+
+---
+
+# Historial — SieRoom SRC 0.7.12
 
 ## SIEweb — CURSOCOD obligatorio + lector de alumnos corregido
 
