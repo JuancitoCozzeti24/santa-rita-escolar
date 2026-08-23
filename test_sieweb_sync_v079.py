@@ -45,6 +45,10 @@ def test_v079_passes_exact_ambito_to_pre_and_post_verification_reads(monkeypatch
     summaries=iter([summary_for_class(),summary_for_class(include_new=True)])
     def fake_get_criteria(**kwargs):
         seen.append(kwargs.get("id_ambito"))
+        c._last_criteria_context = {
+            "idClase": 222, "idClasePeriodo": 7002, "idContenido": 9002,
+            "idAmbito": 619, "CURSOCOD": "05", "cursocod": "05",
+        }
         return next(raw_iter)
     monkeypatch.setattr(c,"get_criteria",fake_get_criteria)
     monkeypatch.setattr(c,"get_gradebook_summary",lambda **kwargs: next(summaries))
@@ -57,7 +61,7 @@ def test_v079_passes_exact_ambito_to_pre_and_post_verification_reads(monkeypatch
     )
     assert seen == [619,619]
     assert result["idAmbito"] == 619
-    assert result["context_guard"] == "exact-ambito-coursecode-roster-v0.7.12"
+    assert result["context_guard"] == "exact-ambito-dual-coursecode-roster-v0.7.13"
 
 
 def test_v079_blocks_editor_rows_from_another_section_before_post(monkeypatch):
