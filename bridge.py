@@ -149,7 +149,11 @@ class ClassroomBridgeQueue:
             "queue": self.stats(),
         }
 
-    def next_job(self, claim_seconds: int = 90) -> BridgeJob | None:
+    def next_job(
+        self,
+        claim_seconds: int = 90,
+        allowed_operations: set[str] | None = None,
+    ) -> BridgeJob | None:
         now = _now()
         with self._lock:
             # Recupera claims vencidos para tolerar pestañas cerradas o recargas.
@@ -159,6 +163,8 @@ class ClassroomBridgeQueue:
                     job.claimed_until = None
                     job.updated_at = now
             candidates = [j for j in self._jobs.values() if j.status == "queued"]
+            if allowed_operations is not None:
+                candidates = [j for j in candidates if j.operation in allowed_operations]
             if not candidates:
                 return None
             job = sorted(candidates, key=lambda j: j.created_at)[0]
@@ -166,6 +172,14 @@ class ClassroomBridgeQueue:
             job.claimed_until = now + timedelta(seconds=claim_seconds)
             job.updated_at = now
             return job
+
+    def has_queued_operation(self, operation: str) -> bool:
+        operation = str(operation or "").strip().lower()
+        with self._lock:
+            return any(
+                job.status == "queued" and job.operation == operation
+                for job in self._jobs.values()
+            )
 
     def mark_comment_posted(self, job_id: str, bridge_result: dict[str, Any] | None = None) -> BridgeJob:
         with self._lock:
