@@ -1,20 +1,30 @@
-# SieRoom SRC 0.7.17
+# SieRoom SRC 0.8.1
 
-## Classroom — lectura privada con negociación de capacidades
+## Classroom — cuenta docente protegida para lectura, comentario, nota y devolución
 
-La v0.7.17 impide que una copia antigua del puente reclame o complete falsamente trabajos de lectura.
+La v0.8.1 recupera y amplía la guardia de cuenta docente de v0.8.0 sin perder la lectura privada verificada de v0.7.17.
 
 - `classroom_private_feedback action=read` encola la lectura de una entrega.
 - `classroom_private_feedback action=read_all` encola todas las entregas de una tarea.
 - `action=list` permite filtrar los resultados por curso, tarea, operación y estado.
 - cada resultado conserva el `submission_id`, el texto detectado y los marcadores de retroalimentación estructurada;
+- el popup vuelve a guardar el **correo docente de Classroom**;
+- cada entrega se abre con `authuser=<correo docente>` y se comprueba la cuenta visible antes de leer o escribir;
+- si Classroom muestra otra cuenta, el Bridge se detiene y devuelve el trabajo a pendientes;
+- comentario, calificación y devolución pueden completarse en la misma sesión del navegador;
 - la extensión anuncia `read_private_comments` antes de recibir trabajos de lectura;
 - el servidor solo acepta una lectura si devuelve `operation`, `comments` y `count` coherentes;
 - una extensión antigua ya no puede producir un falso estado `completed`;
 - la lectura no modifica Classroom, no transmite cookies a Render y no altera notas ni estados de devolución;
-- la publicación de comentarios, la calificación y la devolución mantienen el comportamiento anterior.
+- el servidor verifica también la nota y devolución confirmadas por el navegador.
 
-La suite pasa **55/55 pruebas**. Consulta `SIEROOM_PRIVATE_COMMENTS_V0.7.17.md` y `TEST_REPORT_V0.7.17.txt`.
+La suite pasa **59/59 pruebas**. Consulta `SIEROOM_CLASSROOM_BRIDGE_V0.8.1.md` y `TEST_REPORT_V0.8.1.txt`.
+
+---
+
+# Historial — SieRoom SRC 0.7.17
+
+La v0.7.17 incorporó negociación de capacidades y validación estricta para impedir falsos resultados de lectura.
 
 ---
 
