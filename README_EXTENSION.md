@@ -1,10 +1,10 @@
-# SieRoom Classroom Bridge 0.7.3
+# SieRoom Classroom Bridge 0.7.16
 
-Este componente local permite que SieRoom publique **comentarios privados nativos** en entregas de Google Classroom usando la sesión ya iniciada en Chrome.
+Este componente local permite que SieRoom lea y publique **comentarios privados nativos** en entregas de Google Classroom usando la sesión ya iniciada en Chrome.
 
 - No copia ni envía cookies de Google a Render.
 - No guarda el `GOOGLE_REFRESH_TOKEN` en la extensión.
-- Render solo mantiene una cola temporal de trabajos y recibe la confirmación de que el comentario se publicó.
+- Render solo mantiene una cola temporal de trabajos y recibe el texto leído o la confirmación de que el comentario se publicó.
 - La nota y la devolución se siguen haciendo por la API oficial de Classroom después de confirmar el comentario.
 
 ## Instalación
@@ -18,6 +18,13 @@ Este componente local permite que SieRoom publique **comentarios privados nativo
 7. Mantén iniciada en Classroom la cuenta docente correcta.
 
 Si Google cambia la interfaz de Classroom, el puente puede necesitar una actualización de selectores. Las demás capacidades de SieRoom siguen usando las APIs oficiales.
+
+## Lectura de comentarios privados — nuevo en 0.7.16
+
+- La operación `read_private_comments` abre la entrega real y localiza exclusivamente el panel **Comentarios privados**.
+- Reconoce retroalimentaciones estructuradas mediante encabezados como “Lo que hizo bien”, “Lo que debe mejorar”, “Sugerencias”, “Nota cuantitativa” y “Calificación cualitativa”.
+- Devuelve el texto asociado al `submission_id` sin escribir ni pulsar Enviar.
+- El servidor admite lectura individual (`read`) y de todas las entregas de una tarea (`read_all`).
 
 
 ## Cambios en 0.7.2
