@@ -327,7 +327,7 @@ async function processJob(job, generation) {
     assertGeneration(generation);
 
     const isRead = job.operation === "read_private_comments";
-    // v0.8.4 conserva comentario + calificación + devolución en la MISMA
+    // v0.8.5 conserva comentario + calificación + devolución en la MISMA
     // sesión y vuelve a verificar la entrega justo antes de leer o escribir.
     await assertTabTarget(tab.id, forcedUrl, generation);
     const result = await sendToContent(tab.id, isRead ? {
@@ -392,7 +392,7 @@ async function processJob(job, generation) {
       // Compatibilidad temporal con servidor 0.7.x: ese servidor intenta repetir
       // nota/devolución por API y puede recibir 403. Si el navegador YA confirmó
       // ambas acciones, no convertimos un éxito real en un fallo local.
-      log(`Trabajo ${job.id} completado en Classroom. El servidor antiguo reportó seguimiento API parcial; actualiza Render a v0.8.4 para limpiar ese estado.`);
+      log(`Trabajo ${job.id} completado en Classroom. El servidor antiguo reportó seguimiento API parcial; actualiza Render a v0.8.5 para limpiar ese estado.`);
       return { completedInBrowser: true, legacyServerPartial: true };
     }
     log(`Trabajo ${job.id} completado: comentario/nota/devolución confirmados.`);
