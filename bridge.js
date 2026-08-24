@@ -109,7 +109,7 @@ async function bridgeFetch(path, options = {}) {
   headers.set("X-SieRoom-Bridge-Version", chrome.runtime.getManifest().version);
   headers.set(
     "X-SieRoom-Bridge-Capabilities",
-    "post_private_comment,read_private_comments,verified_private_comment_read_v2,browser_grade_return,teacher_account_guard"
+    "post_private_comment,read_private_comments,verified_private_comment_read_v3,browser_grade_return,teacher_account_guard,target_submission_guard"
   );
   if (options.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
   const r = await fetch(`${c.endpoint}${path}`, { ...options, headers, cache: "no-store" });
@@ -131,15 +131,50 @@ function assertGeneration(generation) {
   if (generation !== resetGeneration) throw new BridgeResetError("Trabajo interrumpido por RESET.");
 }
 
-async function waitTabComplete(tabId, timeoutMs = 45000, generation = resetGeneration) {
+function normalizedClassroomPath(value) {
+  try {
+    const u = new URL(String(value || ""));
+    if (u.hostname !== "classroom.google.com") return null;
+    return u.pathname
+      .replace(/^\/u\/\d+(?=\/)/, "")
+      .replace(/\/+$/, "") || "/";
+  } catch (_) {
+    return null;
+  }
+}
+
+function classroomTargetMatches(actualUrl, expectedUrl) {
+  const actual = normalizedClassroomPath(actualUrl);
+  const expected = normalizedClassroomPath(expectedUrl);
+  return Boolean(actual && expected && actual === expected);
+}
+
+async function waitTabTargetComplete(tabId, expectedUrl, timeoutMs = 45000, generation = resetGeneration) {
   const start = Date.now();
+  let lastUrl = "";
   while (Date.now() - start < timeoutMs) {
     assertGeneration(generation);
     const tab = await chrome.tabs.get(tabId);
-    if (tab.status === "complete") return tab;
+    lastUrl = String(tab.url || "");
+    if (tab.status === "complete" && classroomTargetMatches(lastUrl, expectedUrl)) return tab;
     await sleep(400);
   }
-  throw new Error("Classroom tardó demasiado en cargar la entrega.");
+  throw new Error(
+    `Classroom no llegó a la entrega solicitada. Esperada: ${normalizedClassroomPath(expectedUrl)}. ` +
+    `Actual: ${normalizedClassroomPath(lastUrl) || lastUrl || "desconocida"}.`
+  );
+}
+
+async function assertTabTarget(tabId, expectedUrl, generation = resetGeneration) {
+  assertGeneration(generation);
+  const tab = await chrome.tabs.get(tabId);
+  if (!classroomTargetMatches(tab.url, expectedUrl)) {
+    throw new Error(
+      `PAUSA DE SEGURIDAD: Classroom abrió otra entrega. Esperada: ${normalizedClassroomPath(expectedUrl)}. ` +
+      `Actual: ${normalizedClassroomPath(tab.url) || tab.url || "desconocida"}.`
+    );
+  }
+  return tab;
 }
 
 async function ensureClassroomTab(url, generation) {
@@ -147,11 +182,12 @@ async function ensureClassroomTab(url, generation) {
     try {
       await chrome.tabs.get(classroomTabId);
       await chrome.tabs.update(classroomTabId, { url, active: true });
-      const tab = await waitTabComplete(classroomTabId, 45000, generation);
+      let tab = await waitTabTargetComplete(classroomTabId, url, 45000, generation);
       assertGeneration(generation);
       await activateTab(classroomTabId);
       await sleep(2200);
       assertGeneration(generation);
+      tab = await assertTabTarget(classroomTabId, url, generation);
       return tab;
     } catch (e) {
       if (e instanceof BridgeResetError) throw e;
@@ -160,11 +196,12 @@ async function ensureClassroomTab(url, generation) {
   }
   const tab = await chrome.tabs.create({ url, active: true });
   classroomTabId = tab.id;
-  const complete = await waitTabComplete(classroomTabId, 45000, generation);
+  let complete = await waitTabTargetComplete(classroomTabId, url, 45000, generation);
   assertGeneration(generation);
   await activateTab(classroomTabId);
   await sleep(2200);
   assertGeneration(generation);
+  complete = await assertTabTarget(classroomTabId, url, generation);
   return complete;
 }
 
@@ -256,8 +293,9 @@ async function processJob(job, generation) {
     assertGeneration(generation);
 
     const isRead = job.operation === "read_private_comments";
-    // v0.8.2 conserva comentario + calificación + devolución en la MISMA
-    // sesión del navegador y añade lectura segura bajo la cuenta docente.
+    // v0.8.3 conserva comentario + calificación + devolución en la MISMA
+    // sesión y vuelve a verificar la entrega justo antes de leer o escribir.
+    await assertTabTarget(tab.id, forcedUrl, generation);
     const result = await sendToContent(tab.id, isRead ? {
       type: "SIEROOM_READ_PRIVATE_COMMENTS"
     } : {
@@ -267,6 +305,13 @@ async function processJob(job, generation) {
       returnAfterComment: Boolean(job.return_after_comment)
     }, 10, generation);
     assertGeneration(generation);
+
+    if (!classroomTargetMatches(result?.url, forcedUrl)) {
+      throw new Error(
+        `PAUSA DE SEGURIDAD: la respuesta pertenece a otra entrega. Esperada: ` +
+        `${normalizedClassroomPath(forcedUrl)}. Actual: ${normalizedClassroomPath(result?.url) || result?.url || "desconocida"}.`
+      );
+    }
 
     if (!result?.ok) {
       throw new Error(result?.error || (isRead
@@ -312,7 +357,7 @@ async function processJob(job, generation) {
       // Compatibilidad temporal con servidor 0.7.x: ese servidor intenta repetir
       // nota/devolución por API y puede recibir 403. Si el navegador YA confirmó
       // ambas acciones, no convertimos un éxito real en un fallo local.
-      log(`Trabajo ${job.id} completado en Classroom. El servidor antiguo reportó seguimiento API parcial; actualiza Render a v0.8.2 para limpiar ese estado.`);
+      log(`Trabajo ${job.id} completado en Classroom. El servidor antiguo reportó seguimiento API parcial; actualiza Render a v0.8.3 para limpiar ese estado.`);
       return { completedInBrowser: true, legacyServerPartial: true };
     }
     log(`Trabajo ${job.id} completado: comentario/nota/devolución confirmados.`);

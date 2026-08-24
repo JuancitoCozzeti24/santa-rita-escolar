@@ -1,6 +1,6 @@
 (() => {
-  if (window.__SIEROOM_CLASSROOM_BRIDGE_082__) return;
-  window.__SIEROOM_CLASSROOM_BRIDGE_082__ = true;
+  if (window.__SIEROOM_CLASSROOM_BRIDGE_083__) return;
+  window.__SIEROOM_CLASSROOM_BRIDGE_083__ = true;
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const norm = (s) => String(s || "")
@@ -350,7 +350,7 @@
     const { label, composer, container } = await waitForPrivateSection();
     const beforeText = norm(container?.textContent || "");
     if (beforeText.includes(norm(text)) || commentVisibleOutsideComposer(text, composer)) {
-      return { ok: true, alreadyPresent: true, method: "dom-v0.8.2", url: location.href };
+      return { ok: true, alreadyPresent: true, method: "dom-v0.8.3", url: location.href };
     }
 
     composer.scrollIntoView({ block: "nearest", inline: "nearest" });
@@ -367,7 +367,7 @@
     while (Date.now() - started < 18000) {
       await sleep(500);
       if (commentVisibleOutsideComposer(text, composer)) {
-        return { ok: true, alreadyPresent: false, method: "dom-v0.8.2", url: location.href };
+        return { ok: true, alreadyPresent: false, method: "dom-v0.8.3", url: location.href };
       }
     }
     throw new Error("Se pulsó Enviar/Publicar, pero no pude confirmar visualmente que el comentario apareciera.");
@@ -607,7 +607,7 @@
 
     return {
       ok: true,
-      method: "dom-v0.8.2",
+      method: "dom-v0.8.3",
       url: location.href,
       comment: commentResult,
       grade: gradeResult,
@@ -694,7 +694,7 @@
         })),
         private_section_verified: false,
         structured_fallback_verified: true,
-        method: "dom-v0.8.2-read",
+        method: "dom-v0.8.3-read",
         url: location.href,
       };
     }
@@ -713,7 +713,7 @@
       })),
       private_section_verified: Boolean(label),
       structured_fallback_verified: false,
-      method: "dom-v0.8.2-read",
+      method: "dom-v0.8.3-read",
       url: location.href,
     };
   }
@@ -783,7 +783,7 @@
     if (!msg) return;
 
     if (msg.type === "SIEROOM_PING") {
-      sendResponse({ ok: true, version: "0.8.2", url: location.href });
+      sendResponse({ ok: true, version: "0.8.3", url: location.href });
       return;
     }
 

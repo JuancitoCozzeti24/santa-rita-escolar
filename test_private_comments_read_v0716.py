@@ -73,10 +73,12 @@ def test_v0717_extension_mirrors_and_read_message_are_present():
     assert root_content == extension_content
     assert root_bridge == extension_bridge
     assert "SIEROOM_READ_PRIVATE_COMMENTS" in extension_content
-    assert "dom-v0.8.2-read" in extension_content
+    assert "dom-v0.8.3-read" in extension_content
     assert 'job.operation === "read_private_comments"' in extension_bridge
     assert "X-SieRoom-Bridge-Capabilities" in extension_bridge
-    assert "post_private_comment,read_private_comments,verified_private_comment_read_v2,browser_grade_return,teacher_account_guard" in extension_bridge
+    assert "post_private_comment,read_private_comments,verified_private_comment_read_v3,browser_grade_return,teacher_account_guard,target_submission_guard" in extension_bridge
+    assert "waitTabTargetComplete" in extension_bridge
+    assert "classroomTargetMatches(result?.url, forcedUrl)" in extension_bridge
     assert 'pong?.version === expectedVersion' in extension_bridge
 
 
@@ -86,7 +88,7 @@ def test_v0717_manifests_advertise_matching_version():
         (ROOT / "browser_extension" / "manifest.json").read_text(encoding="utf-8")
     )
     assert root_manifest == extension_manifest
-    assert root_manifest["version"] == "0.8.2"
+    assert root_manifest["version"] == "0.8.3"
     assert "scripting" in root_manifest["permissions"]
 
 
@@ -198,11 +200,11 @@ def test_v0717_next_endpoint_requires_read_capability(monkeypatch):
     )))
     payload = _json_response(response)
     assert payload["job"] is None
-    assert payload["required_capability"] == "verified_private_comment_read_v2"
+    assert payload["required_capability"] == "verified_private_comment_read_v3"
     assert queue.stats()["queued"] == 1
 
     response = asyncio.run(server.classroom_bridge_http_next(_FakeBridgeRequest(
-        capabilities="post_private_comment,read_private_comments,verified_private_comment_read_v2"
+        capabilities="post_private_comment,read_private_comments,verified_private_comment_read_v3"
     )))
     payload = _json_response(response)
     assert payload["job"]["operation"] == "read_private_comments"
@@ -255,7 +257,8 @@ def test_v0717_accepts_structured_read_result(monkeypatch):
         }],
         "private_section_verified": False,
         "structured_fallback_verified": True,
-        "method": "dom-v0.8.2-read",
+        "method": "dom-v0.8.3-read",
+        "url": "https://classroom.google.com/read?authuser=teacher@example.com",
     }
     response = asyncio.run(server.classroom_bridge_http_complete(_FakeBridgeRequest(
         job_id=job.id, body=read_result
@@ -288,7 +291,8 @@ def test_v082_rejects_classroom_navigation_as_private_comments(monkeypatch):
         ],
         "private_section_verified": True,
         "structured_fallback_verified": False,
-        "method": "dom-v0.8.2-read",
+        "method": "dom-v0.8.3-read",
+        "url": "https://classroom.google.com/read",
     }
     response = asyncio.run(server.classroom_bridge_http_complete(_FakeBridgeRequest(
         job_id=job.id, body=false_read
@@ -297,6 +301,52 @@ def test_v082_rejects_classroom_navigation_as_private_comments(monkeypatch):
     assert response.status_code == 409
     assert payload["job"]["status"] == "failed"
     assert "bridge_incompatible_read_result" in payload["job"]["error"]
+
+
+def test_v083_target_normalization_accepts_account_prefix_and_authuser():
+    expected = (
+        "https://classroom.google.com/c/course/a/work/submissions/"
+        "by-status/and-sort-last-name/student/student-id?authuser=teacher@example.com"
+    )
+    actual = (
+        "https://classroom.google.com/u/1/c/course/a/work/submissions/"
+        "by-status/and-sort-last-name/student/student-id"
+    )
+    assert server._classroom_target_matches(actual, expected) is True
+
+
+def test_v083_rejects_read_from_another_classroom_submission(monkeypatch):
+    queue = ClassroomBridgeQueue()
+    job = queue.enqueue(
+        course_id="course-b",
+        course_work_id="work-b",
+        submission_id="submission-b",
+        submission_url="https://classroom.google.com/c/course-b/a/work-b/student/submission-b",
+        operation="read_private_comments",
+    )
+    queue.next_job(allowed_operations={"read_private_comments"})
+    monkeypatch.setattr(server, "bridge_queue", queue)
+    wrong_target_result = {
+        "ok": True,
+        "operation": "read_private_comments",
+        "count": 1,
+        "comments": [{
+            "text": "Calificación cuantitativa: 20/20. Calificación cualitativa: A.",
+            "markers": ["calificacion cuantitativa", "calificacion cualitativa"],
+            "structuredFeedback": True,
+        }],
+        "private_section_verified": False,
+        "structured_fallback_verified": True,
+        "method": "dom-v0.8.3-read",
+        "url": "https://classroom.google.com/c/course-a/a/work-a/student/submission-a",
+    }
+    response = asyncio.run(server.classroom_bridge_http_complete(_FakeBridgeRequest(
+        job_id=job.id, body=wrong_target_result
+    )))
+    payload = _json_response(response)
+    assert response.status_code == 409
+    assert payload["job"]["status"] == "failed"
+    assert "bridge_target_mismatch" in payload["job"]["error"]
 
 
 def test_v081_grade_only_browser_job_is_allowed():
@@ -341,7 +391,8 @@ def test_v081_server_accepts_verified_browser_grade_and_return(monkeypatch):
     monkeypatch.setattr(server, "bridge_queue", queue)
     browser_result = {
         "ok": True,
-        "method": "dom-v0.8.2",
+        "method": "dom-v0.8.3",
+        "url": "https://classroom.google.com/example",
         "comment": {"ok": True, "alreadyPresent": False},
         "browser_followup_done": True,
         "browser_grade_applied": True,
@@ -373,6 +424,7 @@ def test_v081_server_rejects_unconfirmed_browser_grade(monkeypatch):
         job_id=job.id,
         body={
             "ok": True,
+            "url": "https://classroom.google.com/example",
             "browser_followup_done": True,
             "browser_grade_applied": True,
             "browser_grade": 14,
