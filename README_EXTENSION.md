@@ -1,4 +1,4 @@
-# SieRoom Classroom Bridge 0.8.4
+# SieRoom Classroom Bridge 0.8.5
 
 Este componente local permite que SieRoom lea y publique **comentarios privados nativos** en entregas de Google Classroom usando la sesión ya iniciada en Chrome.
 
@@ -19,7 +19,7 @@ Este componente local permite que SieRoom lea y publique **comentarios privados 
 
 Si Google cambia la interfaz de Classroom, el puente puede necesitar una actualización de selectores. Las demás capacidades de SieRoom siguen usando las APIs oficiales.
 
-## Cuenta docente, lectura privada y destino — protegido en 0.8.4
+## Cuenta docente, lectura privada y destino — protegido en 0.8.5
 
 - La operación `read_private_comments` abre la entrega real y localiza exclusivamente el panel **Comentarios privados**.
 - Nunca busca comentarios en `document.body`: exige una región acotada que contenga el editor privado del alumno actual.
@@ -33,7 +33,8 @@ Si Google cambia la interfaz de Classroom, el puente puede necesitar una actuali
 - La extensión anuncia `verified_private_comment_read_v4`, `student_scoped_private_comment_read` y `target_submission_guard`. Las copias antiguas no pueden reclamar trabajos.
 - El lector descarta “Instrucciones”, “Trabajo de los alumnos”, “Más opciones” y otros textos de navegación.
 - Chrome no acepta `status=complete` hasta que la ruta coincida con curso, tarea y alumno solicitados.
-- El servidor exige URL de destino, fuente verificada, método v0.8.4 y objetos de comentario estructuralmente válidos.
+- El servidor exige URL de destino, fuente verificada, método v0.8.5 y objetos de comentario estructuralmente válidos.
+- Si Classroom oculta el encabezado en un hilo todavía vacío, se exige el editor explícitamente privado y su botón Publicar/Enviar cercano dentro de una región acotada.
 - Si una pestaña conserva un `content.js` anterior, el Bridge compara versiones y reinyecta el archivo actual.
 - La versión del servidor debe coincidir exactamente con la extensión antes de procesar la cola.
 - Si se abren varias pestañas del Bridge, solo la primera actúa como líder; las demás quedan en espera.
