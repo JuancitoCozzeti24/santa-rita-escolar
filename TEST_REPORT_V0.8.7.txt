@@ -1,0 +1,12 @@
+SieRoom SRC 0.8.7 - reporte de pruebas
+
+- Suite Python/Node: 92 passed.
+- Sintaxis content.js y bridge.js: correcta.
+- Espejos raíz/browser_extension: idénticos.
+- Misma entrega completa: no llama chrome.tabs.update y reutiliza la vista.
+- Entrega diferente: sí navega y verifica el destino.
+- Ayuda y comentarios: rechazado como acción de publicación.
+- Enviar/Publicar: aceptado únicamente con verbo explícito.
+- Nota y devolución: permanecen posteriores a la confirmación del comentario.
+- Advertencia única: Pydantic IncompleteFieldDefinitionWarning preexistente y no relacionada.
+

@@ -67,3 +67,38 @@ assert.equal(isMissingPrivateEditorResult({
   error: "Se pulsó Enviar/Publicar, pero no pude confirmar visualmente."
 }), false, "Un resultado ambiguo después del clic jamás debe reintentarse automáticamente.");
 
+const ensureStart = bridge.indexOf("async function ensureClassroomTab");
+const ensureEnd = bridge.indexOf("\n\nfunction promiseTimeout", ensureStart);
+assert.ok(ensureStart >= 0 && ensureEnd > ensureStart, "No se encontró ensureClassroomTab.");
+const ensureSource = bridge.slice(ensureStart, ensureEnd);
+
+const runEnsureScenario = Function(`"use strict";
+  return async function run(existingUrl, targetUrl) {
+    let classroomTabId = 77;
+    const calls = [];
+    class BridgeResetError extends Error {}
+    const chrome = { tabs: {
+      get: async () => ({ id: 77, status: "complete", url: existingUrl }),
+      update: async (_id, options) => { calls.push(["update", options.url]); return { id: 77, status: "complete", url: options.url }; },
+      create: async (options) => { calls.push(["create", options.url]); return { id: 88, status: "complete", url: options.url }; }
+    }};
+    const classroomTargetMatches = (actual, expected) => actual === expected;
+    const activateTab = async (id) => { calls.push(["activate", id]); };
+    const sleep = async (ms) => { calls.push(["sleep", ms]); };
+    const assertGeneration = () => {};
+    const assertTabTarget = async (id, expected) => { calls.push(["assert", expected]); return { id, status: "complete", url: expected }; };
+    const waitTabTargetComplete = async (id, expected) => { calls.push(["wait", expected]); return { id, status: "complete", url: expected }; };
+    ${ensureSource}
+    const tab = await ensureClassroomTab(targetUrl, 0);
+    return { tab, calls };
+  };
+`)();
+
+const sameTarget = await runEnsureScenario("https://classroom.google.com/student/1", "https://classroom.google.com/student/1");
+assert.equal(sameTarget.calls.some(([name]) => name === "update"), false,
+  "La lectura y escritura consecutivas del mismo alumno no deben recargar la vista.");
+assert.equal(sameTarget.calls.some(([name, value]) => name === "sleep" && value === 900), true);
+
+const otherTarget = await runEnsureScenario("https://classroom.google.com/student/1", "https://classroom.google.com/student/2");
+assert.equal(otherTarget.calls.some(([name]) => name === "update"), true,
+  "Cambiar de alumno sí debe navegar a la entrega exacta solicitada.");

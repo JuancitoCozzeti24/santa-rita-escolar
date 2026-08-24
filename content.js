@@ -1,6 +1,6 @@
 (() => {
-  if (window.__SIEROOM_CLASSROOM_BRIDGE_086__) return;
-  window.__SIEROOM_CLASSROOM_BRIDGE_086__ = true;
+  if (window.__SIEROOM_CLASSROOM_BRIDGE_087__) return;
+  window.__SIEROOM_CLASSROOM_BRIDGE_087__ = true;
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const norm = (s) => String(s || "")
@@ -479,7 +479,7 @@
     const beforeText = norm(container?.textContent || "");
     if (beforeText.includes(norm(text)) ||
         postedCommentVisible(text, { label, composer, container })) {
-      return { ok: true, alreadyPresent: true, method: "dom-v0.8.6", url: location.href };
+      return { ok: true, alreadyPresent: true, method: "dom-v0.8.7", url: location.href };
     }
 
     composer.scrollIntoView({ block: "nearest", inline: "nearest" });
@@ -506,7 +506,7 @@
       const currentSection = privateSectionNow();
       if (postedCommentVisible(text, currentSection) ||
           (container?.isConnected && postedCommentVisible(text, { label, composer, container }))) {
-        return { ok: true, alreadyPresent: false, method: "dom-v0.8.6", url: location.href };
+        return { ok: true, alreadyPresent: false, method: "dom-v0.8.7", url: location.href };
       }
     }
     throw new Error(
@@ -756,7 +756,7 @@
 
     return {
       ok: true,
-      method: "dom-v0.8.6",
+      method: "dom-v0.8.7",
       url: location.href,
       comment: commentResult,
       grade: gradeResult,
@@ -861,7 +861,7 @@
       student_scope_verified: true,
       scope_evidence: evidence,
       comment_order: "document_order",
-      method: "dom-v0.8.6-read",
+      method: "dom-v0.8.7-read",
       url: location.href,
     };
   }
@@ -933,7 +933,7 @@
     if (!msg) return;
 
     if (msg.type === "SIEROOM_PING") {
-      sendResponse({ ok: true, version: "0.8.6", url: location.href });
+      sendResponse({ ok: true, version: "0.8.7", url: location.href });
       return;
     }
 

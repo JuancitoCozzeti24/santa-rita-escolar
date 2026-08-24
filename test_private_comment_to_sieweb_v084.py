@@ -32,7 +32,7 @@ def scoped_read(url, numeric, qualitative):
         "teacher_account_verified": True,
         "scope_evidence": "private_label_and_composer",
         "comment_order": "document_order",
-        "method": "dom-v0.8.6-read",
+        "method": "dom-v0.8.7-read",
         "url": url,
     }
 

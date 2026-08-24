@@ -1,8 +1,8 @@
-# SieRoom SRC 0.8.6
+# SieRoom SRC 0.8.7
 
 ## Hotfix del panel privado vacío
 
-La v0.8.6 conserva la lectura segura de paneles vacíos de v0.8.5 y corrige la publicación real: excluye expresamente **“Ayuda y comentarios”** de los controles válidos, exige **Enviar/Publicar**, comprueba que el texto completo haya quedado en el editor y relee el hilo acotado antes de aplicar la nota o devolver la tarea. Si el panel no carga, hace un solo reintento seguro antes de detenerse.
+La v0.8.7 conserva las protecciones de publicación de v0.8.6 y corrige el tránsito real **leer → comentar**: cuando ambos trabajos pertenecen al mismo curso, tarea y alumno, reutiliza la vista que Classroom ya confirmó en lugar de volver a cargarla. Al cambiar de alumno, sí navega y verifica la nueva ruta exacta.
 
 La prueba de regresión cubre el panel vacío válido y rechaza un editor sin botón acotado, un editor no privado y cualquier región global. La suite pasa **91/91 pruebas**.
 
