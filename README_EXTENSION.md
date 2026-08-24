@@ -1,4 +1,4 @@
-# SieRoom Classroom Bridge 0.8.3
+# SieRoom Classroom Bridge 0.8.4
 
 Este componente local permite que SieRoom lea y publique **comentarios privados nativos** en entregas de Google Classroom usando la sesión ya iniciada en Chrome.
 
@@ -19,21 +19,25 @@ Este componente local permite que SieRoom lea y publique **comentarios privados 
 
 Si Google cambia la interfaz de Classroom, el puente puede necesitar una actualización de selectores. Las demás capacidades de SieRoom siguen usando las APIs oficiales.
 
-## Cuenta docente, lectura privada y destino — protegido en 0.8.3
+## Cuenta docente, lectura privada y destino — protegido en 0.8.4
 
 - La operación `read_private_comments` abre la entrega real y localiza exclusivamente el panel **Comentarios privados**.
+- Nunca busca comentarios en `document.body`: exige una región acotada que contenga el editor privado del alumno actual.
 - Reconoce retroalimentaciones estructuradas mediante encabezados como “Lo que hizo bien”, “Lo que debe mejorar”, “Sugerencias”, “Nota cuantitativa” y “Calificación cualitativa”.
 - Devuelve el texto asociado al `submission_id` sin escribir ni pulsar Enviar.
 - El servidor admite lectura individual (`read`) y de todas las entregas de una tarea (`read_all`).
 - El popup exige y guarda el correo docente de Classroom.
-- Cada entrega se abre con `authuser=<correo>` y se verifica la cuenta visible antes de cualquier lectura o escritura.
+- Cada entrega se abre con `authuser=<correo>` y se verifica la cuenta activa antes de cualquier lectura o escritura. Que el correo aparezca como cuenta secundaria ya no es suficiente.
 - Si aparece una cuenta diferente, la cola se pausa sin publicar, calificar ni devolver.
 - Los flujos de comentario, calificación y devolución de v0.8.0 permanecen disponibles.
-- La extensión anuncia `verified_private_comment_read_v3` y `target_submission_guard`. Las copias antiguas no pueden reclamar trabajos de lectura.
+- La extensión anuncia `verified_private_comment_read_v4`, `student_scoped_private_comment_read` y `target_submission_guard`. Las copias antiguas no pueden reclamar trabajos.
 - El lector descarta “Instrucciones”, “Trabajo de los alumnos”, “Más opciones” y otros textos de navegación.
 - Chrome no acepta `status=complete` hasta que la ruta coincida con curso, tarea y alumno solicitados.
-- El servidor exige URL de destino, fuente verificada, método v0.8.3 y objetos de comentario estructuralmente válidos.
+- El servidor exige URL de destino, fuente verificada, método v0.8.4 y objetos de comentario estructuralmente válidos.
 - Si una pestaña conserva un `content.js` anterior, el Bridge compara versiones y reinyecta el archivo actual.
+- La versión del servidor debe coincidir exactamente con la extensión antes de procesar la cola.
+- Si se abren varias pestañas del Bridge, solo la primera actúa como líder; las demás quedan en espera.
+- Pulsar **Procesar cola ahora** durante un trabajo no lo cancela ni deja el `claim` atascado.
 
 
 ## Cambios en 0.7.2

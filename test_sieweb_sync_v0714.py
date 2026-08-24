@@ -150,3 +150,70 @@ def test_v0714_blocks_replica_context_mismatch_before_post(monkeypatch):
         )
     assert "no coincide con el contexto leído" in str(exc.value)
 
+
+def test_v084_selects_program_five_even_when_it_is_not_the_first_choice():
+    c = SieWebClient()
+    raw = official_raw(False)
+    raw["json"]["dataPrograma"]["objProgramas"]["4"] = [
+        {
+            "ID_PROGRAMA": 6, "ID_PROGRAMA_REF": 4,
+            "DESCRIPCION": "Evidencia", "ICONO": "simbolo6",
+            "COLOR": "#eeeeee", "LIMITE": 4,
+        },
+        {
+            "ID_PROGRAMA": 5, "ID_PROGRAMA_REF": 4,
+            "DESCRIPCION": "Desempeño", "ICONO": "simbolo5",
+            "COLOR": "#ffffff", "LIMITE": 6,
+        },
+    ]
+    parent = c._find_tree_nodes(
+        raw["json"]["resCriterios"], content_id=133731, level=2
+    )[0][1]
+    program = c._native_child_program(raw, parent)
+    assert program["ID_PROGRAMA"] == 5
+
+
+def test_v084_blocks_multi_insert_when_native_replica_contexts_disagree(monkeypatch):
+    c = SieWebClient()
+    raw = official_raw(False)
+    second_parent = copy.deepcopy(raw["json"]["resCriterios"][0]["children"][0])
+    second_parent.update({
+        "ID_CLASE_CONTENIDO": 233463,
+        "ID_CONTENIDO": 233731,
+        "DESCRIPCION": "Comunica su comprensión",
+        "GRUPOCOD": "002",
+        "LLAVE": "4-2_3-3_2-1",
+        "INDICE": 2,
+        "children": [],
+    })
+    raw["json"]["resCriterios"][0]["children"].append(second_parent)
+    summary = gradebook(False)
+    summary["criteria"].append({
+        "id": 233731, "idpadre": 125378, "nivelEva": 2,
+        "descripcion": "Comunica su comprensión",
+    })
+    monkeypatch.setattr(c, "get_gradebook_summary", lambda **kwargs: summary)
+
+    def get_criteria(**kwargs):
+        c._last_criteria_context = {
+            "idClase": 2030, "idClasePeriodo": 6305, "idContenido": 119598,
+            "idAmbito": 518, "CURSOCOD": "05", "cursocod": "05",
+        }
+        return raw
+
+    monkeypatch.setattr(c, "get_criteria", get_criteria)
+    monkeypatch.setattr(c, "_request", lambda *args, **kwargs: pytest.fail("no debe hacer POST"))
+    with pytest.raises(SieWebError, match="no comparten el mismo paramDatosReplica"):
+        c.upsert_criteria_verified(
+            class_id=2030, class_period_id=6305, root_content_id=119598, id_ambito=518,
+            records=[
+                {"descripcion": "Desempeño A", "idpadre": 133731, "nivelEva": 3},
+                {"descripcion": "Desempeño B", "idpadre": 233731, "nivelEva": 3},
+            ],
+            replica={},
+            expected=[
+                {"description": "Desempeño A", "parent_id": 133731, "level": 3},
+                {"description": "Desempeño B", "parent_id": 233731, "level": 3},
+            ],
+            verification_attempts=1,
+        )

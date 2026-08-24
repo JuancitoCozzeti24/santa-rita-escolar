@@ -53,7 +53,7 @@ async function checkClassroomAccount(email) {
     }
     return {
       state: "unknown",
-      message: `Servidor correcto. No pude leer el correo desde esta pantalla de Classroom; al procesar una entrega volveré a comprobarlo.`
+      message: `Servidor correcto, pero no pude confirmar la cuenta activa. El Bridge no procesará nada hasta verla de forma explícita en Classroom.`
     };
   } catch (_) {
     return {
@@ -74,10 +74,17 @@ document.getElementById("save").addEventListener("click", async () => {
     });
     const data = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+    const extensionVersion = chrome.runtime.getManifest().version;
+    if (String(data.version || "") !== extensionVersion) {
+      throw new Error(
+        `Versiones distintas: servidor ${data.version || "desconocida"} · ` +
+        `extensión ${extensionVersion}. Espera el despliegue antes de procesar.`
+      );
+    }
 
     const account = await checkClassroomAccount(email);
     msg.textContent =
-      `Conexión correcta. Servidor ${data.version} · extensión ${chrome.runtime.getManifest().version}.\n` +
+      `Conexión correcta. Servidor ${data.version} · extensión ${extensionVersion}.\n` +
       account.message;
   } catch (e) {
     msg.textContent = `Error: ${String(e?.message || e)}`;
@@ -87,7 +94,13 @@ document.getElementById("save").addEventListener("click", async () => {
 document.getElementById("start").addEventListener("click", async () => {
   try {
     await save();
-    await chrome.tabs.create({ url: chrome.runtime.getURL("bridge.html"), active: true });
+    const bridgeUrl = chrome.runtime.getURL("bridge.html");
+    const existing = await chrome.tabs.query({ url: bridgeUrl + "*" });
+    if (existing.length && existing[0].id) {
+      await chrome.tabs.update(existing[0].id, { active: true });
+    } else {
+      await chrome.tabs.create({ url: bridgeUrl, active: true });
+    }
     window.close();
   } catch (e) {
     msg.textContent = `Error: ${String(e?.message || e)}`;

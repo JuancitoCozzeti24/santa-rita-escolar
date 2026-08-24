@@ -95,6 +95,30 @@ class ClassroomBridgeQueue:
         with self._lock:
             return sorted(self._jobs.values(), key=lambda j: j.created_at, reverse=True)[: max(1, min(limit, 100))]
 
+    def matching(
+        self,
+        *,
+        course_id: str | None = None,
+        course_work_id: str | None = None,
+        submission_id: str | None = None,
+        operation: str | None = None,
+        statuses: set[str] | None = None,
+    ) -> list[BridgeJob]:
+        """Devuelve todos los trabajos coincidentes, sin el límite de `recent`."""
+        with self._lock:
+            jobs = list(self._jobs.values())
+        if course_id is not None:
+            jobs = [j for j in jobs if j.course_id == str(course_id)]
+        if course_work_id is not None:
+            jobs = [j for j in jobs if j.course_work_id == str(course_work_id)]
+        if submission_id is not None:
+            jobs = [j for j in jobs if j.submission_id == str(submission_id)]
+        if operation is not None:
+            jobs = [j for j in jobs if j.operation == str(operation)]
+        if statuses is not None:
+            jobs = [j for j in jobs if j.status in statuses]
+        return sorted(jobs, key=lambda j: (j.updated_at, j.created_at), reverse=True)
+
     def stats(self) -> dict[str, int]:
         counts: dict[str, int] = {}
         with self._lock:
@@ -156,7 +180,7 @@ class ClassroomBridgeQueue:
 
     def next_job(
         self,
-        claim_seconds: int = 90,
+        claim_seconds: int = 300,
         allowed_operations: set[str] | None = None,
     ) -> BridgeJob | None:
         now = _now()

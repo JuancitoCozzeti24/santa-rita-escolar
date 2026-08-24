@@ -1,6 +1,6 @@
 (() => {
-  if (window.__SIEROOM_CLASSROOM_BRIDGE_083__) return;
-  window.__SIEROOM_CLASSROOM_BRIDGE_083__ = true;
+  if (window.__SIEROOM_CLASSROOM_BRIDGE_084__) return;
+  window.__SIEROOM_CLASSROOM_BRIDGE_084__ = true;
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const norm = (s) => String(s || "")
@@ -160,12 +160,33 @@
   }
 
   function bestPrivateRegion(label, composer) {
-    if (!label) return document.body;
+    if (!composer || !visible(composer) || !isEditable(composer)) return null;
     const composerAncestors = new Set(ancestorChain(composer, 16));
-    for (const el of ancestorChain(label, 16)) {
-      if (composerAncestors.has(el) && el !== document.body && el !== document.documentElement) return el;
+    if (label) {
+      for (const el of ancestorChain(label, 16)) {
+        if (composerAncestors.has(el) && el !== document.body && el !== document.documentElement) {
+          return { container: el, evidence: "private_label_and_composer" };
+        }
+      }
+      return null;
     }
-    return label.parentElement || document.body;
+
+    // Sin encabezado solo aceptamos un editor identificado EXPLÍCITAMENTE como
+    // privado y un ancestro acotado que ya contenga comentarios/retroalimentación.
+    // Nunca se usa document.body: esa ruta mezclaba alumnos de la misma aula.
+    const composerMeta = meta(composer);
+    const explicitPrivateComposer = composerMeta.includes("comentario privado") ||
+      composerMeta.includes("private comment");
+    if (!explicitPrivateComposer) return null;
+    for (const el of ancestorChain(composer, 14)) {
+      if (el === composer || el === document.body || el === document.documentElement) continue;
+      const text = cleanCommentText(el.innerText || el.textContent || "");
+      const semanticCount = el.querySelectorAll('[data-comment-id],[role="article"],[role="listitem"]').length;
+      if (semanticCount > 0 || privateCommentMarkers(text).length >= 2) {
+        return { container: el, evidence: "bounded_private_composer" };
+      }
+    }
+    return null;
   }
 
   async function findOrActivateComposer(label) {
@@ -277,9 +298,12 @@
     return scored[0]?.b || null;
   }
 
-  function commentVisibleOutsideComposer(text, composer) {
+  function commentVisibleOutsideComposer(text, composer, container) {
     const wanted = norm(text);
-    const nodes = [...document.querySelectorAll("body *")];
+    if (!wanted || !container || container === document.body || container === document.documentElement) {
+      return false;
+    }
+    const nodes = [container, ...container.querySelectorAll("*")];
     return nodes.some((el) => {
       if (!visible(el) || el === composer || composer?.contains?.(el) || el.contains?.(composer)) return false;
       const t = norm(el.textContent);
@@ -325,8 +349,8 @@
       const direct = directPrivateComposer();
       if (direct) {
         const label = privateCommentLabel();
-        const container = bestPrivateRegion(label, direct);
-        return { label, composer: direct, container };
+        const scoped = bestPrivateRegion(label, direct);
+        if (scoped) return { label, composer: direct, ...scoped };
       }
 
       const label = privateCommentLabel();
@@ -334,8 +358,8 @@
       if (label) {
         const composer = await findOrActivateComposer(label);
         if (composer) {
-          const container = bestPrivateRegion(label, composer);
-          return { label, composer, container };
+          const scoped = bestPrivateRegion(label, composer);
+          if (scoped) return { label, composer, ...scoped };
         }
       }
       await sleep(400);
@@ -349,8 +373,8 @@
 
     const { label, composer, container } = await waitForPrivateSection();
     const beforeText = norm(container?.textContent || "");
-    if (beforeText.includes(norm(text)) || commentVisibleOutsideComposer(text, composer)) {
-      return { ok: true, alreadyPresent: true, method: "dom-v0.8.3", url: location.href };
+    if (beforeText.includes(norm(text)) || commentVisibleOutsideComposer(text, composer, container)) {
+      return { ok: true, alreadyPresent: true, method: "dom-v0.8.4", url: location.href };
     }
 
     composer.scrollIntoView({ block: "nearest", inline: "nearest" });
@@ -366,8 +390,8 @@
     const started = Date.now();
     while (Date.now() - started < 18000) {
       await sleep(500);
-      if (commentVisibleOutsideComposer(text, composer)) {
-        return { ok: true, alreadyPresent: false, method: "dom-v0.8.3", url: location.href };
+      if (commentVisibleOutsideComposer(text, composer, container)) {
+        return { ok: true, alreadyPresent: false, method: "dom-v0.8.4", url: location.href };
       }
     }
     throw new Error("Se pulsó Enviar/Publicar, pero no pude confirmar visualmente que el comentario apareciera.");
@@ -473,9 +497,16 @@
     try { el.blur(); } catch (_) {}
     await sleep(1100);
 
-    const current = String(el.value ?? el.innerText ?? el.textContent ?? "").trim();
-    if (current && current !== value && Number(current) !== numeric) {
-      throw new Error(`Classroom no conservó la calificación ${value}. Valor visible: ${current}`);
+    const persistedEl = findGradeInput() || el;
+    const current = String(persistedEl.value ?? persistedEl.innerText ?? persistedEl.textContent ?? "").trim();
+    const normalizedCurrent = current.replace(",", ".");
+    const numericMatch = normalizedCurrent.match(/-?\d+(?:\.\d+)?/);
+    const persistedNumber = numericMatch ? Number(numericMatch[0]) : NaN;
+    if (!Number.isFinite(persistedNumber) || Math.abs(persistedNumber - numeric) > 1e-9) {
+      throw new Error(
+        `Classroom no confirmó que la calificación ${value} quedara persistida. ` +
+        `Valor visible: ${current || "vacío"}.`
+      );
     }
 
     return { applied: true, grade: numeric, fieldMeta: meta(el).slice(0, 160) };
@@ -607,7 +638,7 @@
 
     return {
       ok: true,
-      method: "dom-v0.8.3",
+      method: "dom-v0.8.4",
       url: location.href,
       comment: commentResult,
       grade: gradeResult,
@@ -662,44 +693,38 @@
       const semantic = el.matches('[data-comment-id],[role="article"],[role="listitem"]');
       if (structuredOnly && markers.length < 2) continue;
       if (!structuredOnly && markers.length < 2 && !semantic) continue;
-      rows.push({ text, markers, semantic });
+      const host = el.closest('[data-comment-id],[role="article"],[role="listitem"]') || el;
+      const timeEl = host.querySelector?.('time[datetime]');
+      rows.push({
+        text,
+        markers,
+        semantic,
+        timestamp: timeEl?.getAttribute?.("datetime") || null,
+      });
     }
 
-    rows.sort((a, b) => a.text.length - b.text.length);
+    // Eliminamos envolturas que contienen otro candidato más preciso, pero
+    // conservamos el orden real del DOM. Ordenar por longitud destruía la
+    // cronología cuando un alumno tenía más de una retroalimentación.
+    const minimal = rows.filter((row, index) => {
+      const key = norm(row.text);
+      return !rows.some((other, otherIndex) => {
+        if (otherIndex === index) return false;
+        const otherKey = norm(other.text);
+        return key.includes(otherKey) && key.length > otherKey.length + 35;
+      });
+    });
     const chosen = [];
-    for (const row of rows) {
+    for (const row of minimal) {
       const key = norm(row.text);
       if (chosen.some((item) => norm(item.text) === key)) continue;
-      if (chosen.some((item) => key.includes(norm(item.text)) && key.length > norm(item.text).length + 35)) continue;
-      chosen.push(row);
+      chosen.push({ ...row, domOrder: chosen.length });
     }
     return chosen;
   }
 
   async function readPrivateComments() {
-    // Una retroalimentación estructurada completa es evidencia suficiente aun si
-    // Classroom ocultó temporalmente el encabezado/editor del panel. Se exige al
-    // menos dos marcadores y nunca se aceptan textos de navegación como comentario.
-    await sleep(800);
-    const structuredFallback = commentReadCandidates(document.body, null, null, true);
-    if (structuredFallback.length) {
-      return {
-        ok: true,
-        operation: "read_private_comments",
-        count: structuredFallback.length,
-        comments: structuredFallback.map((row) => ({
-          text: row.text,
-          markers: row.markers,
-          structuredFeedback: true,
-        })),
-        private_section_verified: false,
-        structured_fallback_verified: true,
-        method: "dom-v0.8.3-read",
-        url: location.href,
-      };
-    }
-
-    const { label, composer, container } = await waitForPrivateSection(12000);
+    const { label, composer, container, evidence } = await waitForPrivateSection(20000);
     await sleep(500);
     const candidates = commentReadCandidates(container, label, composer, false);
     return {
@@ -710,46 +735,53 @@
         text: row.text,
         markers: row.markers,
         structuredFeedback: row.markers.length >= 2,
+        timestamp: row.timestamp,
+        domOrder: row.domOrder,
       })),
       private_section_verified: Boolean(label),
-      structured_fallback_verified: false,
-      method: "dom-v0.8.3-read",
+      bounded_private_region_verified: true,
+      student_scope_verified: true,
+      scope_evidence: evidence,
+      comment_order: "document_order",
+      method: "dom-v0.8.4-read",
       url: location.href,
     };
   }
 
-  function extractEmailsFromPage() {
+  function emailsFromValues(values) {
     const found = new Set();
     const rx = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/ig;
-
-    function addFrom(value) {
+    for (const value of values || []) {
       const text = String(value || "");
       for (const m of text.matchAll(rx)) found.add(String(m[0]).toLowerCase());
     }
-
-    addFrom(document.body?.innerText || "");
-    addFrom(document.body?.textContent || "");
-
-    const selector = [
-      "[aria-label]", "[title]", "[data-tooltip]", "[data-tooltip-text]",
-      "[data-email]", "[href]"
-    ].join(",");
-
-    for (const el of document.querySelectorAll(selector)) {
-      addFrom(el.getAttribute("aria-label"));
-      addFrom(el.getAttribute("title"));
-      addFrom(el.getAttribute("data-tooltip"));
-      addFrom(el.getAttribute("data-tooltip-text"));
-      addFrom(el.getAttribute("data-email"));
-      addFrom(el.getAttribute("href"));
-    }
-
     return [...found];
   }
 
-  function checkExpectedAccount(expectedEmail) {
+  function extractActiveAccountEmails() {
+    // Solo se confía en el control de la cuenta ACTIVA de Google. Abrir el selector
+    // y recorrer todas las cuentas producía un falso positivo cuando el correo
+    // esperado era apenas una cuenta secundaria del navegador.
+    const selectors = [
+      '[aria-label^="Cuenta de Google"]', '[aria-label^="Google Account"]',
+      '[aria-label*="Cuenta de Google:"]', '[aria-label*="Google Account:"]',
+      '[title^="Cuenta de Google"]', '[title^="Google Account"]'
+    ].join(",");
+    const controls = [...document.querySelectorAll(selectors)].filter((el) => {
+      if (!visible(el)) return false;
+      const rect = el.getBoundingClientRect();
+      return rect.top < 160 && rect.left > Math.max(0, window.innerWidth * 0.45);
+    });
+    const values = [];
+    for (const el of controls) {
+      values.push(el.getAttribute("aria-label"), el.getAttribute("title"), el.getAttribute("data-email"));
+    }
+    return emailsFromValues(values);
+  }
+
+  async function checkExpectedAccount(expectedEmail) {
     const expected = String(expectedEmail || "").trim().toLowerCase();
-    const detectedEmails = extractEmailsFromPage();
+    const detectedEmails = extractActiveAccountEmails();
     const body = norm(document.body?.innerText || "");
     const classNotFound =
       body.includes("no se encontro la clase") ||
@@ -783,13 +815,15 @@
     if (!msg) return;
 
     if (msg.type === "SIEROOM_PING") {
-      sendResponse({ ok: true, version: "0.8.3", url: location.href });
+      sendResponse({ ok: true, version: "0.8.4", url: location.href });
       return;
     }
 
     if (msg.type === "SIEROOM_CHECK_ACCOUNT") {
-      sendResponse(checkExpectedAccount(msg.expectedEmail));
-      return;
+      checkExpectedAccount(msg.expectedEmail)
+        .then((result) => sendResponse(result))
+        .catch((err) => sendResponse({ ok: null, reason: String(err?.message || err), url: location.href }));
+      return true;
     }
 
     if (msg.type === "SIEROOM_READ_PRIVATE_COMMENTS") {

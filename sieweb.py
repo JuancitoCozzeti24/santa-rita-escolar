@@ -32,7 +32,7 @@ class SieWebClient:
         self.session.headers.update(
             {
                 "Accept": "application/json, text/plain, */*",
-                "User-Agent": "Mozilla/5.0 SieRoom-SRC/0.7.15",
+                "User-Agent": "Mozilla/5.0 SieRoom-SRC/0.8.4",
                 "X-Requested-With": "XMLHttpRequest",
                 "Cache-Control": "no-cache",
                 "Pragma": "no-cache",
@@ -952,12 +952,49 @@ class SieWebClient:
             "objInfoRegIndividual[tipoRegistro]": "registroNotas",
             "chkNotFRET": False,
         }
-        params.update(extra_params or {})
+        params = self._merge_endpoint_params(
+            params,
+            extra_params,
+            protected_keys={"idClasePeriodo", "idContenido"},
+            endpoint="HyoClasePeriodo/obtRegistroNotas",
+        )
         return self._request(
             "GET", "/lms/api/HyoClasePeriodo/obtRegistroNotas", params=params
         )
 
     # ---------- Criterios / desempeños ----------
+    @staticmethod
+    def _parameter_key(value: Any) -> str:
+        raw = unicodedata.normalize("NFKD", str(value or ""))
+        raw = "".join(ch for ch in raw if not unicodedata.combining(ch))
+        return re.sub(r"[^a-z0-9]", "", raw.lower())
+
+    @classmethod
+    def _merge_endpoint_params(
+        cls,
+        base: dict[str, Any],
+        extra: dict[str, Any] | None,
+        *,
+        protected_keys: set[str],
+        endpoint: str,
+    ) -> dict[str, Any]:
+        """Añade parámetros auxiliares sin permitir que cambien la identidad destino."""
+        out = dict(base)
+        protected = {cls._parameter_key(key): key for key in protected_keys}
+        for key, value in dict(extra or {}).items():
+            canonical = cls._parameter_key(key)
+            if canonical in protected:
+                base_key = protected[canonical]
+                expected = base.get(base_key)
+                if str(value).strip() != str(expected).strip():
+                    raise SieWebError(
+                        f"PROTECCIÓN DE CONTEXTO SIEWEB: {endpoint} no permite que "
+                        f"extra_params cambie {base_key}={expected!r} por {value!r}. No se envió nada."
+                    )
+                continue
+            out[key] = value
+        return out
+
     def _resolve_criteria_course_context(
         self,
         *,
@@ -1038,7 +1075,15 @@ class SieWebClient:
             "CURSOCOD": course_code,
             "cursocod": course_code,
         }
-        params.update(normalized_extra)
+        params = self._merge_endpoint_params(
+            params,
+            normalized_extra,
+            protected_keys={
+                "idClase", "idClasePeriodo", "idContenido", "idAmbito",
+                "CURSOCOD", "cursocod",
+            },
+            endpoint="HyoClaseContenido/dataInicialPesosCriterios",
+        )
         self._last_criteria_context = {
             "idClase": int(class_id),
             "idClasePeriodo": int(class_period_id),
@@ -1400,8 +1445,23 @@ class SieWebClient:
         data_program=envelope.get("dataPrograma") or {}
         obj_programs=data_program.get("objProgramas") if isinstance(data_program,dict) else None
         parent_program=parent.get("ID_PROGRAMA",parent.get("idPrograma"))
-        choices=(obj_programs or {}).get(str(parent_program)) if isinstance(obj_programs,dict) else None
-        program=copy.deepcopy(choices[0]) if isinstance(choices,list) and choices and isinstance(choices[0],dict) else None
+        choices = None
+        if isinstance(obj_programs, dict):
+            choices = obj_programs.get(str(parent_program))
+            if choices is None:
+                choices = obj_programs.get(parent_program)
+        program = None
+        if isinstance(choices, list):
+            performance_choices = [
+                item for item in choices
+                if isinstance(item, dict) and str(item.get("ID_PROGRAMA")) == "5"
+            ]
+            if len(performance_choices) > 1:
+                raise SieWebError(
+                    "SIEWeb devolvió más de un programa hijo de tipo Desempeño; no se puede elegir uno de forma segura."
+                )
+            if performance_choices:
+                program = copy.deepcopy(performance_choices[0])
 
         # Compatibilidad defensiva con despliegues que omitan dataPrograma: un
         # desempeño hermano persistido aporta los mismos metadatos de programa.
@@ -1878,7 +1938,7 @@ class SieWebClient:
         La UI oficial llama ``HyoClaseContenido/insertar`` con exactamente tres
         propiedades: ``registros``, ``idClase`` y ``datosReplica``. Para una alta,
         ``registros`` contiene el objeto ``defaultDataContenido`` del modal, no el
-        árbol ``resCriterios`` ni una plaza ``flExiste=false``. v0.7.15 conserva ese
+        árbol ``resCriterios`` ni una plaza ``flExiste=false``. v0.8.4 conserva ese
         contrato y elimina los fallbacks que causaban e0006/falsos éxitos.
         """
         try:
@@ -2066,14 +2126,29 @@ class SieWebClient:
                 "operations":operations,"sent_record_count":0,"sent_node_count":0,
                 "write_strategy":"no-post-already-present","write_attempts":[],
                 "idAmbito":id_ambito,"CURSOCOD":write_course_code,
-                "context_guard":"exact-ambito-native-modal-roster-v0.7.15",
-                "mode":"ui-native-modal-coursecode-roster-v0.7.15",
+                "context_guard":"exact-ambito-native-modal-roster-v0.8.4",
+                "mode":"ui-native-modal-coursecode-roster-v0.8.4",
             }
 
-        replica_for_post=self.build_native_replica_context(
-            raw=raw_before,class_info=class_info,parent=parents_for_new[0],
-            criteria_context=criteria_context,supplied=replica,
-        )
+        replica_contexts = [
+            self.build_native_replica_context(
+                raw=raw_before, class_info=class_info, parent=parent,
+                criteria_context=criteria_context, supplied=replica,
+            )
+            for parent in parents_for_new
+        ]
+        replica_for_post = replica_contexts[0]
+        inconsistent_replica_contexts = [
+            {"index": index, "context": context}
+            for index, context in enumerate(replica_contexts)
+            if context != replica_for_post
+        ]
+        if inconsistent_replica_contexts:
+            raise SieWebError(
+                "Los desempeños solicitados no comparten el mismo paramDatosReplica nativo; "
+                "se bloqueó el lote antes del POST para evitar e0006 o una réplica cruzada: "
+                + json.dumps(inconsistent_replica_contexts, ensure_ascii=False)
+            )
         native_keys={
             "ID_CLASE_CONTENIDO","ID_CLASE","ID_CLASE_PERIODO","EXCLUIR","SUMATIVO","PESO",
             "ID_CONTENIDO","DESCRIPCION","ID_PROGRAMA","ID_CONTENIDO_REF","ABREVIATURA",
@@ -2149,8 +2224,8 @@ class SieWebClient:
             "write_attempts":write_attempts,
             "idAmbito":id_ambito,
             "CURSOCOD":((getattr(self, "_last_criteria_context", {}) or {}).get("CURSOCOD")),
-            "context_guard":"exact-ambito-native-modal-roster-v0.7.15",
-            "mode":"ui-native-modal-coursecode-roster-v0.7.15",
+            "context_guard":"exact-ambito-native-modal-roster-v0.8.4",
+            "mode":"ui-native-modal-coursecode-roster-v0.8.4",
         }
 
     # ---------- Conclusiones descriptivas ----------
@@ -2417,7 +2492,7 @@ class SieWebClient:
             "criteria": headers,
             "students": students,
             "reader_diagnostics": {
-                "mode":"recursive-gradebook-v0.7.15",
+                "mode":"recursive-gradebook-v0.8.4",
                 "header_source":header_source,
                 "header_count":len(headers),
                 "student_source":student_source,
@@ -2794,4 +2869,140 @@ class SieWebClient:
             "update": update_result,
             "verification": verification,
             "verification_attempts": attempts,
+        }
+
+    def save_grades_multi_verified(
+        self,
+        *,
+        year: str,
+        course_code: str,
+        class_period_id: int,
+        root_content_id: int,
+        period: int,
+        section_ng: list[Any],
+        header_ids: list[int],
+        grades_by_student_code: dict[str, str],
+        class_name: str | None = None,
+        extra_params: dict[str, Any] | None = None,
+        notify: bool = True,
+        verification_attempts: int = 3,
+        performance_level: int = 3,
+    ) -> dict[str, Any]:
+        """Guarda varios desempeños en un solo PUT y verifica cada celda."""
+        headers = [int(value) for value in header_ids]
+        if not headers or len(set(headers)) != len(headers):
+            raise SieWebError("header_ids debe contener desempeños únicos y no estar vacío.")
+        requested = {
+            str(code).strip(): str(grade).strip().upper()
+            for code, grade in (grades_by_student_code or {}).items()
+            if str(code).strip()
+        }
+        if not requested:
+            raise SieWebError("No hay calificaciones para guardar.")
+        invalid_grades = {
+            code: grade for code, grade in requested.items()
+            if grade not in {"A", "B", "C"}
+        }
+        if invalid_grades:
+            raise SieWebError(
+                "El lote cualitativo multi-desempeño solo admite A, B o C. No se envió nada: "
+                + json.dumps(invalid_grades, ensure_ascii=False)
+            )
+
+        before = self.get_gradebook_summary(
+            class_period_id=class_period_id,
+            root_content_id=root_content_id,
+            extra_params=extra_params,
+        )
+        targets = [
+            self.assert_performance_target(
+                before, header_id=header_id, performance_level=performance_level
+            )
+            for header_id in headers
+        ]
+
+        records: list[dict[str, Any]] = []
+        records_by_header: dict[str, int] = {}
+        for header_id in headers:
+            prepared = self.build_grade_records(
+                before,
+                header_id=header_id,
+                grades_by_student_code=requested,
+            )
+            if len(prepared) != len(requested):
+                raise SieWebError(
+                    f"Preflight incompleto para el desempeño {header_id}; no se envió nada."
+                )
+            records.extend(prepared)
+            records_by_header[str(header_id)] = len(prepared)
+
+        expected_total = len(headers) * len(requested)
+        if len(records) != expected_total:
+            raise SieWebError(
+                f"Preflight inconsistente: se esperaban {expected_total} celdas y se prepararon {len(records)}."
+            )
+
+        update_result = self.update_grades(
+            year=year,
+            course_code=course_code,
+            class_period_id=class_period_id,
+            period=period,
+            section_ng=section_ng,
+            records=records,
+            class_name=class_name,
+            notify=notify,
+        )
+
+        max_attempts = max(1, min(int(verification_attempts or 1), 5))
+        attempts: list[dict[str, Any]] = []
+        per_header: dict[str, dict[str, Any]] = {}
+        all_ok = False
+        for attempt in range(1, max_attempts + 1):
+            after = self.get_gradebook_summary(
+                class_period_id=class_period_id,
+                root_content_id=root_content_id,
+                extra_params=extra_params,
+            )
+            per_header = {
+                str(header_id): self.verify_grade_changes(
+                    after,
+                    header_id=header_id,
+                    grades_by_student_code=requested,
+                )
+                for header_id in headers
+            }
+            all_ok = all(item.get("ok") is True for item in per_header.values())
+            attempts.append({
+                "attempt": attempt,
+                "ok": all_ok,
+                "verified_cells": sum(int(item.get("verified_count") or 0) for item in per_header.values()),
+                "expected_cells": expected_total,
+            })
+            if all_ok:
+                break
+            if attempt < max_attempts:
+                time.sleep(0.4 * attempt)
+
+        if not all_ok:
+            raise SieWebError(
+                "SieWeb respondió al lote único, pero la relectura no confirmó todas las celdas. "
+                + json.dumps(per_header, ensure_ascii=False)
+            )
+
+        return {
+            "saved": True,
+            "single_update_request": True,
+            "header_ids": headers,
+            "targets": targets,
+            "student_count": len(requested),
+            "prepared_count": len(records),
+            "records_by_header": records_by_header,
+            "update": update_result,
+            "verification": {
+                "ok": True,
+                "expected_cells": expected_total,
+                "verified_cells": expected_total,
+                "per_header": per_header,
+                "attempts": attempts,
+            },
         }

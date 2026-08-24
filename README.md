@@ -1,29 +1,40 @@
-# SieRoom SRC 0.8.3
+# SieRoom SRC 0.8.4
 
-## Classroom — cuenta, estructura y entrega destino verificadas
+## Classroom → SIEWeb — lectura por alumno y guardado cualitativo protegido
 
-La v0.8.3 conserva la lectura estructurada de v0.8.2 y corrige una condición de carrera real al cambiar de aula: Chrome podía declarar la pestaña `complete` antes de terminar la navegación y devolver comentarios de la entrega anterior. Ahora el navegador y Render verifican la ruta completa de la entrega solicitada antes de aceptar cualquier lectura o escritura.
+La v0.8.4 consolida el flujo completo y elimina rutas que podían mezclar alumnos, cuentas, secciones o columnas. El Bridge solo acepta una lectura cuando coinciden la versión local/remota, la cuenta docente activa, la ruta exacta de la entrega y un contenedor acotado de **Comentarios privados**.
 
 - `classroom_private_feedback action=read` encola la lectura de una entrega.
 - `classroom_private_feedback action=read_all` encola todas las entregas de una tarea.
 - `action=list` permite filtrar los resultados por curso, tarea, operación y estado.
-- cada resultado conserva el `submission_id`, el texto detectado y los marcadores de retroalimentación estructurada;
+- cada resultado conserva el `submission_id`, el orden DOM, la marca de tiempo disponible y los marcadores de retroalimentación estructurada;
 - el popup vuelve a guardar el **correo docente de Classroom**;
-- cada entrega se abre con `authuser=<correo docente>` y se comprueba la cuenta visible antes de leer o escribir;
+- cada entrega se abre con `authuser=<correo docente>` y se acepta únicamente el correo de la cuenta activa; una cuenta secundaria del selector ya no produce un falso positivo;
 - si Classroom muestra otra cuenta, el Bridge se detiene y devuelve el trabajo a pendientes;
 - comentario, calificación y devolución pueden completarse en la misma sesión del navegador;
-- la extensión anuncia `read_private_comments`, `verified_private_comment_read_v3` y `target_submission_guard` antes de recibir trabajos de lectura;
+- la extensión anuncia `read_private_comments`, `verified_private_comment_read_v4`, `student_scoped_private_comment_read` y `target_submission_guard` antes de recibir trabajos de lectura;
 - el Bridge espera simultáneamente `status=complete` y la ruta exacta de curso, tarea y alumno;
 - vuelve a comprobar el destino inmediatamente antes de leer, comentar, calificar o devolver;
 - Render compara la URL reportada con `submission_url` y rechaza cualquier cruce entre aulas;
-- el servidor exige el método v0.8.3, una fuente verificada y objetos de comentario completos;
+- se eliminó por completo la lectura de comentarios desde `document.body`: solo se usa la región privada que contiene el editor del alumno actual;
+- publicar y confirmar un comentario también queda limitado a esa misma región;
+- el servidor exige el método v0.8.4, cuenta verificada, alcance por alumno, región privada acotada, orden y objetos de comentario completos;
 - los textos de navegación de Classroom se descartan en el navegador y se rechazan nuevamente en Render;
 - una pestaña abierta con un `content.js` anterior se detecta por versión y recibe la reinyección actual;
-- una extensión antigua ya no puede producir un falso estado `completed`;
+- una extensión o servidor de versión distinta no puede reclamar la cola;
+- solo una pestaña del Bridge actúa como líder y `Procesar ahora` no cancela un trabajo que ya está activo;
 - la lectura no modifica Classroom, no transmite cookies a Render y no altera notas ni estados de devolución;
-- el servidor verifica también la nota y devolución confirmadas por el navegador.
+- el servidor verifica también la nota y devolución confirmadas por el navegador;
+- los comentarios estructurados se convierten únicamente a **A/B/C** con la equivalencia acordada (A 15–20, B 11–14, C 0–10); discrepancias numérico/cualitativas bloquean el lote;
+- si existen varias retroalimentaciones con nota, se elige la más reciente solo cuando las marcas de tiempo permiten demostrarlo;
+- códigos institucionales duplicados y notas asignadas sin una nota verificable en el comentario bloquean la transferencia parcial;
+- una nota no se copia a varios desempeños salvo autorización explícita;
+- varios desempeños se guardan en un único PUT, se relee cada celda y solo se admiten destinos `nivelEva=3`;
+- la ruta académica `update_grades` de bajo nivel quedó deshabilitada; **Nivel de Logro permanece intacto**;
+- `extra_params` ya no puede cambiar silenciosamente clase, período, contenido o ámbito;
+- el alta de desempeños valida que todos compartan el mismo `paramDatosReplica` nativo antes del único POST, evitando mezclas que terminaban en `e0006`.
 
-La suite pasa **62/62 pruebas**. Consulta `SIEROOM_CLASSROOM_BRIDGE_V0.8.3.md` y `TEST_REPORT_V0.8.3.txt`.
+La suite pasa **90/90 pruebas**. Consulta `SIEROOM_CLASSROOM_BRIDGE_V0.8.4.md` y `TEST_REPORT_V0.8.4.txt`.
 
 ---
 
