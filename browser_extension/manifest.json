@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "SieRoom Classroom Bridge",
-  "version": "0.8.2",
-  "description": "Puente local SieRoom para leer o publicar comentarios privados, calificar y devolver en Classroom bajo la cuenta docente verificada.",
+  "version": "0.8.3",
+  "description": "Puente local SieRoom con cuenta docente y entrega destino verificadas para leer o publicar comentarios, calificar y devolver en Classroom.",
   "permissions": [
     "storage",
     "tabs",

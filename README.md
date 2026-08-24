@@ -1,8 +1,8 @@
-# SieRoom SRC 0.8.2
+# SieRoom SRC 0.8.3
 
-## Classroom — lectura privada estricta sin textos falsos de interfaz
+## Classroom — cuenta, estructura y entrega destino verificadas
 
-La v0.8.2 conserva la guardia de cuenta docente de v0.8.1 y corrige una falsa lectura detectada durante el procesamiento real de la tarea de la página 408: textos como “Instrucciones”, “Trabajo de los alumnos” y “Más opciones” ya no pueden convertirse en comentarios privados.
+La v0.8.3 conserva la lectura estructurada de v0.8.2 y corrige una condición de carrera real al cambiar de aula: Chrome podía declarar la pestaña `complete` antes de terminar la navegación y devolver comentarios de la entrega anterior. Ahora el navegador y Render verifican la ruta completa de la entrega solicitada antes de aceptar cualquier lectura o escritura.
 
 - `classroom_private_feedback action=read` encola la lectura de una entrega.
 - `classroom_private_feedback action=read_all` encola todas las entregas de una tarea.
@@ -12,15 +12,24 @@ La v0.8.2 conserva la guardia de cuenta docente de v0.8.1 y corrige una falsa le
 - cada entrega se abre con `authuser=<correo docente>` y se comprueba la cuenta visible antes de leer o escribir;
 - si Classroom muestra otra cuenta, el Bridge se detiene y devuelve el trabajo a pendientes;
 - comentario, calificación y devolución pueden completarse en la misma sesión del navegador;
-- la extensión anuncia `read_private_comments` y `verified_private_comment_read_v2` antes de recibir trabajos de lectura;
-- el servidor exige el método v0.8.2, una fuente verificada y objetos de comentario completos;
+- la extensión anuncia `read_private_comments`, `verified_private_comment_read_v3` y `target_submission_guard` antes de recibir trabajos de lectura;
+- el Bridge espera simultáneamente `status=complete` y la ruta exacta de curso, tarea y alumno;
+- vuelve a comprobar el destino inmediatamente antes de leer, comentar, calificar o devolver;
+- Render compara la URL reportada con `submission_url` y rechaza cualquier cruce entre aulas;
+- el servidor exige el método v0.8.3, una fuente verificada y objetos de comentario completos;
 - los textos de navegación de Classroom se descartan en el navegador y se rechazan nuevamente en Render;
 - una pestaña abierta con un `content.js` anterior se detecta por versión y recibe la reinyección actual;
 - una extensión antigua ya no puede producir un falso estado `completed`;
 - la lectura no modifica Classroom, no transmite cookies a Render y no altera notas ni estados de devolución;
 - el servidor verifica también la nota y devolución confirmadas por el navegador.
 
-La suite pasa **60/60 pruebas**. Consulta `SIEROOM_CLASSROOM_BRIDGE_V0.8.2.md` y `TEST_REPORT_V0.8.2.txt`.
+La suite pasa **62/62 pruebas**. Consulta `SIEROOM_CLASSROOM_BRIDGE_V0.8.3.md` y `TEST_REPORT_V0.8.3.txt`.
+
+---
+
+# Historial — SieRoom SRC 0.8.2
+
+La v0.8.2 eliminó falsas lecturas de textos de navegación como “Instrucciones”, “Trabajo de los alumnos” y “Más opciones”.
 
 ---
 

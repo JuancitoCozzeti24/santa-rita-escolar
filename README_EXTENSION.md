@@ -1,4 +1,4 @@
-# SieRoom Classroom Bridge 0.8.2
+# SieRoom Classroom Bridge 0.8.3
 
 Este componente local permite que SieRoom lea y publique **comentarios privados nativos** en entregas de Google Classroom usando la sesión ya iniciada en Chrome.
 
@@ -19,7 +19,7 @@ Este componente local permite que SieRoom lea y publique **comentarios privados 
 
 Si Google cambia la interfaz de Classroom, el puente puede necesitar una actualización de selectores. Las demás capacidades de SieRoom siguen usando las APIs oficiales.
 
-## Cuenta docente y lectura privada — protegido en 0.8.2
+## Cuenta docente, lectura privada y destino — protegido en 0.8.3
 
 - La operación `read_private_comments` abre la entrega real y localiza exclusivamente el panel **Comentarios privados**.
 - Reconoce retroalimentaciones estructuradas mediante encabezados como “Lo que hizo bien”, “Lo que debe mejorar”, “Sugerencias”, “Nota cuantitativa” y “Calificación cualitativa”.
@@ -29,9 +29,10 @@ Si Google cambia la interfaz de Classroom, el puente puede necesitar una actuali
 - Cada entrega se abre con `authuser=<correo>` y se verifica la cuenta visible antes de cualquier lectura o escritura.
 - Si aparece una cuenta diferente, la cola se pausa sin publicar, calificar ni devolver.
 - Los flujos de comentario, calificación y devolución de v0.8.0 permanecen disponibles.
-- La extensión anuncia `verified_private_comment_read_v2`. Las copias antiguas no pueden reclamar trabajos de lectura.
+- La extensión anuncia `verified_private_comment_read_v3` y `target_submission_guard`. Las copias antiguas no pueden reclamar trabajos de lectura.
 - El lector descarta “Instrucciones”, “Trabajo de los alumnos”, “Más opciones” y otros textos de navegación.
-- El servidor exige fuente verificada, método v0.8.2 y objetos de comentario estructuralmente válidos.
+- Chrome no acepta `status=complete` hasta que la ruta coincida con curso, tarea y alumno solicitados.
+- El servidor exige URL de destino, fuente verificada, método v0.8.3 y objetos de comentario estructuralmente válidos.
 - Si una pestaña conserva un `content.js` anterior, el Bridge compara versiones y reinyecta el archivo actual.
 
 
