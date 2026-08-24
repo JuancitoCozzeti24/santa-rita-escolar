@@ -1,4 +1,10 @@
-# SieRoom SRC 0.8.4
+# SieRoom SRC 0.8.5
+
+## Hotfix del panel privado vacío
+
+La v0.8.5 corrige el caso real en que Classroom muestra el editor **“Añade un comentario privado…”** y el botón **Publicar**, pero oculta el encabezado **“Comentarios privados”** cuando todavía no existe ningún comentario. El Bridge acepta ahora ese panel vacío solo si el editor es explícitamente privado, el botón de publicación pertenece a un ancestro cercano y acotado, y la región no es `document.body` ni `documentElement`.
+
+La prueba de regresión cubre el panel vacío válido y rechaza un editor sin botón acotado, un editor no privado y cualquier región global. La suite pasa **91/91 pruebas**.
 
 ## Classroom → SIEWeb — lectura por alumno y guardado cualitativo protegido
 
