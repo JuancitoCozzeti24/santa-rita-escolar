@@ -22,6 +22,20 @@ async function activateTab(tabId) {
   try { await chrome.tabs.update(tabId, { active: true }); } catch (_) {}
 }
 
+async function isLeaderBridgeTab() {
+  try {
+    const current = await chrome.tabs.getCurrent();
+    const bridgeUrl = chrome.runtime.getURL("bridge.html");
+    const tabs = await chrome.tabs.query({ url: bridgeUrl + "*" });
+    const leader = tabs
+      .filter((tab) => Number.isInteger(tab.id))
+      .sort((a, b) => a.id - b.id)[0];
+    return Boolean(current?.id && leader?.id === current.id);
+  } catch (_) {
+    return true;
+  }
+}
+
 function log(msg) {
   const stamp = new Date().toLocaleTimeString();
   logEl.textContent = `[${stamp}] ${msg}\n` + logEl.textContent.slice(0, 10000);
@@ -89,16 +103,34 @@ async function preflightAccount(expectedEmail, generation = resetGeneration) {
     };
   }
 
-  const tab = tabs.find((t) => t.active) || tabs[0];
-  try {
-    const r = await checkAccountOnTab(tab.id, expectedEmail, generation);
-    return { ok: r?.ok !== false, result: r, tabId: tab.id };
-  } catch (e) {
-    if (e instanceof AccountMismatchError) {
-      return { ok: false, mismatch: true, message: e.message, detail: e.detail, tabId: tab.id };
+  // Puede haber varias cuentas/ventanas de Classroom abiertas. No se bloquea
+  // solo porque la primera pestaña pertenezca a otra cuenta: se exige encontrar
+  // al menos una pestaña cuya cuenta ACTIVA coincida de forma positiva.
+  const ordered = [...tabs].sort((a, b) => Number(Boolean(b.active)) - Number(Boolean(a.active)));
+  const checked = [];
+  for (const tab of ordered.slice(0, 8)) {
+    try {
+      const r = await checkAccountOnTab(tab.id, expectedEmail, generation);
+      checked.push({ tabId: tab.id, result: r });
+      if (r?.ok === true) return { ok: true, result: r, tabId: tab.id };
+    } catch (e) {
+      if (e instanceof AccountMismatchError) {
+        checked.push({ tabId: tab.id, result: e.detail, mismatch: true });
+        continue;
+      }
+      throw e;
     }
-    throw e;
   }
+  const detected = [...new Set(checked.flatMap((item) => item.result?.detectedEmails || []))];
+  return {
+    ok: false,
+    mismatch: detected.length > 0,
+    unverified: detected.length === 0,
+    message: detected.length
+      ? `Ninguna pestaña usa la cuenta docente ${expectedEmail}. Cuentas activas detectadas: ${detected.join(", ")}.`
+      : `No pude confirmar de forma positiva la cuenta activa ${expectedEmail} en Classroom.`,
+    detail: { checked, detectedEmails: detected },
+  };
 }
 
 async function bridgeFetch(path, options = {}) {
@@ -109,7 +141,7 @@ async function bridgeFetch(path, options = {}) {
   headers.set("X-SieRoom-Bridge-Version", chrome.runtime.getManifest().version);
   headers.set(
     "X-SieRoom-Bridge-Capabilities",
-    "post_private_comment,read_private_comments,verified_private_comment_read_v3,browser_grade_return,teacher_account_guard,target_submission_guard"
+    "post_private_comment,read_private_comments,verified_private_comment_read_v4,student_scoped_private_comment_read,browser_grade_return,teacher_account_guard,target_submission_guard"
   );
   if (options.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
   const r = await fetch(`${c.endpoint}${path}`, { ...options, headers, cache: "no-store" });
@@ -282,18 +314,20 @@ async function processJob(job, generation) {
     // Verificación de seguridad: si Google muestra explícitamente otra cuenta,
     // NO publicamos y devolvemos el trabajo a la cola mediante RESET.
     const account = await checkAccountOnTab(tab.id, c.teacherEmail, generation);
-    if (account?.ok === true) {
-      log(`Cuenta docente confirmada: ${c.teacherEmail}.`);
-    } else {
-      log(`Cuenta docente no visible en esta pantalla; URL solicitada con authuser=${c.teacherEmail}.`);
+    if (account?.ok !== true) {
+      throw new AccountMismatchError(
+        `No pude verificar de forma positiva la cuenta docente ${c.teacherEmail}; no se leerá ni escribirá nada.`,
+        account || {}
+      );
     }
+    log(`Cuenta docente confirmada: ${c.teacherEmail}.`);
 
     log(`Trabajo ${job.id}: Classroom activo; esperando panel lateral…`);
     await sleep(1700);
     assertGeneration(generation);
 
     const isRead = job.operation === "read_private_comments";
-    // v0.8.3 conserva comentario + calificación + devolución en la MISMA
+    // v0.8.4 conserva comentario + calificación + devolución en la MISMA
     // sesión y vuelve a verificar la entrega justo antes de leer o escribir.
     await assertTabTarget(tab.id, forcedUrl, generation);
     const result = await sendToContent(tab.id, isRead ? {
@@ -325,7 +359,7 @@ async function processJob(job, generation) {
         throw new Error("Classroom devolvió un resultado de lectura incompleto o incompatible.");
       }
       log(`Comentarios leídos para ${job.submission_id}: ${result.comments.length}.`);
-      await complete(job, result);
+      await complete(job, { ...result, teacher_account_verified: true });
       assertGeneration(generation);
       log(`Lectura ${job.id} completada bajo la cuenta ${c.teacherEmail}.`);
       return { readCompleted: true, count: result.comments.length };
@@ -346,6 +380,7 @@ async function processJob(job, generation) {
 
     const done = await complete(job, {
       ...result,
+      teacher_account_verified: true,
       browser_followup_done: true,
       browser_grade_applied: Boolean(result.browser_grade_applied),
       browser_grade: result.browser_grade,
@@ -357,7 +392,7 @@ async function processJob(job, generation) {
       // Compatibilidad temporal con servidor 0.7.x: ese servidor intenta repetir
       // nota/devolución por API y puede recibir 403. Si el navegador YA confirmó
       // ambas acciones, no convertimos un éxito real en un fallo local.
-      log(`Trabajo ${job.id} completado en Classroom. El servidor antiguo reportó seguimiento API parcial; actualiza Render a v0.8.3 para limpiar ese estado.`);
+      log(`Trabajo ${job.id} completado en Classroom. El servidor antiguo reportó seguimiento API parcial; actualiza Render a v0.8.4 para limpiar ese estado.`);
       return { completedInBrowser: true, legacyServerPartial: true };
     }
     log(`Trabajo ${job.id} completado: comentario/nota/devolución confirmados.`);
@@ -441,11 +476,20 @@ async function drainQueue(generation, maxJobs = 50) {
 }
 
 async function poll(force = false) {
-  if (busy && !force) return;
-  if (busy && force) resetGeneration += 1;
+  // "Procesar ahora" nunca invalida un trabajo en curso. Solo RESET puede
+  // cancelar una generación y liberar el claim del servidor.
+  if (busy) {
+    if (force) log("Ya existe un trabajo en curso; no se inició un segundo proceso.");
+    return;
+  }
   busy = true;
   const generation = resetGeneration;
   try {
+    if (!await isLeaderBridgeTab()) {
+      statusEl.textContent = "Otra pestaña de SieRoom Bridge está procesando la cola. Esta queda en espera.";
+      statusEl.className = "bad";
+      return;
+    }
     const c = await cfg();
     if (!c.secret) {
       statusEl.textContent = "Falta configurar el secreto del puente.";
@@ -466,8 +510,15 @@ async function poll(force = false) {
     }
 
     const st = await bridgeFetch("/bridge/v1/status");
+    const extensionVersion = chrome.runtime.getManifest().version;
+    if (String(st.data?.version || "") !== extensionVersion) {
+      throw new Error(
+        `Versión incompatible: servidor ${st.data?.version || "desconocida"} · ` +
+        `extensión ${extensionVersion}. No se procesará la cola.`
+      );
+    }
     const q = st.data.queue || {};
-    statusEl.textContent = `Conectado a SieRoom · extensión ${chrome.runtime.getManifest().version} · ${friendlyQueue(q)}`;
+    statusEl.textContent = `Conectado a SieRoom · extensión ${extensionVersion} · ${friendlyQueue(q)}`;
     statusEl.className = "ok";
 
     const processed = await drainQueue(generation, 50);

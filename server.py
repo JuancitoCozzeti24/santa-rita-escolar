@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import re
 import secrets
-from datetime import date, time
+import unicodedata
+from datetime import date, datetime, time, timezone
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -51,13 +53,13 @@ mcp = FastMCP(
         "Para GUARDAR NOTAS EN SIEWEB usa preferentemente sieweb_academics action=save_grades_verified: esa acción relee la matrícula real, "
         "preserva la estructura original de cada celda, detiene el lote si falta un alumno/desempeño y verifica la persistencia después del PUT. "
         "Para transferir una calificación oficial de Classroom a un desempeño SIEweb usa workflow_school action=classroom_grades_to_sieweb; "
-        "ese flujo bloquea Nivel de Logro y solo admite desempeños nivelEva=3. Para replicar desempeños entre secciones usa action=replicate_performances (v0.7.15 reproduce el modal oficial, lee la matrícula completa sin el falso filtro individual y nunca reintenta un POST ambiguo): "
+        "ese flujo bloquea Nivel de Logro y solo admite desempeños nivelEva=3. Para replicar desempeños entre secciones usa action=replicate_performances (v0.8.4 reproduce el modal oficial, lee la matrícula completa sin el falso filtro individual y nunca reintenta un POST ambiguo): "
         "debe resolver los IDs internos de cada sección por separado y nunca copiar IDs de 2.º A a 2.º B. "
         "No construyas manualmente registros mínimos para HyoClasenota/actualizar. Antes de cualquier escritura o acción destructiva, "
         "resume exactamente el cambio al usuario y solo ejecuta cuando haya autorizado ese cambio. "
         "Los comentarios privados nativos de entregas se manejan mediante el puente local de navegador SieRoom Classroom Bridge; "
         "no se guardan cookies ni tokens de Google en Render. Para un flujo de retroalimentación privada usa classroom_private_feedback. "
-        "v0.8.3 permite leer y publicar comentarios privados, calificar y devolver bajo una cuenta docente verificada y confirma la entrega destino. "
+        "v0.8.4 permite leer y publicar comentarios privados, calificar y devolver bajo una cuenta docente verificada y confirma la entrega destino. "
         "Si se solicita comentar, calificar y devolver, primero prepara/revisa la retroalimentación, luego encola el comentario privado y deja que el puente lo publique; "
         "solo después el servidor aplica la nota/devolución oficial configurada para ese trabajo."
     ),
@@ -113,7 +115,7 @@ async def classroom_bridge_http_status(request: Request):
         return _bridge_unauthorized()
     return JSONResponse({
         "ok": True,
-        "version": "0.8.3",
+        "version": "0.8.4",
         "bridge": "SieRoom Classroom Bridge",
         "queue": bridge_queue.stats(),
     })
@@ -136,7 +138,7 @@ async def classroom_bridge_http_reset(request: Request):
     result = bridge_queue.reset_active(retry_failed=retry_failed)
     return JSONResponse({
         **result,
-        "version": "0.8.3",
+        "version": "0.8.4",
         "message": "Cola desatascada. Los trabajos activos se conservaron y pueden procesarse de nuevo.",
     })
 
@@ -146,22 +148,36 @@ async def classroom_bridge_http_next(request: Request):
     if not _bridge_auth_ok(request):
         return _bridge_unauthorized()
     raw_capabilities = str(request.headers.get("X-SieRoom-Bridge-Capabilities") or "")
+    bridge_version = str(request.headers.get("X-SieRoom-Bridge-Version") or "").strip()
     capabilities = {
         item.strip().lower()
         for item in raw_capabilities.split(",")
         if item.strip()
     }
-    allowed_operations = {"post_private_comment"}
-    verified_read_capability = "verified_private_comment_read_v3"
+    version_compatible = bridge_version == "0.8.4"
+    post_capable = (
+        version_compatible
+        and "post_private_comment" in capabilities
+        and "teacher_account_guard" in capabilities
+        and "target_submission_guard" in capabilities
+    )
+    allowed_operations: set[str] = set()
+    if post_capable:
+        allowed_operations.add("post_private_comment")
+    verified_read_capability = "verified_private_comment_read_v4"
     read_capable = (
+        version_compatible
+        and
         "read_private_comments" in capabilities
         and verified_read_capability in capabilities
+        and "student_scoped_private_comment_read" in capabilities
     )
     if read_capable:
         allowed_operations.add("read_private_comments")
     job = bridge_queue.next_job(allowed_operations=allowed_operations)
     if not job:
         read_waiting = bridge_queue.has_queued_operation("read_private_comments")
+        post_waiting = bridge_queue.has_queued_operation("post_private_comment")
         return JSONResponse({
             "ok": True,
             "job": None,
@@ -173,6 +189,8 @@ async def classroom_bridge_http_next(request: Request):
                 if read_waiting and not read_capable
                 else None
             ),
+            "required_version": "0.8.4" if read_waiting and not read_capable else None,
+            "post_waiting_for_compatible_bridge": bool(post_waiting and not post_capable),
         })
     return JSONResponse({"ok": True, "job": job.public()})
 
@@ -195,7 +213,11 @@ async def classroom_bridge_http_complete(request: Request):
         count = result.get("count")
         method = str(result.get("method") or "")
         private_section_verified = result.get("private_section_verified") is True
-        structured_fallback_verified = result.get("structured_fallback_verified") is True
+        bounded_private_region_verified = result.get("bounded_private_region_verified") is True
+        student_scope_verified = result.get("student_scope_verified") is True
+        teacher_account_verified = result.get("teacher_account_verified") is True
+        scope_evidence = str(result.get("scope_evidence") or "")
+        comment_order = str(result.get("comment_order") or "")
         target_verified = _classroom_target_matches(
             result.get("url"), job.submission_url
         )
@@ -209,7 +231,7 @@ async def classroom_bridge_http_complete(request: Request):
 
         valid_comments = isinstance(comments, list)
         if valid_comments:
-            for comment in comments:
+            for index, comment in enumerate(comments):
                 if not isinstance(comment, dict):
                     valid_comments = False
                     break
@@ -222,23 +244,26 @@ async def classroom_bridge_http_complete(request: Request):
                     or not isinstance(markers, list)
                     or any(not isinstance(marker, str) for marker in markers)
                     or not isinstance(structured, bool)
+                    or comment.get("domOrder") != index
+                    or comment.get("timestamp") is not None
+                    and not isinstance(comment.get("timestamp"), str)
                 ):
                     valid_comments = False
                     break
 
-        valid_source = private_section_verified
-        if structured_fallback_verified:
-            valid_source = bool(comments) and all(
-                isinstance(comment, dict)
-                and comment.get("structuredFeedback") is True
-                and len(comment.get("markers") or []) >= 2
-                for comment in comments
-            )
+        valid_source = (
+            student_scope_verified
+            and bounded_private_region_verified
+            and scope_evidence in {"private_label_and_composer", "bounded_private_composer"}
+            and comment_order == "document_order"
+            and (private_section_verified or scope_evidence == "bounded_private_composer")
+        )
         valid_read_result = (
             result.get("ok") is True
             and result.get("operation") == "read_private_comments"
-            and method == "dom-v0.8.3-read"
+            and method == "dom-v0.8.4-read"
             and target_verified
+            and teacher_account_verified
             and valid_comments
             and valid_source
             and isinstance(count, int)
@@ -255,7 +280,7 @@ async def classroom_bridge_http_complete(request: Request):
                         (
                             "bridge_target_mismatch: la lectura no corresponde a la entrega solicitada."
                             if result.get("url") and not target_verified
-                            else "bridge_incompatible_read_result: actualiza y recarga SieRoom Bridge v0.8.3."
+                            else "bridge_incompatible_read_result: actualiza y recarga SieRoom Bridge v0.8.4."
                         )
                         if incompatible
                         else "El puente no pudo leer los comentarios privados."
@@ -269,6 +294,10 @@ async def classroom_bridge_http_complete(request: Request):
     result = body if isinstance(body, dict) else {}
     if result.get("browser_followup_done") is True:
         validation_errors: list[str] = []
+        if result.get("method") != "dom-v0.8.4":
+            validation_errors.append("metodo_bridge_incompatible")
+        if result.get("teacher_account_verified") is not True:
+            validation_errors.append("cuenta_docente_no_verificada")
         if not _classroom_target_matches(result.get("url"), job.submission_url):
             validation_errors.append("entrega_distinta")
         comment_result = result.get("comment") if isinstance(result.get("comment"), dict) else {}
@@ -377,7 +406,7 @@ def _require_confirm(action: str, payload: dict[str, Any], confirmed: bool, *, d
 def sieweb_capabilities() -> str:
     """Capacidades de mensajería SieWeb. Confirma lectura, respuesta y creación/envío de correos nuevos."""
     return _ok({
-        "version": "0.8.3",
+        "version": "0.8.4",
         "list_inbox": True,
         "read_message": True,
         "reply_existing_message": True,
@@ -618,7 +647,7 @@ def sieweb_reply_message(
 def classroom_capabilities() -> str:
     """Resume el control práctico de Classroom expuesto por este conector y los límites de la API oficial."""
     return _ok({
-        "version": "0.8.3",
+        "version": "0.8.4",
         "tool_design": "Acciones agrupadas por recurso para reducir errores de selección de herramienta.",
         "implemented": {
             "courses": ["list/get/create/update/delete", "aliases", "gradebookSettings", "gradingPeriodSettings"],
@@ -652,7 +681,7 @@ def classroom_capabilities() -> str:
             "profiles_guardians": ["user profile", "capability checks", "guardians list/get/delete", "guardian invitations list/get/create/cancel"],
         },
         "official_api_limits": {
-            "private_submission_comments": "La API oficial no expone lectura/escritura de comentarios privados. v0.8.3 usa un puente local con lectura verificada, negociación de capacidades, guardia de correo docente y verificación de la entrega destino, sin enviar cookies de Google a Render.",
+            "private_submission_comments": "La API oficial no expone lectura/escritura de comentarios privados. v0.8.4 usa un puente local con lectura verificada, negociación de capacidades, guardia de correo docente y verificación de la entrega destino, sin enviar cookies de Google a Render.",
             "stream_announcement_comments": "No hay endpoint oficial de Classroom para leer/escribir comentarios del tablón/anuncios. Sí se pueden crear, editar, programar y borrar anuncios.",
             "overall_course_grade": "La API no expone la nota global calculada como campo editable; puede calcularse localmente con datos disponibles.",
             "rubric_criterion_scores": "Los puntajes por criterio pueden leerse en StudentSubmission, pero no escribirse mediante la API.",
@@ -684,14 +713,14 @@ def classroom_private_feedback(
     p = _json_obj(payload_json, {})
     if action == "status":
         return _ok({
-            "version": "0.8.3",
+            "version": "0.8.4",
             "bridge_configured": bool(settings.classroom_bridge_secret),
             "bridge_endpoint": f"{settings.public_base_url}/bridge/v1",
             "queue": bridge_queue.stats(),
             "mode": "local_browser_bridge",
             "google_session_stored_on_render": False,
             "read_private_comments": True,
-            "note": "El puente v0.8.3 debe estar abierto en Chrome y configurado con el correo docente correcto de Classroom.",
+            "note": "El puente v0.8.4 debe estar abierto en Chrome y configurado con el correo docente correcto de Classroom.",
         })
     if action == "job":
         job = bridge_queue.get(job_id)
@@ -765,17 +794,34 @@ def classroom_private_feedback(
         }
         if not confirmed:
             return _ok({"requires_confirmation": True, "preview": preview})
-        jobs = [
-            bridge_queue.enqueue(
+        jobs = []
+        reused = []
+        for cid, cwid, sid, url in prepared:
+            active = bridge_queue.matching(
+                course_id=cid,
+                course_work_id=cwid,
+                submission_id=sid,
+                operation="read_private_comments",
+                statuses={"queued", "claimed"},
+            )
+            if active:
+                reused.append(active[0].public())
+                continue
+            jobs.append(bridge_queue.enqueue(
                 course_id=cid,
                 course_work_id=cwid,
                 submission_id=sid,
                 submission_url=url,
                 operation="read_private_comments",
-            ).public()
-            for cid, cwid, sid, url in prepared
-        ]
-        return _ok({"queued": True, "operation": "read_private_comments", "count": len(jobs), "jobs": jobs})
+            ).public())
+        return _ok({
+            "queued": True,
+            "operation": "read_private_comments",
+            "count": len(jobs),
+            "reused_active_count": len(reused),
+            "jobs": jobs,
+            "reused_active_jobs": reused,
+        })
     if action == "queue":
         if not settings.classroom_bridge_secret:
             return _ok({
@@ -1244,7 +1290,7 @@ def sieweb_messaging(action: str, payload_json: str = "{}", confirmed: bool = Fa
     action = action.strip().lower(); p = _json_obj(payload_json, {})
     if action == "capabilities":
         return _ok({
-            "version": "0.8.3",
+            "version": "0.8.4",
             "list_inbox": True, "read_message": True, "reply_existing_message": True,
             "search_recipients": True, "compose_new_email": True, "send_new_email": True,
             "new_email_requires_existing_thread": False,
@@ -1331,7 +1377,7 @@ def sieweb_messaging(action: str, payload_json: str = "{}", confirmed: bool = Fa
 
 @mcp.tool()
 def sieweb_academics(action: str, payload_json: str = "{}", confirmed: bool = False) -> str:
-    """Registro académico de SieWeb agrupado. action: login_status|resolve_class_context|gradebook|gradebook_by_section|gradebook_summary|find_students|find_criteria|get_criteria|criteria_write_preflight|upsert_criteria_verified|build_grade_records|save_grades_verified|update_grades|get_conclusion|get_conclusions_batch|save_conclusion|save_conclusions_batch. v0.7.15 crea desempeños con el contrato nativo del modal y lee la matrícula completa sin objInfoRegIndividual[alucod]=False; verifica Competencia→Capacidad→Desempeño y bloquea Nivel de Logro. Para notas nuevas prefiere save_grades_verified."""
+    """Registro académico de SieWeb agrupado. action: login_status|resolve_class_context|gradebook|gradebook_by_section|gradebook_summary|find_students|find_criteria|get_criteria|criteria_write_preflight|upsert_criteria_verified|build_grade_records|save_grades_verified|update_grades|get_conclusion|get_conclusions_batch|save_conclusion|save_conclusions_batch. v0.8.4 crea desempeños con el contrato nativo del modal y lee la matrícula completa sin objInfoRegIndividual[alucod]=False; verifica Competencia→Capacidad→Desempeño y bloquea Nivel de Logro. Para notas nuevas prefiere save_grades_verified."""
     action = action.strip().lower(); p = _json_obj(payload_json, {})
     if action == "login_status": return sieweb_login_status()
     if action == "resolve_class_context": return sieweb_resolve_class_context(str(p["section"]), int(p["period"]), str(p.get("course_code", "05")), p.get("id_ambito"))
@@ -1343,16 +1389,25 @@ def sieweb_academics(action: str, payload_json: str = "{}", confirmed: bool = Fa
     if action == "get_criteria": return sieweb_get_criteria(int(p["class_id"]), int(p["class_period_id"]), int(p["root_content_id"]), int(p.get("id_ambito", 518)), json.dumps(p.get("extra_params", {}), ensure_ascii=False))
     if action == "criteria_write_preflight":
         if p.get("id_ambito") in (None, ""):
-            return _ok({"error":"v0.7.15 requiere id_ambito explícito para el preflight de escritura; resuelve primero la sección con resolve_class_context.","blocked":True})
+            return _ok({"error":"v0.8.4 requiere id_ambito explícito para el preflight de escritura; resuelve primero la sección con resolve_class_context.","blocked":True})
         return sieweb_criteria_write_preflight(int(p["class_id"]), int(p["class_period_id"]), int(p["root_content_id"]), int(p["id_ambito"]), json.dumps(p.get("extra_params", {}), ensure_ascii=False))
     if action == "upsert_criteria":
-        return _ok({"error":"ACCIÓN LEGADA DESHABILITADA EN v0.7.15: upsert_criteria no reproduce el modal oficial. Usa criteria_write_preflight y upsert_criteria_verified con id_ambito explícito.","blocked":True})
+        return _ok({"error":"ACCIÓN LEGADA DESHABILITADA EN v0.8.4: upsert_criteria no reproduce el modal oficial. Usa criteria_write_preflight y upsert_criteria_verified con id_ambito explícito.","blocked":True})
     if action == "upsert_criteria_verified":
         if p.get("id_ambito") in (None, ""):
-            return _ok({"error":"v0.7.15 bloqueó la escritura porque falta id_ambito. No se usará un ámbito silencioso de otra sección.","blocked":True})
+            return _ok({"error":"v0.8.4 bloqueó la escritura porque falta id_ambito. No se usará un ámbito silencioso de otra sección.","blocked":True})
         return sieweb_upsert_criteria_verified_tool(int(p["class_id"]), int(p["class_period_id"]), int(p["root_content_id"]), int(p["id_ambito"]), json.dumps(p.get("records", []), ensure_ascii=False), json.dumps(p.get("expected", []), ensure_ascii=False), json.dumps(p.get("replica", {}), ensure_ascii=False), json.dumps(p.get("extra_params", {}), ensure_ascii=False), confirmed)
     if action == "save_grades_verified": return sieweb_save_grades_verified(str(p["year"]), str(p["course_code"]), int(p["class_period_id"]), int(p["root_content_id"]), int(p["period"]), json.dumps(p["section_ng"], ensure_ascii=False), int(p["header_id"]), json.dumps(p.get("grades_by_student_code", {}), ensure_ascii=False), str(p.get("class_name", "")), json.dumps(p.get("extra_params", {}), ensure_ascii=False), confirmed)
-    if action == "update_grades": return sieweb_update_grades(str(p["year"]), str(p["course_code"]), int(p["class_period_id"]), int(p["period"]), json.dumps(p["section_ng"], ensure_ascii=False), json.dumps(p.get("records", []), ensure_ascii=False), str(p.get("class_name", "")), confirmed)
+    if action == "update_grades":
+        return _ok({
+            "blocked": True,
+            "error": (
+                "La escritura de bajo nivel update_grades está deshabilitada: no puede demostrar "
+                "que el destino sea un desempeño nivelEva=3 ni verificar cada celda. "
+                "Usa save_grades_verified o workflow_school."
+            ),
+            "nivel_de_logro_protected": True,
+        })
     if action == "build_grade_records": return sieweb_build_grade_records(int(p["class_period_id"]), int(p["root_content_id"]), int(p["header_id"]), json.dumps(p.get("grades_by_student_code", {}), ensure_ascii=False), json.dumps(p.get("extra_params", {}), ensure_ascii=False))
     if action == "get_conclusion": return sieweb_get_conclusion(int(p["person_id"]), int(p["class_content_id"]), str(p["ng"]))
     if action == "get_conclusions_batch": return sieweb_get_conclusions_batch(json.dumps(p.get("targets", []), ensure_ascii=False))
@@ -1363,13 +1418,14 @@ def sieweb_academics(action: str, payload_json: str = "{}", confirmed: bool = Fa
 
 @mcp.tool()
 def workflow_school(action: str, payload_json: str = "{}") -> str:
-    """Flujos Classroom↔SieWeb. action: match_roster|missing_with_sieweb_ids|missing_to_sieweb_recipients|classroom_grades_to_sieweb|replicate_performances."""
+    """Flujos Classroom↔SieWeb. action: match_roster|missing_with_sieweb_ids|missing_to_sieweb_recipients|classroom_grades_to_sieweb|private_comment_grades_to_sieweb|replicate_performances."""
     action = action.strip().lower(); p = _json_obj(payload_json, {})
     extra = json.dumps(p.get("extra_params", {}), ensure_ascii=False)
     if action == "match_roster": return workflow_match_classroom_sieweb_roster(str(p["course_id"]), int(p["class_period_id"]), int(p["root_content_id"]), extra)
     if action == "missing_with_sieweb_ids": return workflow_missing_classroom_with_sieweb_ids(str(p["course_id"]), str(p["course_work_id"]), int(p["class_period_id"]), int(p["root_content_id"]), extra)
     if action == "missing_to_sieweb_recipients": return workflow_missing_classroom_to_sieweb_recipients(str(p["course_id"]), str(p["course_work_id"]), str(p["section"]), int(p["period"]), str(p.get("course_code", "05")), extra)
     if action == "classroom_grades_to_sieweb": return workflow_classroom_grades_to_sieweb(p)
+    if action == "private_comment_grades_to_sieweb": return workflow_private_comment_grades_to_sieweb(p)
     if action == "replicate_performances": return workflow_replicate_performances(p)
     raise ValueError(f"Flujo escolar no soportado: {action}")
 
@@ -1459,12 +1515,19 @@ def sieweb_save_grades_verified(
     extra = json.loads(extra_params_json or "{}")
     if not grade_map:
         raise ValueError("grades_by_student_code no puede estar vacío.")
+    invalid_grades = {code: grade for code, grade in grade_map.items() if grade not in {"A", "B", "C"}}
+    if invalid_grades:
+        raise ValueError(
+            "Este flujo cualitativo solo admite A, B o C. Valores inválidos: "
+            + json.dumps(invalid_grades, ensure_ascii=False)
+        )
 
     summary = sieweb.get_gradebook_summary(
         class_period_id=class_period_id,
         root_content_id=root_content_id,
         extra_params=extra,
     )
+    target = sieweb.assert_performance_target(summary, header_id=header_id, performance_level=3)
     records = sieweb.build_grade_records(
         summary,
         header_id=header_id,
@@ -1477,6 +1540,7 @@ def sieweb_save_grades_verified(
         "root_content_id": root_content_id,
         "period": period,
         "header_id": header_id,
+        "target_performance": target,
         "section_ng": section_ng,
         "class_name": class_name,
         "requested_count": len(grade_map),
@@ -1512,6 +1576,8 @@ def sieweb_save_grades_verified(
             class_name=class_name or None,
             extra_params=extra,
             notify=bool(class_name),
+            protect_achievement_level=True,
+            performance_level=3,
         )
     )
 
@@ -1694,7 +1760,7 @@ def sieweb_gradebook_by_section(section: str, period: int, course_code: str = "0
 def sieweb_capabilities() -> str:
     """Indica explícitamente las capacidades de CIEWEB/SIEWEB disponibles en esta versión."""
     return _ok({
-        "version": "0.8.3",
+        "version": "0.8.4",
         "messaging": {
             "list_inbox": True,
             "read_message": True,
@@ -2013,7 +2079,7 @@ def sieweb_criteria_write_preflight(class_id: int, class_period_id: int, root_co
         "native_replica_error":native_replica_error,
         "native_write_contract":"defaultDataContenido+paramDatosReplica",
         "native_post_keys":["registros","idClase","datosReplica"],
-        "note":"v0.7.15: solo lectura; valida idAmbito/CURSOCOD, matrícula completa y el árbol Competencia→Capacidad→Desempeño antes de reproducir el modal oficial.",
+        "note":"v0.8.4: solo lectura; valida idAmbito/CURSOCOD, matrícula completa y el árbol Competencia→Capacidad→Desempeño antes de reproducir el modal oficial.",
     })
 
 
@@ -2027,7 +2093,7 @@ def sieweb_upsert_criteria_verified_tool(class_id: int, class_period_id: int, ro
     extra=json.loads(extra_params_json or "{}")
     preview={"class_id":class_id,"class_period_id":class_period_id,"root_content_id":root_content_id,
              "id_ambito":int(id_ambito),"records":records,"expected":expected,
-             "mode":"ui-native-modal-coursecode-roster-v0.7.15","context_guard":"exact-ambito-native-modal-roster-v0.7.15"}
+             "mode":"ui-native-modal-coursecode-roster-v0.8.4","context_guard":"exact-ambito-native-modal-roster-v0.8.4"}
     if not confirmed:
         return _ok({"requires_confirmation":True,"preview":preview})
     return _ok(sieweb.upsert_criteria_verified(
@@ -2122,12 +2188,143 @@ def workflow_missing_classroom_to_sieweb_recipients(course_id: str, course_work_
                 "with_student_recipient": sum(1 for x in out if x["messaging_student"])})
 
 
+def _feedback_norm(value: Any) -> str:
+    text = unicodedata.normalize("NFD", str(value or ""))
+    return "".join(ch for ch in text if unicodedata.category(ch) != "Mn").lower()
+
+
+def _extract_private_comment_grade(text: Any) -> dict[str, Any] | None:
+    """Extrae una nota 0–20 y su A/B/C sin confundir números de ejercicios."""
+    raw = str(text or "").strip()
+    normalized = _feedback_norm(raw)
+    explicit_numeric = [
+        int(value)
+        for value in re.findall(
+            r"(?:calificacion|nota)\s+cuantitativa\s*[:\-]?\s*(\d{1,2})(?:\s*/\s*20)?",
+            normalized,
+        )
+    ]
+    explicit_qualitative = [
+        value.upper()
+        for value in re.findall(
+            r"(?:calificacion|nota)\s+cualitativa\s*[:\-]?\s*([abc])\b",
+            normalized,
+        )
+    ]
+    legacy = [
+        (letter.upper(), int(value))
+        for letter, value in re.findall(r"\b([abc])\s*-\s*(\d{1,2})\s*puntos?\b", normalized)
+    ]
+    if not explicit_numeric and not explicit_qualitative and not legacy:
+        return None
+
+    numeric_values = explicit_numeric + [value for _, value in legacy]
+    qualitative_values = explicit_qualitative + [letter for letter, _ in legacy]
+    if not numeric_values:
+        return {
+            "ok": False,
+            "reason": "qualitative_without_numeric",
+            "text": raw,
+        }
+    if len(set(numeric_values)) != 1 or len(set(qualitative_values)) > 1:
+        return {
+            "ok": False,
+            "reason": "conflicting_values_inside_comment",
+            "numeric_values": numeric_values,
+            "qualitative_values": qualitative_values,
+            "text": raw,
+        }
+
+    numeric = numeric_values[-1]
+    if numeric < 0 or numeric > 20:
+        return {"ok": False, "reason": "numeric_out_of_range", "numeric": numeric, "text": raw}
+    derived = _classroom_grade_to_sieweb_level(numeric)
+    stated = qualitative_values[-1] if qualitative_values else None
+    if stated and stated != derived:
+        return {
+            "ok": False,
+            "reason": "numeric_qualitative_mismatch",
+            "numeric": numeric,
+            "stated": stated,
+            "derived": derived,
+            "text": raw,
+        }
+    return {
+        "ok": True,
+        "numeric": numeric,
+        "qualitative": stated or derived,
+        "qualitative_source": "stated" if stated else "derived_from_agreed_scale",
+        "text": raw,
+    }
+
+
+def _select_latest_private_comment_grade(comments: Any) -> dict[str, Any]:
+    if not isinstance(comments, list):
+        return {"ok": False, "reason": "comments_not_list", "events": []}
+    events: list[dict[str, Any]] = []
+    invalid: list[dict[str, Any]] = []
+    for index, comment in enumerate(comments):
+        if not isinstance(comment, dict):
+            invalid.append({"index": index, "reason": "comment_not_object"})
+            continue
+        parsed = _extract_private_comment_grade(comment.get("text"))
+        if parsed is None:
+            continue
+        event = {
+            **parsed,
+            "index": index,
+            "timestamp": comment.get("timestamp"),
+            "domOrder": comment.get("domOrder"),
+        }
+        if parsed.get("ok") is True:
+            events.append(event)
+        else:
+            invalid.append(event)
+    if invalid:
+        return {"ok": False, "reason": "invalid_grade_comment", "events": events, "invalid": invalid}
+    if not events:
+        return {"ok": True, "selected": None, "events": []}
+    if len(events) == 1:
+        return {"ok": True, "selected": events[0], "events": events, "selection_basis": "only_grade_event"}
+
+    dated: list[tuple[datetime, dict[str, Any]]] = []
+    for event in events:
+        raw_timestamp = event.get("timestamp")
+        if not isinstance(raw_timestamp, str) or not raw_timestamp.strip():
+            return {
+                "ok": False,
+                "reason": "multiple_grade_comments_without_verified_chronology",
+                "events": events,
+            }
+        try:
+            parsed = datetime.fromisoformat(raw_timestamp.strip().replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            dated.append((parsed.astimezone(timezone.utc), event))
+        except ValueError:
+            return {
+                "ok": False,
+                "reason": "invalid_grade_comment_timestamp",
+                "events": events,
+            }
+    dated.sort(key=lambda item: item[0])
+    if len(dated) >= 2 and dated[-1][0] == dated[-2][0]:
+        return {"ok": False, "reason": "ambiguous_latest_grade_timestamp", "events": events}
+    return {
+        "ok": True,
+        "selected": dated[-1][1],
+        "events": events,
+        "selection_basis": "latest_verified_timestamp",
+    }
+
+
 def _classroom_grade_to_sieweb_level(value: Any, mapping: dict[str, Any] | None = None) -> str:
-    """Convierte 0–20 a AD/A/B/C. Umbrales configurables; por defecto AD 18+, A 15+, B 11+, C <=10."""
-    cfg = {"AD": 18, "A": 15, "B": 11}
+    """Convierte 0–20 a A/B/C: A 15–20, B 11–14 y C 0–10."""
+    cfg = {"A": 15, "B": 11}
     cfg.update(mapping or {})
     n = float(value)
-    if n >= float(cfg["AD"]): return "AD"
+    if n < 0 or n > 20:
+        raise ValueError(f"Calificación fuera del rango 0–20: {value}")
     if n >= float(cfg["A"]): return "A"
     if n >= float(cfg["B"]): return "B"
     return "C"
@@ -2173,6 +2370,238 @@ def workflow_classroom_grades_to_sieweb(p: dict[str, Any]) -> str:
     return _ok({"preview":preview,"result":result})
 
 
+def workflow_private_comment_grades_to_sieweb(p: dict[str, Any]) -> str:
+    """Convierte comentarios privados verificados en un lote cualitativo multi-desempeño."""
+    course_id = str(p["course_id"])
+    work_id = str(p["course_work_id"])
+    section = str(p["section"])
+    period = int(p["period"])
+    course_code = str(p.get("course_code", "05"))
+    header_ids = [int(value) for value in p.get("header_ids") or []]
+    confirmed = bool(p.get("confirmed", False))
+    replicate_single_grade = bool(p.get("replicate_single_grade_to_all", False))
+    if not header_ids or len(set(header_ids)) != len(header_ids):
+        raise ValueError("header_ids debe contener los desempeños únicos que recibirán la nota.")
+
+    ambitos = p.get("id_ambito_by_section") or {}
+    ctx = sieweb.resolve_class_context(
+        section=section,
+        period=period,
+        course_code=course_code,
+        id_ambito=p.get("id_ambito") or ambitos.get(section),
+    )
+    extra = dict(p.get("extra_params") or {})
+    extra.setdefault("idPeriodoAnt", ctx.get("idPeriodoAnt", 0))
+    summary = sieweb.get_gradebook_summary(
+        class_period_id=ctx["idClasePeriodo"],
+        root_content_id=ctx["idContenido"],
+        extra_params=extra,
+    )
+    targets = [
+        sieweb.assert_performance_target(summary, header_id=header_id, performance_level=3)
+        for header_id in header_ids
+    ]
+
+    roster = classroom.list_students(course_id)
+    user_to_code: dict[str, str] = {}
+    code_to_user: dict[str, str] = {}
+    roster_problems: list[dict[str, Any]] = []
+    for student in roster:
+        user_id = str(student.get("userId") or student.get("id") or "")
+        email = str(student.get("email") or "")
+        code = email.split("@", 1)[0].strip() if "@" in email else ""
+        if not user_id or not code:
+            roster_problems.append({"userId": user_id, "name": student.get("name"), "reason": "missing_institutional_code"})
+            continue
+        if user_id in user_to_code and user_to_code[user_id] != code:
+            roster_problems.append({"userId": user_id, "reason": "duplicate_user_mapping"})
+            continue
+        previous_user = code_to_user.get(code.upper())
+        if previous_user and previous_user != user_id:
+            roster_problems.append({
+                "userId": user_id,
+                "alucod": code,
+                "reason": "duplicate_institutional_code_across_classroom_users",
+                "other_userId": previous_user,
+            })
+            continue
+        user_to_code[user_id] = code
+        code_to_user[code.upper()] = user_id
+
+    submissions = classroom.list_submissions(course_id, work_id)
+    grade_map: dict[str, str] = {}
+    extracted: list[dict[str, Any]] = []
+    no_grade_comment: list[dict[str, Any]] = []
+    blockers: list[dict[str, Any]] = list(roster_problems)
+    require_assigned_match = bool(p.get("require_assigned_grade_match", True))
+    scoped_read_count = 0
+
+    for submission in submissions:
+        submission_id = str(submission.get("id") or "")
+        user_id = str(submission.get("userId") or "")
+        code = user_to_code.get(user_id, "")
+        jobs = bridge_queue.matching(
+            course_id=course_id,
+            course_work_id=work_id,
+            submission_id=submission_id,
+            operation="read_private_comments",
+            statuses={"completed"},
+        )
+        if not jobs:
+            blockers.append({"submission_id": submission_id, "userId": user_id, "reason": "scoped_read_missing"})
+            continue
+        job = jobs[0]
+        result = job.bridge_result or {}
+        comments = result.get("comments")
+        comments_valid = isinstance(comments, list) and all(
+            isinstance(comment, dict)
+            and comment.get("domOrder") == index
+            and isinstance(comment.get("text"), str)
+            and bool(str(comment.get("text") or "").strip())
+            for index, comment in enumerate(comments or [])
+        )
+        current_submission_url = str(submission.get("alternateLink") or "")
+        result_valid = (
+            result.get("method") == "dom-v0.8.4-read"
+            and result.get("student_scope_verified") is True
+            and result.get("bounded_private_region_verified") is True
+            and result.get("teacher_account_verified") is True
+            and result.get("comment_order") == "document_order"
+            and result.get("scope_evidence") in {"private_label_and_composer", "bounded_private_composer"}
+            and isinstance(result.get("count"), int)
+            and not isinstance(result.get("count"), bool)
+            and comments_valid
+            and result.get("count") == len(comments)
+            and _classroom_target_matches(result.get("url"), job.submission_url)
+            and (
+                not current_submission_url
+                or _classroom_target_matches(job.submission_url, current_submission_url)
+            )
+        )
+        if not result_valid:
+            blockers.append({"submission_id": submission_id, "job_id": job.id, "reason": "read_result_not_v084_scoped"})
+            continue
+        scoped_read_count += 1
+        if not code:
+            blockers.append({"submission_id": submission_id, "userId": user_id, "reason": "student_code_not_resolved"})
+            continue
+
+        selection = _select_latest_private_comment_grade(comments)
+        if selection.get("ok") is not True:
+            blockers.append({"submission_id": submission_id, "alucod": code, "reason": selection.get("reason"), "detail": selection})
+            continue
+        selected = selection.get("selected")
+        if not selected:
+            no_grade_comment.append({"submission_id": submission_id, "alucod": code, "comment_count": result.get("count", 0)})
+            if submission.get("assignedGrade") is not None:
+                blockers.append({
+                    "submission_id": submission_id,
+                    "alucod": code,
+                    "reason": "assigned_grade_without_private_comment_grade",
+                    "assignedGrade": submission.get("assignedGrade"),
+                })
+            continue
+
+        assigned = submission.get("assignedGrade")
+        if require_assigned_match and assigned is not None:
+            try:
+                assigned_number = float(assigned)
+            except (TypeError, ValueError):
+                blockers.append({
+                    "submission_id": submission_id,
+                    "alucod": code,
+                    "reason": "assigned_grade_not_numeric",
+                    "assignedGrade": assigned,
+                })
+                continue
+            if abs(assigned_number - float(selected["numeric"])) > 1e-9:
+                blockers.append({
+                    "submission_id": submission_id,
+                    "alucod": code,
+                    "reason": "private_comment_vs_assigned_grade_mismatch",
+                    "private_comment_numeric": selected["numeric"],
+                    "assignedGrade": assigned,
+                    "events": selection.get("events"),
+                })
+                continue
+        if code in grade_map and grade_map[code] != selected["qualitative"]:
+            blockers.append({"submission_id": submission_id, "alucod": code, "reason": "duplicate_student_with_conflicting_grade"})
+            continue
+        grade_map[code] = selected["qualitative"]
+        extracted.append({
+            "submission_id": submission_id,
+            "userId": user_id,
+            "alucod": code,
+            "numeric": selected["numeric"],
+            "qualitative": selected["qualitative"],
+            "grade_event_count": len(selection.get("events") or []),
+            "selected_comment_index": selected.get("index"),
+            "assignedGrade": assigned,
+        })
+
+    if not submissions:
+        blockers.append({"reason": "classroom_submissions_empty"})
+    if not grade_map:
+        blockers.append({"reason": "no_transferable_private_comment_grades"})
+    if len(header_ids) > 1 and not replicate_single_grade:
+        blockers.append({
+            "reason": "one_grade_source_cannot_be_copied_to_multiple_performances_implicitly",
+            "header_ids": header_ids,
+            "next_step": (
+                "Define una fuente de nota por desempeño o autoriza explícitamente "
+                "replicate_single_grade_to_all=true si la misma nota corresponde a todos."
+            ),
+        })
+
+    preview = {
+        "section": section,
+        "context": ctx,
+        "course_id": course_id,
+        "course_work_id": work_id,
+        "submission_count": len(submissions),
+        "completed_scoped_read_count": scoped_read_count,
+        "target_performances": targets,
+        "header_ids": header_ids,
+        "replicate_single_grade_to_all": replicate_single_grade,
+        "grades": grade_map,
+        "extracted": extracted,
+        "no_grade_comment": no_grade_comment,
+        "blockers": blockers,
+        "blocked": bool(blockers),
+        "write_shape": {
+            "single_sieweb_put": True,
+            "student_count": len(grade_map),
+            "header_count": len(header_ids),
+            "cell_count": len(grade_map) * len(header_ids),
+        },
+        "protection": "solo A/B/C, solo nivelEva=3, lote único y verificación posterior; Nivel de Logro intacto",
+    }
+    if not confirmed:
+        return _ok({"requires_confirmation": True, "preview": preview})
+    if blockers:
+        raise ValueError(
+            "Transferencia bloqueada: hay lecturas, cuentas o equivalencias sin verificar. "
+            + json.dumps(blockers, ensure_ascii=False)
+        )
+
+    class_info = summary.get("class") or {}
+    result = sieweb.save_grades_multi_verified(
+        year=str(class_info.get("ano") or p.get("year") or "2026"),
+        course_code=str(class_info.get("cursocod") or course_code),
+        class_period_id=int(ctx["idClasePeriodo"]),
+        root_content_id=int(ctx["idContenido"]),
+        period=period,
+        section_ng=class_info.get("arrNGS") or p.get("section_ng") or [],
+        header_ids=header_ids,
+        grades_by_student_code=grade_map,
+        class_name=None,
+        extra_params=extra,
+        notify=False,
+        performance_level=3,
+    )
+    return _ok({"preview": preview, "result": result})
+
+
 def workflow_replicate_performances(p: dict[str, Any]) -> str:
     """Replica desempeños entre secciones resolviendo padres/IDs en cada destino, nunca copiando IDs de origen."""
     source=str(p["source_section"]); targets=[str(x) for x in p.get("target_sections",[])]
@@ -2196,7 +2625,7 @@ def workflow_replicate_performances(p: dict[str, Any]) -> str:
             if len(found)>1: raise ValueError(f"{section}: desempeño duplicado '{desc}'.")
             if len(found)==1:
                 existing.append(found[0]); continue
-            # v0.7.15: solo transportamos intención pedagógica. El upsert relee
+            # v0.8.4: solo transportamos intención pedagógica. El upsert relee
             # resCriterios, localiza la Capacidad y construye defaultDataContenido
             # con LLAVE/INDICE y paramDatosReplica exactamente como el modal oficial.
             requested={

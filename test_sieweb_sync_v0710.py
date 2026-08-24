@@ -271,7 +271,7 @@ def test_verified_write_payload_matches_hierarchy_and_double_verifies(monkeypatc
         verification_attempts=1,
     )
     assert result["saved"] is True
-    assert result["mode"] == "ui-native-modal-coursecode-roster-v0.7.15"
+    assert result["mode"] == "ui-native-modal-coursecode-roster-v0.8.4"
     assert seen_ambitos == [518, 518]
     assert set(sent) == {"registros", "idClase", "datosReplica"}
     assert sent["idClase"] == 2030
