@@ -1,6 +1,6 @@
 (() => {
-  if (window.__SIEROOM_CLASSROOM_BRIDGE_084__) return;
-  window.__SIEROOM_CLASSROOM_BRIDGE_084__ = true;
+  if (window.__SIEROOM_CLASSROOM_BRIDGE_085__) return;
+  window.__SIEROOM_CLASSROOM_BRIDGE_085__ = true;
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const norm = (s) => String(s || "")
@@ -159,6 +159,33 @@
       .sort((a, b) => b.score - a.score);
   }
 
+  function hasBoundedPrivateComposerAction(container, composer) {
+    if (!container || !composer || container === document.body || container === document.documentElement) {
+      return false;
+    }
+    const cr = composer.getBoundingClientRect();
+    const actionTokens = ["publicar", "enviar", "post", "send", "comentar", "comment"];
+    return [...container.querySelectorAll('button,[role="button"]')].some((button) => {
+      if (!visible(button)) return false;
+      const m = meta(button);
+      if (!actionTokens.some((token) => m.includes(norm(token)))) return false;
+      const br = button.getBoundingClientRect();
+      const verticalDistance = Math.abs((br.top + br.height / 2) - (cr.top + cr.height / 2));
+      const horizontalDistance = Math.abs((br.left + br.width / 2) - (cr.left + cr.width / 2));
+      return verticalDistance <= 240 && horizontalDistance <= 560;
+    });
+  }
+
+  function shouldAcceptUnlabelledPrivateRegion({
+    isDocumentRoot,
+    explicitPrivateComposer,
+    hasExistingPrivateThread,
+    hasBoundedPrivateAction,
+  }) {
+    return !isDocumentRoot && explicitPrivateComposer &&
+      (hasExistingPrivateThread || hasBoundedPrivateAction);
+  }
+
   function bestPrivateRegion(label, composer) {
     if (!composer || !visible(composer) || !isEditable(composer)) return null;
     const composerAncestors = new Set(ancestorChain(composer, 16));
@@ -171,9 +198,11 @@
       return null;
     }
 
-    // Sin encabezado solo aceptamos un editor identificado EXPLÍCITAMENTE como
-    // privado y un ancestro acotado que ya contenga comentarios/retroalimentación.
-    // Nunca se usa document.body: esa ruta mezclaba alumnos de la misma aula.
+    // Classroom oculta a veces el encabezado "Comentarios privados" cuando el
+    // hilo todavía está vacío. Aceptamos ese estado únicamente si el editor se
+    // identifica EXPLÍCITAMENTE como privado y comparte un ancestro acotado con
+    // su control Enviar/Publicar. Nunca se usa document.body: esa ruta mezclaba
+    // alumnos de la misma aula.
     const composerMeta = meta(composer);
     const explicitPrivateComposer = composerMeta.includes("comentario privado") ||
       composerMeta.includes("private comment");
@@ -182,7 +211,14 @@
       if (el === composer || el === document.body || el === document.documentElement) continue;
       const text = cleanCommentText(el.innerText || el.textContent || "");
       const semanticCount = el.querySelectorAll('[data-comment-id],[role="article"],[role="listitem"]').length;
-      if (semanticCount > 0 || privateCommentMarkers(text).length >= 2) {
+      const hasExistingPrivateThread = semanticCount > 0 || privateCommentMarkers(text).length >= 2;
+      const hasEmptyPrivateComposer = hasBoundedPrivateComposerAction(el, composer);
+      if (shouldAcceptUnlabelledPrivateRegion({
+        isDocumentRoot: el === document.body || el === document.documentElement,
+        explicitPrivateComposer,
+        hasExistingPrivateThread,
+        hasBoundedPrivateAction: hasEmptyPrivateComposer,
+      })) {
         return { container: el, evidence: "bounded_private_composer" };
       }
     }
@@ -374,7 +410,7 @@
     const { label, composer, container } = await waitForPrivateSection();
     const beforeText = norm(container?.textContent || "");
     if (beforeText.includes(norm(text)) || commentVisibleOutsideComposer(text, composer, container)) {
-      return { ok: true, alreadyPresent: true, method: "dom-v0.8.4", url: location.href };
+      return { ok: true, alreadyPresent: true, method: "dom-v0.8.5", url: location.href };
     }
 
     composer.scrollIntoView({ block: "nearest", inline: "nearest" });
@@ -391,7 +427,7 @@
     while (Date.now() - started < 18000) {
       await sleep(500);
       if (commentVisibleOutsideComposer(text, composer, container)) {
-        return { ok: true, alreadyPresent: false, method: "dom-v0.8.4", url: location.href };
+        return { ok: true, alreadyPresent: false, method: "dom-v0.8.5", url: location.href };
       }
     }
     throw new Error("Se pulsó Enviar/Publicar, pero no pude confirmar visualmente que el comentario apareciera.");
@@ -638,7 +674,7 @@
 
     return {
       ok: true,
-      method: "dom-v0.8.4",
+      method: "dom-v0.8.5",
       url: location.href,
       comment: commentResult,
       grade: gradeResult,
@@ -743,7 +779,7 @@
       student_scope_verified: true,
       scope_evidence: evidence,
       comment_order: "document_order",
-      method: "dom-v0.8.4-read",
+      method: "dom-v0.8.5-read",
       url: location.href,
     };
   }
@@ -815,7 +851,7 @@
     if (!msg) return;
 
     if (msg.type === "SIEROOM_PING") {
-      sendResponse({ ok: true, version: "0.8.4", url: location.href });
+      sendResponse({ ok: true, version: "0.8.5", url: location.href });
       return;
     }
 
