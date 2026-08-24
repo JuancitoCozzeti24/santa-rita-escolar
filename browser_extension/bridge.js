@@ -289,6 +289,27 @@ async function sendToContent(tabId, payload, attempts = 12, generation = resetGe
   throw lastErr || new Error("No pude contactar el content script de Classroom.");
 }
 
+function isMissingPrivateEditorResult(result) {
+  return result?.ok === false &&
+    String(result?.error || "").includes("No encontré el editor de Comentarios privados");
+}
+
+async function reloadClassroomTarget(tabId, expectedUrl, expectedEmail, generation = resetGeneration) {
+  log("Classroom no mostró el panel privado; recargando una sola vez antes de detener el trabajo…");
+  await chrome.tabs.reload(tabId);
+  await waitTabTargetComplete(tabId, expectedUrl, 45000, generation);
+  assertGeneration(generation);
+  await sleep(3200);
+  await assertTabTarget(tabId, expectedUrl, generation);
+  const account = await checkAccountOnTab(tabId, expectedEmail, generation);
+  if (account?.ok !== true) {
+    throw new AccountMismatchError(
+      `No pude volver a verificar la cuenta docente ${expectedEmail} después de recargar Classroom.`,
+      account || {}
+    );
+  }
+}
+
 async function complete(job, result) {
   return bridgeFetch(`/bridge/v1/jobs/${encodeURIComponent(job.id)}/complete`, {
     method: "POST", body: JSON.stringify(result || {})
@@ -327,17 +348,24 @@ async function processJob(job, generation) {
     assertGeneration(generation);
 
     const isRead = job.operation === "read_private_comments";
-    // v0.8.5 conserva comentario + calificación + devolución en la MISMA
+    // v0.8.6 conserva comentario + calificación + devolución en la MISMA
     // sesión y vuelve a verificar la entrega justo antes de leer o escribir.
     await assertTabTarget(tab.id, forcedUrl, generation);
-    const result = await sendToContent(tab.id, isRead ? {
+    const contentPayload = isRead ? {
       type: "SIEROOM_READ_PRIVATE_COMMENTS"
     } : {
       type: "SIEROOM_PROCESS_SUBMISSION",
       comment: job.comment,
       grade: job.grade,
       returnAfterComment: Boolean(job.return_after_comment)
-    }, 10, generation);
+    };
+    let result = await sendToContent(tab.id, contentPayload, 10, generation);
+    if (isMissingPrivateEditorResult(result)) {
+      // Esta excepción ocurre antes de escribir. Un único reload es seguro y
+      // evita fallos transitorios sin repetir un comentario potencialmente enviado.
+      await reloadClassroomTarget(tab.id, forcedUrl, c.teacherEmail, generation);
+      result = await sendToContent(tab.id, contentPayload, 10, generation);
+    }
     assertGeneration(generation);
 
     if (!classroomTargetMatches(result?.url, forcedUrl)) {
@@ -392,7 +420,7 @@ async function processJob(job, generation) {
       // Compatibilidad temporal con servidor 0.7.x: ese servidor intenta repetir
       // nota/devolución por API y puede recibir 403. Si el navegador YA confirmó
       // ambas acciones, no convertimos un éxito real en un fallo local.
-      log(`Trabajo ${job.id} completado en Classroom. El servidor antiguo reportó seguimiento API parcial; actualiza Render a v0.8.5 para limpiar ese estado.`);
+      log(`Trabajo ${job.id} completado en Classroom. El servidor antiguo reportó seguimiento API parcial; actualiza Render a v0.8.6 para limpiar ese estado.`);
       return { completedInBrowser: true, legacyServerPartial: true };
     }
     log(`Trabajo ${job.id} completado: comentario/nota/devolución confirmados.`);

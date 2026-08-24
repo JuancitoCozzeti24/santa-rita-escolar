@@ -74,7 +74,7 @@ def test_v0717_extension_mirrors_and_read_message_are_present():
     assert root_content == extension_content
     assert root_bridge == extension_bridge
     assert "SIEROOM_READ_PRIVATE_COMMENTS" in extension_content
-    assert "dom-v0.8.5-read" in extension_content
+    assert "dom-v0.8.6-read" in extension_content
     assert "hasBoundedPrivateComposerAction" in extension_content
     assert "hasEmptyPrivateComposer" in extension_content
     assert 'container === document.body' in extension_content
@@ -92,13 +92,23 @@ def test_v0717_manifests_advertise_matching_version():
         (ROOT / "browser_extension" / "manifest.json").read_text(encoding="utf-8")
     )
     assert root_manifest == extension_manifest
-    assert root_manifest["version"] == "0.8.5"
+    assert root_manifest["version"] == "0.8.6"
     assert "scripting" in root_manifest["permissions"]
 
 
-def test_v085_empty_private_panel_regression_table_runs_in_node():
+def test_v086_empty_private_panel_regression_table_runs_in_node():
     completed = subprocess.run(
         ["node", str(ROOT / "test_private_region_logic.mjs")],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 0, completed.stderr or completed.stdout
+
+
+def test_v086_private_comment_publish_regression_table_runs_in_node():
+    completed = subprocess.run(
+        ["node", str(ROOT / "test_private_comment_publish_logic.mjs")],
         check=False,
         capture_output=True,
         text=True,
@@ -176,7 +186,7 @@ def test_v0717_old_bridge_cannot_claim_read_jobs():
 
 
 class _FakeBridgeRequest:
-    def __init__(self, *, job_id="", body=None, capabilities="", version="0.8.5"):
+    def __init__(self, *, job_id="", body=None, capabilities="", version="0.8.6"):
         self.path_params = {"job_id": job_id}
         self._body = body or {}
         self.headers = {
@@ -215,7 +225,7 @@ def _valid_read(url="https://classroom.google.com/read", text=None):
         "teacher_account_verified": True,
         "scope_evidence": "private_label_and_composer",
         "comment_order": "document_order",
-        "method": "dom-v0.8.5-read",
+        "method": "dom-v0.8.6-read",
         "url": url,
     }
 
@@ -259,7 +269,7 @@ def test_v0717_next_endpoint_requires_read_capability(monkeypatch):
     )))
     payload = _json_response(response)
     assert payload["job"] is None
-    assert payload["required_version"] == "0.8.5"
+    assert payload["required_version"] == "0.8.6"
 
     response = asyncio.run(server.classroom_bridge_http_next(_FakeBridgeRequest(
         capabilities=(
@@ -314,7 +324,7 @@ def test_v084_old_bridge_cannot_claim_post_job(monkeypatch):
     assert queue.stats()["queued"] == 1
 
     current_response = asyncio.run(server.classroom_bridge_http_next(_FakeBridgeRequest(
-        capabilities=caps, version="0.8.5"
+        capabilities=caps, version="0.8.6"
     )))
     assert _json_response(current_response)["job"]["operation"] == "post_private_comment"
 
@@ -498,7 +508,7 @@ def test_v081_server_accepts_verified_browser_grade_and_return(monkeypatch):
     monkeypatch.setattr(server, "bridge_queue", queue)
     browser_result = {
         "ok": True,
-        "method": "dom-v0.8.5",
+        "method": "dom-v0.8.6",
         "url": "https://classroom.google.com/example",
         "teacher_account_verified": True,
         "comment": {"ok": True, "alreadyPresent": False},

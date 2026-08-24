@@ -1,0 +1,12 @@
+SieRoom SRC 0.8.6 - reporte de pruebas
+
+- Suite Python/Node: 92 passed.
+- Sintaxis content.js y bridge.js: correcta.
+- Espejos raíz/browser_extension: idénticos.
+- Regresión panel privado vacío: correcta.
+- Regresión publicación: Ayuda y comentarios rechazado; Enviar/Publicar aceptado.
+- Confirmación de comentario truncado: exige dos huellas independientes.
+- Reintento seguro: solo ausencia del editor antes de escribir.
+- Error posterior al clic: no se reintenta automáticamente.
+- Advertencia única: Pydantic IncompleteFieldDefinitionWarning preexistente y no relacionada.
+

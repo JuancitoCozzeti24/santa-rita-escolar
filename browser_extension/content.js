@@ -1,6 +1,6 @@
 (() => {
-  if (window.__SIEROOM_CLASSROOM_BRIDGE_085__) return;
-  window.__SIEROOM_CLASSROOM_BRIDGE_085__ = true;
+  if (window.__SIEROOM_CLASSROOM_BRIDGE_086__) return;
+  window.__SIEROOM_CLASSROOM_BRIDGE_086__ = true;
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const norm = (s) => String(s || "")
@@ -50,6 +50,20 @@
       "escribe un comentario", "comentario privado", "private comment",
       "add a comment", "add comment", "write a comment"
     ].some((x) => t.includes(norm(x))) || t.includes("coment") || t.includes("comment");
+  };
+
+  const isHelpFeedbackControlText = (text) => {
+    const t = norm(text);
+    return [
+      "ayuda y comentarios", "ayuda y sugerencias", "help and feedback",
+      "help & feedback", "send feedback", "enviar comentarios"
+    ].some((value) => t.includes(norm(value)));
+  };
+
+  const isExplicitCommentSendText = (text) => {
+    const t = norm(text);
+    if (!t || isHelpFeedbackControlText(t)) return false;
+    return ["enviar", "publicar", "send", "post"].some((value) => t.includes(norm(value)));
   };
 
   function privateCommentLabel() {
@@ -164,11 +178,10 @@
       return false;
     }
     const cr = composer.getBoundingClientRect();
-    const actionTokens = ["publicar", "enviar", "post", "send", "comentar", "comment"];
     return [...container.querySelectorAll('button,[role="button"]')].some((button) => {
       if (!visible(button)) return false;
       const m = meta(button);
-      if (!actionTokens.some((token) => m.includes(norm(token)))) return false;
+      if (!isExplicitCommentSendText(m)) return false;
       const br = button.getBoundingClientRect();
       const verticalDistance = Math.abs((br.top + br.height / 2) - (cr.top + cr.height / 2));
       const horizontalDistance = Math.abs((br.left + br.width / 2) - (cr.left + cr.width / 2));
@@ -310,11 +323,6 @@
       composer?.parentElement?.parentElement?.parentElement,
     ].filter(Boolean);
 
-    const wanted = [
-      "enviar", "publicar", "send", "post", "comentar", "comment",
-      "publica comentario", "enviar comentario"
-    ];
-
     const seen = new Set();
     const scored = [];
     for (const root of roots) {
@@ -323,10 +331,12 @@
         seen.add(b);
         if (b.disabled || b.getAttribute("aria-disabled") === "true") continue;
         const m = meta(b);
+        if (!isExplicitCommentSendText(m)) continue;
         let score = 0;
-        for (const w of wanted) if (m.includes(norm(w))) score += 25;
-        if (m.includes("coment") || m.includes("comment")) score += 20;
-        if (m.includes("enviar") || m.includes("send") || m.includes("publicar") || m.includes("post")) score += 35;
+        if (m.includes("comentario privado") || m.includes("private comment")) score += 80;
+        if (m.includes("coment") || m.includes("comment")) score += 25;
+        if (m.includes("enviar") || m.includes("send")) score += 60;
+        if (m.includes("publicar") || m.includes("post")) score += 60;
         if (score > 0) scored.push({ b, score });
       }
     }
@@ -345,6 +355,64 @@
       const t = norm(el.textContent);
       return t.length >= wanted.length && t.length < wanted.length + 400 && t.includes(wanted);
     });
+  }
+
+  function composerText(composer) {
+    if (!composer) return "";
+    if (composer instanceof HTMLTextAreaElement || composer instanceof HTMLInputElement) {
+      return String(composer.value || "");
+    }
+    return String(composer.innerText || composer.textContent || "");
+  }
+
+  function commentFingerprints(text) {
+    const wanted = norm(text);
+    if (!wanted) return [];
+    const first = wanted.slice(0, Math.min(100, wanted.length));
+    const reinforceAt = wanted.indexOf("lo que debes reforzar");
+    const middle = reinforceAt >= 0 ? wanted.slice(reinforceAt, reinforceAt + 90) : "";
+    const last = wanted.slice(Math.max(0, wanted.length - 90));
+    return [...new Set([first, middle, last].filter((value) => value.length >= 45))];
+  }
+
+  function commentTextMatches(candidate, wanted) {
+    const actual = norm(candidate);
+    const expected = norm(wanted);
+    if (!actual || !expected) return false;
+    if (actual.includes(expected)) return true;
+    const fingerprints = commentFingerprints(expected);
+    const matches = fingerprints.filter((value) => actual.includes(value)).length;
+    return matches >= Math.min(2, fingerprints.length);
+  }
+
+  function composerHasFullText(composer, wanted) {
+    const actual = norm(composerText(composer));
+    const expected = norm(wanted);
+    return Boolean(actual && expected && actual.includes(expected));
+  }
+
+  function privateSectionNow() {
+    const direct = directPrivateComposer();
+    if (direct) {
+      const label = privateCommentLabel();
+      const scoped = bestPrivateRegion(label, direct);
+      if (scoped) return { label, composer: direct, ...scoped };
+    }
+    const label = privateCommentLabel();
+    if (!label) return null;
+    const composer = composerCandidates(label).find((item) => isEditable(item.el))?.el || null;
+    if (!composer) return null;
+    const scoped = bestPrivateRegion(label, composer);
+    return scoped ? { label, composer, ...scoped } : null;
+  }
+
+  function postedCommentVisible(text, section) {
+    if (!section?.container) return false;
+    if (commentVisibleOutsideComposer(text, section.composer, section.container)) return true;
+    const candidates = commentReadCandidates(
+      section.container, section.label, section.composer, false
+    );
+    return candidates.some((row) => commentTextMatches(row.text, text));
   }
 
   function diagnostics(label) {
@@ -409,28 +477,42 @@
 
     const { label, composer, container } = await waitForPrivateSection();
     const beforeText = norm(container?.textContent || "");
-    if (beforeText.includes(norm(text)) || commentVisibleOutsideComposer(text, composer, container)) {
-      return { ok: true, alreadyPresent: true, method: "dom-v0.8.5", url: location.href };
+    if (beforeText.includes(norm(text)) ||
+        postedCommentVisible(text, { label, composer, container })) {
+      return { ok: true, alreadyPresent: true, method: "dom-v0.8.6", url: location.href };
     }
 
     composer.scrollIntoView({ block: "nearest", inline: "nearest" });
     setComposerValue(composer, text);
-    await sleep(650);
+    const fillStarted = Date.now();
+    while (Date.now() - fillStarted < 3500 && !composerHasFullText(composer, text)) {
+      await sleep(250);
+    }
+    if (!composerHasFullText(composer, text)) {
+      throw new Error("Encontré el editor privado, pero Classroom no confirmó que el texto quedara cargado; no se pulsó Publicar.");
+    }
+    await sleep(700);
 
     const send = findSendButton(container, composer);
     if (!send) {
       throw new Error(`Encontré el editor de comentario privado, pero no pude identificar de forma segura el botón Enviar/Publicar. Diagnóstico: ${diagnostics(label)}`);
     }
 
+    const sendMeta = meta(send);
     send.click();
     const started = Date.now();
-    while (Date.now() - started < 18000) {
+    while (Date.now() - started < 22000) {
       await sleep(500);
-      if (commentVisibleOutsideComposer(text, composer, container)) {
-        return { ok: true, alreadyPresent: false, method: "dom-v0.8.5", url: location.href };
+      const currentSection = privateSectionNow();
+      if (postedCommentVisible(text, currentSection) ||
+          (container?.isConnected && postedCommentVisible(text, { label, composer, container }))) {
+        return { ok: true, alreadyPresent: false, method: "dom-v0.8.6", url: location.href };
       }
     }
-    throw new Error("Se pulsó Enviar/Publicar, pero no pude confirmar visualmente que el comentario apareciera.");
+    throw new Error(
+      `Se pulsó Enviar/Publicar, pero no pude confirmar visualmente que el comentario apareciera. ` +
+      `Control usado: ${sendMeta || "sin etiqueta"}.`
+    );
   }
 
 
@@ -674,7 +756,7 @@
 
     return {
       ok: true,
-      method: "dom-v0.8.5",
+      method: "dom-v0.8.6",
       url: location.href,
       comment: commentResult,
       grade: gradeResult,
@@ -779,7 +861,7 @@
       student_scope_verified: true,
       scope_evidence: evidence,
       comment_order: "document_order",
-      method: "dom-v0.8.5-read",
+      method: "dom-v0.8.6-read",
       url: location.href,
     };
   }
@@ -851,7 +933,7 @@
     if (!msg) return;
 
     if (msg.type === "SIEROOM_PING") {
-      sendResponse({ ok: true, version: "0.8.5", url: location.href });
+      sendResponse({ ok: true, version: "0.8.6", url: location.href });
       return;
     }
 
