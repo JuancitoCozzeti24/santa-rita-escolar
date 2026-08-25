@@ -29,6 +29,9 @@ class BridgeJob:
     bridge_result: dict[str, Any] | None = None
     classroom_result: dict[str, Any] | None = None
     error: str | None = None
+    guard_for_job_id: str | None = None
+    guard_job_id: str | None = None
+    guard_result: dict[str, Any] | None = None
 
     def public(self) -> dict[str, Any]:
         raw = asdict(self)
@@ -43,11 +46,29 @@ class ClassroomBridgeQueue:
 
     Render Free usa un único proceso en este proyecto. La cola está pensada para
     trabajos inmediatos y deliberadamente no persiste secretos/cookies de Google.
+
+    Regla de seguridad de comentarios privados:
+    cualquier trabajo que vaya a PUBLICAR un comentario se bloquea primero y
+    encola una lectura real de la misma entrega. Solo si esa lectura devuelve
+    exactamente cero comentarios privados se libera la publicación. Si ya existe
+    uno o más comentarios, el trabajo queda bloqueado y no se escribe nada.
     """
 
     def __init__(self) -> None:
         self._lock = RLock()
         self._jobs: dict[str, BridgeJob] = {}
+
+    def _new_comment_guard(self, target: BridgeJob) -> BridgeJob:
+        return BridgeJob(
+            id=str(uuid4()),
+            course_id=target.course_id,
+            course_work_id=target.course_work_id,
+            submission_id=target.submission_id,
+            submission_url=target.submission_url,
+            operation="read_private_comments",
+            status="queued",
+            guard_for_job_id=target.id,
+        )
 
     def enqueue(
         self,
@@ -72,6 +93,8 @@ class ClassroomBridgeQueue:
             and not return_after_comment
         ):
             raise ValueError("El trabajo del puente necesita comentario, nota o devolución.")
+
+        requires_comment_guard = operation == "post_private_comment" and bool(comment)
         job = BridgeJob(
             id=str(uuid4()),
             course_id=str(course_id),
@@ -82,9 +105,16 @@ class ClassroomBridgeQueue:
             operation=operation,
             grade=float(grade) if grade is not None else None,
             return_after_comment=bool(return_after_comment),
+            status="waiting_comment_guard" if requires_comment_guard else "queued",
         )
+
         with self._lock:
             self._jobs[job.id] = job
+            if requires_comment_guard:
+                guard = self._new_comment_guard(job)
+                job.guard_job_id = guard.id
+                job.updated_at = _now()
+                self._jobs[guard.id] = guard
         return job
 
     def get(self, job_id: str) -> BridgeJob | None:
@@ -126,14 +156,15 @@ class ClassroomBridgeQueue:
                 counts[job.status] = counts.get(job.status, 0) + 1
         # Compatibilidad: conservamos los contadores por estado, pero añadimos
         # un resumen explícito para que la extensión no confunda el historial
-        # (completed/failed/cancelled) con trabajos que siguen realmente en cola.
+        # con trabajos que siguen realmente pendientes.
         queued = counts.get("queued", 0)
         claimed = counts.get("claimed", 0)
-        counts["work_remaining"] = queued + claimed
-        counts["active_total"] = queued + claimed
+        waiting_guard = counts.get("waiting_comment_guard", 0)
+        counts["work_remaining"] = queued + claimed + waiting_guard
+        counts["active_total"] = queued + claimed + waiting_guard
         counts["history_total"] = sum(
             counts.get(k, 0) for k in (
-                "completed", "failed", "cancelled",
+                "completed", "failed", "cancelled", "blocked_existing_comment",
                 "comment_posted", "comment_posted_followup_failed",
             )
         )
@@ -144,19 +175,20 @@ class ClassroomBridgeQueue:
 
         - Todo trabajo `claimed` vuelve inmediatamente a `queued`, sin esperar
           a que venza el lease de 90 s.
-        - Los trabajos ya `queued` se conservan tal cual.
+        - Los trabajos `queued` y `waiting_comment_guard` se conservan.
         - Por defecto NO reintenta `failed`, para evitar bucles de errores
           permanentes. Puede pedirse explícitamente con retry_failed=True.
         - No toca completed/cancelled ni borra el historial.
 
-        La publicación DOM del puente es idempotente por texto: content.js
-        comprueba si el comentario ya aparece antes de volver a enviarlo.
+        Los comentarios no dependen de idempotencia por texto: antes de cada
+        publicación hay una lectura obligatoria de la entrega. Si existe cualquier
+        comentario privado previo, la publicación queda bloqueada.
         """
         now = _now()
         released_claimed: list[str] = []
         retried_failed: list[str] = []
         with self._lock:
-            for job in self._jobs.values():
+            for job in list(self._jobs.values()):
                 if job.status == "claimed":
                     job.status = "queued"
                     job.claimed_until = None
@@ -164,7 +196,14 @@ class ClassroomBridgeQueue:
                     job.updated_at = now
                     released_claimed.append(job.id)
                 elif retry_failed and job.status == "failed":
-                    job.status = "queued"
+                    if job.operation == "post_private_comment" and job.comment:
+                        guard = self._new_comment_guard(job)
+                        job.status = "waiting_comment_guard"
+                        job.guard_job_id = guard.id
+                        job.guard_result = None
+                        self._jobs[guard.id] = guard
+                    else:
+                        job.status = "queued"
                     job.claimed_until = None
                     job.error = None
                     job.updated_at = now
@@ -234,6 +273,35 @@ class ClassroomBridgeQueue:
             job.error = None
             job.claimed_until = None
             job.updated_at = _now()
+
+            # Si esta lectura fue creada como guardia de un comentario, decide
+            # inmediatamente si la escritura puede salir de espera.
+            if job.operation == "read_private_comments" and job.guard_for_job_id:
+                target = self._jobs.get(job.guard_for_job_id)
+                if target and target.status == "waiting_comment_guard":
+                    result = bridge_result or {}
+                    count = result.get("count")
+                    comments = result.get("comments")
+                    target.guard_result = result
+                    target.updated_at = _now()
+                    valid_zero = (
+                        isinstance(count, int)
+                        and not isinstance(count, bool)
+                        and count == 0
+                        and isinstance(comments, list)
+                        and len(comments) == 0
+                    )
+                    if valid_zero:
+                        target.status = "queued"
+                        target.error = None
+                    else:
+                        detected = count if isinstance(count, int) and not isinstance(count, bool) else "uno o más"
+                        target.status = "blocked_existing_comment"
+                        target.error = (
+                            "existing_private_comment_guard: se detectaron "
+                            f"{detected} comentario(s) privado(s) previo(s) en esta entrega; "
+                            "por política SieRoom no publicará otro comentario."
+                        )
             return job
 
     def mark_partial_failure(self, job_id: str, error: str, classroom_result: dict[str, Any] | None = None) -> BridgeJob:
@@ -259,10 +327,17 @@ class ClassroomBridgeQueue:
     def retry(self, job_id: str) -> BridgeJob:
         with self._lock:
             job = self._jobs[str(job_id)]
-            job.status = "queued"
             job.error = None
             job.claimed_until = None
             job.updated_at = _now()
+            if job.operation == "post_private_comment" and job.comment:
+                guard = self._new_comment_guard(job)
+                job.status = "waiting_comment_guard"
+                job.guard_job_id = guard.id
+                job.guard_result = None
+                self._jobs[guard.id] = guard
+            else:
+                job.status = "queued"
             return job
 
     def cancel(self, job_id: str) -> BridgeJob:
@@ -273,4 +348,22 @@ class ClassroomBridgeQueue:
             job.status = "cancelled"
             job.claimed_until = None
             job.updated_at = _now()
+
+            # Si se cancela un comentario que aún espera su lectura de guardia,
+            # cancelamos también esa lectura si todavía no se ha procesado.
+            if job.guard_job_id:
+                guard = self._jobs.get(job.guard_job_id)
+                if guard and guard.status in {"queued", "waiting_comment_guard"}:
+                    guard.status = "cancelled"
+                    guard.claimed_until = None
+                    guard.updated_at = _now()
+
+            # Si se cancela directamente una lectura-guardia, su comentario padre
+            # tampoco puede quedar esperando indefinidamente.
+            if job.guard_for_job_id:
+                target = self._jobs.get(job.guard_for_job_id)
+                if target and target.status == "waiting_comment_guard":
+                    target.status = "cancelled"
+                    target.error = "comment_guard_cancelled"
+                    target.updated_at = _now()
             return job
