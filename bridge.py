@@ -196,6 +196,10 @@ class ClassroomBridgeQueue:
                     job.updated_at = now
                     released_claimed.append(job.id)
                 elif retry_failed and job.status == "failed":
+                    # Las lecturas creadas como guardia pertenecen al comentario
+                    # padre; no se reintentan aparte para evitar dos guardias en carrera.
+                    if job.guard_for_job_id:
+                        continue
                     if job.operation == "post_private_comment" and job.comment:
                         guard = self._new_comment_guard(job)
                         job.status = "waiting_comment_guard"
@@ -322,6 +326,17 @@ class ClassroomBridgeQueue:
             job.bridge_result = bridge_result or {}
             job.claimed_until = None
             job.updated_at = _now()
+
+            # Un fallo de la lectura de guardia nunca libera el comentario.
+            # El padre falla también y solo podrá reintentarse creando/verificando
+            # una nueva lectura. Así el comportamiento es fail-closed.
+            if job.operation == "read_private_comments" and job.guard_for_job_id:
+                target = self._jobs.get(job.guard_for_job_id)
+                if target and target.status == "waiting_comment_guard":
+                    target.status = "failed"
+                    target.error = f"comment_guard_failed: {error}"
+                    target.guard_result = bridge_result or {}
+                    target.updated_at = _now()
             return job
 
     def retry(self, job_id: str) -> BridgeJob:
@@ -330,6 +345,20 @@ class ClassroomBridgeQueue:
             job.error = None
             job.claimed_until = None
             job.updated_at = _now()
+
+            # Si se reintenta directamente una lectura-guardia, volvemos a poner
+            # al comentario padre en espera y reutilizamos esa misma guardia.
+            if job.operation == "read_private_comments" and job.guard_for_job_id:
+                target = self._jobs.get(job.guard_for_job_id)
+                if target and target.operation == "post_private_comment" and target.comment:
+                    target.status = "waiting_comment_guard"
+                    target.guard_job_id = job.id
+                    target.guard_result = None
+                    target.error = None
+                    target.updated_at = _now()
+                job.status = "queued"
+                return job
+
             if job.operation == "post_private_comment" and job.comment:
                 guard = self._new_comment_guard(job)
                 job.status = "waiting_comment_guard"
