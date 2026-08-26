@@ -125,9 +125,8 @@
     try {
       const pong = await chrome.tabs.sendMessage(tabId, { type: "SIEROOM_PING" });
       if (pong?.ok) {
-        try {
-          await chrome.tabs.sendMessage(tabId, { type: "SIEROOM_DELETE_PRIVATE_COMMENT", commentText: "", domOrder: null });
-        } catch (_) {}
+        await chrome.scripting.executeScript({ target: { tabId }, files: ["delete_private_comment.js"] });
+        await sleep(180);
         return;
       }
     } catch (_) {}
