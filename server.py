@@ -325,7 +325,7 @@ def classroom_delete_private_comment(
     comment_text: str,
     dom_order: int | None = None,
     confirmed: bool = False,
-) -> str:
+) -> dict[str, object]:
     """Borra UN comentario privado exacto de Classroom mediante el bridge local. Acción destructiva: requiere confirmed=true. Usa comment_text completo; si existen comentarios idénticos, pasa también dom_order obtenido previamente con classroom_private_feedback action=read. Nunca borra de forma ambigua y solo podrá borrar comentarios para los que Classroom muestre una acción Eliminar bajo la cuenta docente configurada."""
     text = str(comment_text or "").strip()
     if not text:
@@ -353,11 +353,11 @@ def classroom_delete_private_comment(
             "releer_comentarios_antes_de_borrar",
             "exigir_coincidencia_exacta_de_texto",
             "bloquear_si_hay_ambiguedad",
-            "confirmar_visualemente_que_desaparece_exactamente_un_comentario",
+            "confirmar_visualmente_que_desaparece_exactamente_un_comentario",
         ],
     }
     if not confirmed:
-        return _ok({"requires_confirmation": True, "preview": preview})
+        return {"requires_confirmation": True, "preview": preview}
 
     job, reused = _private_comment_delete_queue.enqueue(
         course_id=course_id,
@@ -367,12 +367,12 @@ def classroom_delete_private_comment(
         comment_text=text,
         dom_order=dom_order,
     )
-    return _ok({
+    return {
         "queued": True,
         "reused_active_job": reused,
         "job": job.public(),
         "note": "El bridge de borrado se ejecuta cuando la cola normal de Classroom queda libre.",
-    })
+    }
 
 
 install_attendance(mcp, sieweb, settings, classroom)
