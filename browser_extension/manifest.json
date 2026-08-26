@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "SieRoom Classroom Bridge",
   "version": "0.8.7",
-  "description": "Puente local SieRoom con cuenta docente y entrega destino verificadas para leer o publicar comentarios, calificar y devolver en Classroom.",
+  "description": "Puente local SieRoom con cuenta docente y entrega destino verificadas para leer, publicar o eliminar comentarios privados, calificar y devolver en Classroom.",
   "permissions": [
     "storage",
     "tabs",
@@ -18,7 +18,8 @@
         "https://classroom.google.com/*"
       ],
       "js": [
-        "content.js"
+        "content.js",
+        "delete_private_comment.js"
       ],
       "run_at": "document_idle"
     }
