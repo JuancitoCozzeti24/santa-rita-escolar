@@ -870,6 +870,132 @@ class SieWebClient:
         }
 
     # ---------- Calificaciones ----------
+    @staticmethod
+    def _decode_grade_scope_value(value: Any) -> Any:
+        """Normaliza wrappers JSON sin confundir el selector de sección con objNG."""
+        if not isinstance(value, str):
+            return value
+        raw = value.strip()
+        if not raw:
+            return []
+        if raw[:1] in {"[", "{"}:
+            try:
+                return json.loads(raw)
+            except ValueError:
+                return value
+        return value
+
+    @classmethod
+    def _normalize_arr_nivel_grado(cls, value: Any) -> list[dict[str, str]]:
+        """Devuelve el contrato nativo de SieWeb para objNG: [{"n": ..., "g": ...}]."""
+        value = cls._decode_grade_scope_value(value)
+        if isinstance(value, dict):
+            wrapped = cls._dict_get_ci(value, "arrNivelGrado", "objNG")
+            if wrapped not in (None, "", [], {}):
+                value = cls._decode_grade_scope_value(wrapped)
+            else:
+                value = [value]
+        if not isinstance(value, list) or not value:
+            raise SieWebError(
+                "PROTECCIÓN DE NOTAS SIEWEB: falta arrNivelGrado nativo; no se envió nada."
+            )
+
+        out: list[dict[str, str]] = []
+        seen: set[tuple[str, str]] = set()
+        for index, item in enumerate(value):
+            if not isinstance(item, dict):
+                raise SieWebError(
+                    "PROTECCIÓN DE NOTAS SIEWEB: objNG debe usar arrNivelGrado "
+                    f"con objetos {{n,g}}; elemento {index}={item!r}. No se envió nada."
+                )
+            n = cls._dict_get_ci(item, "n", "N", "nivel", "NIVEL")
+            g = cls._dict_get_ci(item, "g", "G", "grado", "GRADO")
+            if n in (None, "") or g in (None, ""):
+                raise SieWebError(
+                    "PROTECCIÓN DE NOTAS SIEWEB: arrNivelGrado contiene un objeto "
+                    f"sin n/g en la posición {index}. No se envió nada."
+                )
+            pair = (str(n).strip(), str(g).strip())
+            if pair not in seen:
+                out.append({"n": pair[0], "g": pair[1]})
+                seen.add(pair)
+        if not out:
+            raise SieWebError(
+                "PROTECCIÓN DE NOTAS SIEWEB: arrNivelGrado quedó vacío; no se envió nada."
+            )
+        return out
+
+    @classmethod
+    def _normalize_arr_ngs(cls, value: Any) -> list[str]:
+        """Normaliza arrNGS únicamente como selector de sección (p. ej. S2A)."""
+        value = cls._decode_grade_scope_value(value)
+        if isinstance(value, dict):
+            wrapped = cls._dict_get_ci(value, "arrNGS", "NGS")
+            if wrapped not in (None, "", [], {}):
+                value = cls._decode_grade_scope_value(wrapped)
+        if value in (None, "", [], {}):
+            return []
+        if isinstance(value, str):
+            value = [value]
+        if not isinstance(value, list):
+            raise SieWebError(
+                "PROTECCIÓN DE NOTAS SIEWEB: arrNGS debe ser una lista de secciones."
+            )
+        out: list[str] = []
+        for item in value:
+            if isinstance(item, dict):
+                raise SieWebError(
+                    "PROTECCIÓN DE NOTAS SIEWEB: arrNGS y arrNivelGrado son contratos distintos."
+                )
+            section = str(item or "").strip().upper()
+            if section and section not in out:
+                out.append(section)
+        return out
+
+    def resolve_grade_write_scope(
+        self,
+        summary: dict[str, Any],
+        supplied_scope: Any = None,
+    ) -> list[dict[str, str]]:
+        """Resuelve objNG desde arrNivelGrado y valida cualquier selector heredado arrNGS."""
+        class_info = summary.get("class") or {}
+        native = self._normalize_arr_nivel_grado(
+            self._dict_get_ci(class_info, "arrNivelGrado", "objNG")
+        )
+        if supplied_scope in (None, "", [], {}):
+            return native
+
+        supplied = self._decode_grade_scope_value(supplied_scope)
+        if isinstance(supplied, dict):
+            explicit_native = self._dict_get_ci(supplied, "arrNivelGrado", "objNG")
+            explicit_ngs = self._dict_get_ci(supplied, "arrNGS", "NGS")
+            if explicit_native not in (None, "", [], {}):
+                supplied = self._decode_grade_scope_value(explicit_native)
+            elif explicit_ngs not in (None, "", [], {}):
+                supplied = self._decode_grade_scope_value(explicit_ngs)
+
+        if isinstance(supplied, dict) or (
+            isinstance(supplied, list)
+            and supplied
+            and all(isinstance(item, dict) for item in supplied)
+        ):
+            candidate = self._normalize_arr_nivel_grado(supplied)
+            if candidate != native:
+                raise SieWebError(
+                    "PROTECCIÓN DE NOTAS SIEWEB: el arrNivelGrado solicitado no coincide "
+                    "con el registro leído de SieWeb. No se envió nada."
+                )
+            return native
+
+        requested_ngs = self._normalize_arr_ngs(supplied)
+        native_ngs = self._normalize_arr_ngs(self._dict_get_ci(class_info, "arrNGS", "NGS"))
+        if not requested_ngs or not native_ngs or set(requested_ngs) != set(native_ngs):
+            raise SieWebError(
+                "PROTECCIÓN DE NOTAS SIEWEB: el selector arrNGS solicitado no coincide "
+                "con la sección del registro leído. No se envió nada."
+            )
+        return native
+
     def update_grades(
         self,
         *,
@@ -906,11 +1032,12 @@ class SieWebClient:
                 + json.dumps(invalid, ensure_ascii=False)
             )
 
+        obj_ng = self._normalize_arr_nivel_grado(section_ng)
         payload = {
             "ano": year,
             "cursocod": course_code,
             "idClasePeriodo": class_period_id,
-            "objNG": section_ng,
+            "objNG": obj_ng,
             "periodo": period,
             "registros": records,
         }
@@ -2484,6 +2611,7 @@ class SieWebClient:
                 "cursonom": self._dict_get_ci(info,"cursonom","CURSONOM"),
                 "periodo": self._dict_get_ci(info,"periodo","PERIODO"),
                 "nomSalon": self._dict_get_ci(info,"nomSalon","NOMSALON","salon"),
+                "arrNivelGrado": self._dict_get_ci(info,"arrNivelGrado","ARR_NIVEL_GRADO","objNG"),
                 "arrNGS": self._dict_get_ci(info,"arrNGS","NGS"),
                 "arrNemo": self._dict_get_ci(info,"arrNemo","NEMO"),
                 "nomProfesor": self._dict_get_ci(info,"nomProfesor","profesor"),
@@ -2806,6 +2934,7 @@ class SieWebClient:
         )
         if protect_achievement_level:
             self.assert_performance_target(before, header_id=header_id, performance_level=performance_level)
+        native_obj_ng = self.resolve_grade_write_scope(before, section_ng)
         records = self.build_grade_records(
             before,
             header_id=header_id,
@@ -2817,7 +2946,7 @@ class SieWebClient:
             course_code=course_code,
             class_period_id=class_period_id,
             period=period,
-            section_ng=section_ng,
+            section_ng=native_obj_ng,
             records=records,
             class_name=class_name,
             notify=notify,
@@ -2920,6 +3049,7 @@ class SieWebClient:
             )
             for header_id in headers
         ]
+        native_obj_ng = self.resolve_grade_write_scope(before, section_ng)
 
         records: list[dict[str, Any]] = []
         records_by_header: dict[str, int] = {}
@@ -2947,7 +3077,7 @@ class SieWebClient:
             course_code=course_code,
             class_period_id=class_period_id,
             period=period,
-            section_ng=section_ng,
+            section_ng=native_obj_ng,
             records=records,
             class_name=class_name,
             notify=notify,
