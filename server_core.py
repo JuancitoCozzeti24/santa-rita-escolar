@@ -2364,7 +2364,7 @@ def workflow_classroom_grades_to_sieweb(p: dict[str, Any]) -> str:
     class_info=summary.get("class") or {}
     result=sieweb.save_grades_verified(year=str(class_info.get("ano") or p.get("year") or "2026"), course_code=str(class_info.get("cursocod") or course_code),
         class_period_id=int(ctx["idClasePeriodo"]), root_content_id=int(ctx["idContenido"]), period=period,
-        section_ng=class_info.get("arrNGS") or p.get("section_ng") or [], header_id=header_id,
+        section_ng=class_info.get("arrNivelGrado") or p.get("section_ng") or [], header_id=header_id,
         grades_by_student_code=grade_map, class_name=str(ctx.get("nomSalon") or section), extra_params=extra,
         protect_achievement_level=True, performance_level=int(p.get("performance_level",3)))
     return _ok({"preview":preview,"result":result})
@@ -2591,7 +2591,7 @@ def workflow_private_comment_grades_to_sieweb(p: dict[str, Any]) -> str:
         class_period_id=int(ctx["idClasePeriodo"]),
         root_content_id=int(ctx["idContenido"]),
         period=period,
-        section_ng=class_info.get("arrNGS") or p.get("section_ng") or [],
+        section_ng=class_info.get("arrNivelGrado") or p.get("section_ng") or [],
         header_ids=header_ids,
         grades_by_student_code=grade_map,
         class_name=None,
