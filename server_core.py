@@ -108,6 +108,15 @@ def _classroom_target_matches(actual_url: Any, expected_url: Any) -> bool:
     expected = _normalized_classroom_path(expected_url)
     return bool(actual and expected and actual == expected)
 
+HF4_GRADE_CAPABILITY = "grade_target_guard_v1"
+HF4_CONTENT_BUILD = "0.8.7-HF4-GRADE-TARGET"
+
+
+def _classroom_student_id(value: Any) -> str:
+    path = _normalized_classroom_path(value) or ""
+    match = re.search(r"/student/([^/?#]+)", path)
+    return match.group(1) if match else ""
+
 
 @mcp.custom_route("/bridge/v1/status", methods=["GET"])
 async def classroom_bridge_http_status(request: Request):
@@ -160,6 +169,7 @@ async def classroom_bridge_http_next(request: Request):
         and "post_private_comment" in capabilities
         and "teacher_account_guard" in capabilities
         and "target_submission_guard" in capabilities
+        and HF4_GRADE_CAPABILITY in capabilities
     )
     allowed_operations: set[str] = set()
     if post_capable:
@@ -191,6 +201,9 @@ async def classroom_bridge_http_next(request: Request):
             ),
             "required_version": "0.8.7" if read_waiting and not read_capable else None,
             "post_waiting_for_compatible_bridge": bool(post_waiting and not post_capable),
+            "required_post_capability": (
+                HF4_GRADE_CAPABILITY if post_waiting and not post_capable else None
+            ),
         })
     return JSONResponse({"ok": True, "job": job.public()})
 
@@ -304,6 +317,17 @@ async def classroom_bridge_http_complete(request: Request):
         if job.comment and comment_result.get("ok") is not True:
             validation_errors.append("comentario_no_confirmado")
         if job.grade is not None:
+            expected_student_id = _classroom_student_id(job.submission_url)
+            result_target_student_id = str(result.get("target_student_id") or "")
+            result_current_student_id = str(result.get("current_student_id") or "")
+            if result.get("content_build") != HF4_CONTENT_BUILD:
+                validation_errors.append("hf4_grade_target_build_no_verificado")
+            if not expected_student_id:
+                validation_errors.append("student_id_objetivo_ausente")
+            if result_target_student_id != expected_student_id:
+                validation_errors.append("target_student_id_distinto")
+            if result_current_student_id != expected_student_id:
+                validation_errors.append("current_student_id_distinto")
             if result.get("browser_grade_applied") is not True:
                 validation_errors.append("nota_no_confirmada")
             else:
