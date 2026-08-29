@@ -676,3 +676,18 @@ def test_v084_bridge_has_single_tab_leader_and_process_now_does_not_cancel_activ
     assert "Versiones distintas" in popup_js
     assert 'chrome.tabs.query({ url: bridgeUrl + "*" })' in popup_js
     assert "claim_seconds: int = 300" in queue_py
+
+
+def test_hf4_grade_target_rev2_anchors_grade_field_to_exact_student_context():
+    content = (ROOT / "content.js").read_text(encoding="utf-8")
+    assert "function findGradeInput()" not in content
+    assert "function targetRowGradeCandidates(targetStudentId)" in content
+    assert "function activeDetailGradeCandidates(targetStudentId)" in content
+    assert "if (targetLinks.length !== 1) return [];" in content
+    assert 'strategy: "target_row_geometry"' in content
+    assert 'strategy: "active_detail_explicit_grade"' in content
+    assert "ids.some((id) => id !== targetStudentId)" in content
+    assert "varias cajas alineadas con la fila del alumno objetivo" in content
+    assert "el panel activo contiene varias cajas explícitas de nota" in content
+    assert 'method: "dom-v0.8.7-read-hf4"' in content
+    assert "content_build: SIEROOM_CONTENT_BUILD" in content
