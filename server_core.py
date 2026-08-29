@@ -110,6 +110,8 @@ def _classroom_target_matches(actual_url: Any, expected_url: Any) -> bool:
 
 HF4_GRADE_CAPABILITY = "grade_target_guard_v1"
 HF4_CONTENT_BUILD = "0.8.7-HF4-GRADE-TARGET"
+LEGACY_READ_METHOD = "dom-v0.8.7-read"
+HF4_READ_METHOD = "dom-v0.8.7-read-hf4"
 
 
 def _classroom_student_id(value: Any) -> str:
@@ -271,10 +273,19 @@ async def classroom_bridge_http_complete(request: Request):
             and comment_order == "document_order"
             and (private_section_verified or scope_evidence == "bounded_private_composer")
         )
+        expected_student_id = _classroom_student_id(job.submission_url)
+        result_current_student_id = str(result.get("current_student_id") or "")
+        hf4_read_verified = (
+            method == HF4_READ_METHOD
+            and result.get("content_build") == HF4_CONTENT_BUILD
+            and bool(expected_student_id)
+            and result_current_student_id == expected_student_id
+        )
+        legacy_read_verified = method == LEGACY_READ_METHOD
         valid_read_result = (
             result.get("ok") is True
             and result.get("operation") == "read_private_comments"
-            and method == "dom-v0.8.7-read"
+            and (legacy_read_verified or hf4_read_verified)
             and target_verified
             and teacher_account_verified
             and valid_comments
@@ -2485,8 +2496,19 @@ def workflow_private_comment_grades_to_sieweb(p: dict[str, Any]) -> str:
             for index, comment in enumerate(comments or [])
         )
         current_submission_url = str(submission.get("alternateLink") or "")
+        read_method = str(result.get("method") or "")
+        expected_student_id = _classroom_student_id(job.submission_url)
+        read_build_verified = (
+            read_method == LEGACY_READ_METHOD
+            or (
+                read_method == HF4_READ_METHOD
+                and result.get("content_build") == HF4_CONTENT_BUILD
+                and bool(expected_student_id)
+                and str(result.get("current_student_id") or "") == expected_student_id
+            )
+        )
         result_valid = (
-            result.get("method") == "dom-v0.8.7-read"
+            read_build_verified
             and result.get("student_scope_verified") is True
             and result.get("bounded_private_region_verified") is True
             and result.get("teacher_account_verified") is True
