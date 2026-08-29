@@ -526,10 +526,61 @@
     return norm(parts.join(" "));
   }
 
-  function gradeCandidateScore(el) {
+  const SIEROOM_CONTENT_BUILD = "0.8.7-HF4-GRADE-TARGET";
+
+  function gradeTargetLog(event, detail = {}) {
+    try { console.info(`[SieRoom HF4] ${event}`, detail); } catch (_) {}
+  }
+
+  function studentIdFromClassroomUrl(value) {
+    try {
+      const u = new URL(String(value || ""), location.origin);
+      const match = u.pathname.match(/\/student\/([^/?#]+)/);
+      return match ? decodeURIComponent(match[1]) : "";
+    } catch (_) {
+      return "";
+    }
+  }
+
+  function assertSubmissionStudentTarget(targetStudentId, expectedSubmissionUrl = "") {
+    const expectedFromUrl = studentIdFromClassroomUrl(expectedSubmissionUrl);
+    const target = String(targetStudentId || expectedFromUrl || "").trim();
+    const current = studentIdFromClassroomUrl(location.href);
+
+    gradeTargetLog("target_student_id", { target_student_id: target });
+    gradeTargetLog("current_student_id", { current_student_id: current });
+
+    if (!target) {
+      throw new Error("PAUSA DE SEGURIDAD HF4: no recibí target_student_id para calificar.");
+    }
+    if (expectedFromUrl && expectedFromUrl !== target) {
+      throw new Error(
+        `PAUSA DE SEGURIDAD HF4: target_student_id (${target}) no coincide con submission_url (${expectedFromUrl}).`
+      );
+    }
+    if (!current || current !== target) {
+      throw new Error(
+        `PAUSA DE SEGURIDAD HF4: la URL activa pertenece a otro alumno. Esperado: ${target}. Actual: ${current || "desconocido"}.`
+      );
+    }
+    return { targetStudentId: target, currentStudentId: current };
+  }
+
+  function localAncestorText(el, root, levels = 5) {
+    const parts = [];
+    let cur = el;
+    for (let i = 0; cur && i < levels; i++, cur = cur.parentElement) {
+      const t = String(cur.innerText || cur.textContent || "");
+      if (t && t.length < 1200) parts.push(t);
+      if (cur === root) break;
+    }
+    return norm(parts.join(" "));
+  }
+
+  function gradeCandidateScore(el, root) {
     if (!visible(el) || !isEditable(el)) return -9999;
     const m = meta(el);
-    const ctx = ancestorText(el, 5);
+    const ctx = localAncestorText(el, root, 5);
     if (m.includes("coment") || m.includes("comment") || ctx.includes("comentarios privados")) return -9999;
 
     let score = 0;
@@ -543,58 +594,162 @@
     if (aria.includes("calificacion") || aria.includes("grade")) score += 100;
     if (el instanceof HTMLInputElement && norm(el.type) === "number") score += 35;
 
-    // En la vista individual de Classroom el campo suele estar en un panel lateral
-    // y su contenido actual es vacío, "Sin calificar" o un valor corto.
     const value = String(el.value ?? el.textContent ?? "").trim();
-    if (value.length <= 6) score += 10;
+    if (value.length <= 16) score += 10;
+    if (norm(value).includes("sin calificar") || norm(value).includes("ungraded")) score += 20;
 
     return score;
   }
 
-  function findGradeInput() {
-    const selector = 'input,textarea,[role="textbox"],[contenteditable="true"]';
-    const candidates = [...document.querySelectorAll(selector)]
-      .map((el) => ({ el, score: gradeCandidateScore(el) }))
-      .filter((x) => x.score > 0)
-      .sort((a, b) => b.score - a.score);
-    return candidates[0]?.el || null;
+  function studentIdsInside(root) {
+    const ids = new Set();
+    const links = [];
+    if (root?.matches?.('a[href*="/student/"]')) links.push(root);
+    for (const a of root?.querySelectorAll?.('a[href*="/student/"]') || []) links.push(a);
+    for (const a of links) {
+      const id = studentIdFromClassroomUrl(a.href || a.getAttribute?.("href"));
+      if (id) ids.add(id);
+    }
+    return [...ids];
   }
 
-  function gradeDiagnostics() {
-    const selector = 'input,textarea,[role="textbox"],[contenteditable="true"]';
-    const cand = [...document.querySelectorAll(selector)]
-      .filter((el) => visible(el))
-      .map((el) => ({
-        tag: el.tagName,
-        type: el.getAttribute("type") || "",
-        aria: (el.getAttribute("aria-label") || "").slice(0, 100),
-        placeholder: (el.getAttribute("placeholder") || "").slice(0, 100),
-        value: String(el.value ?? el.textContent ?? "").slice(0, 40),
-        score: gradeCandidateScore(el)
-      }))
-      .sort((a, b) => b.score - a.score)
-      .slice(0, 8);
-    return JSON.stringify({ candidates: cand, url: location.href });
+  function gradeFieldSummary(el, score = null) {
+    return {
+      tag: el?.tagName || "",
+      type: el?.getAttribute?.("type") || "",
+      role: el?.getAttribute?.("role") || "",
+      aria: (el?.getAttribute?.("aria-label") || "").slice(0, 120),
+      placeholder: (el?.getAttribute?.("placeholder") || "").slice(0, 120),
+      value: String(el?.value ?? el?.innerText ?? el?.textContent ?? "").trim().slice(0, 60),
+      score
+    };
   }
 
-  async function waitForGradeInput(timeoutMs = 25000) {
+  function targetStudentContainers(targetStudentId) {
+    const selector = 'input,textarea,[role="textbox"],[contenteditable="true"]';
+    const targetLinks = [...document.querySelectorAll('a[href*="/student/"]')]
+      .filter((a) => studentIdFromClassroomUrl(a.href || a.getAttribute("href")) === targetStudentId);
+
+    const seen = new Set();
+    const containers = [];
+
+    for (const link of targetLinks) {
+      let node = link;
+      for (let level = 0; node && level < 10; level++, node = node.parentElement) {
+        if (!node || node === document.body || node === document.documentElement || seen.has(node)) continue;
+        seen.add(node);
+        if (!visible(node)) continue;
+
+        const ids = studentIdsInside(node);
+        if (!ids.includes(targetStudentId) || ids.some((id) => id !== targetStudentId)) continue;
+
+        const fields = [...node.querySelectorAll(selector)]
+          .filter((el) => visible(el) && isEditable(el))
+          .map((el) => ({ el, score: gradeCandidateScore(el, node) }))
+          .filter((item) => item.score > 0)
+          .sort((a, b) => b.score - a.score);
+
+        if (!fields.length || fields.length > 3) continue;
+
+        const selectedEvidence = [
+          link.getAttribute?.("aria-current"),
+          link.getAttribute?.("aria-selected"),
+          node.getAttribute?.("aria-current"),
+          node.getAttribute?.("aria-selected")
+        ].some((v) => String(v || "").toLowerCase() === "true" || String(v || "").toLowerCase() === "page");
+
+        const textLength = String(node.innerText || node.textContent || "").length;
+        let containerScore = 500 - (level * 20);
+        if (fields.length === 1) containerScore += 180;
+        if (selectedEvidence) containerScore += 80;
+        if (textLength < 800) containerScore += 30;
+
+        containers.push({ node, link, fields, level, containerScore, selectedEvidence, textLength });
+      }
+    }
+
+    return containers.sort((a, b) => b.containerScore - a.containerScore);
+  }
+
+  function resolveTargetGradeField(targetStudentId) {
+    const containers = targetStudentContainers(targetStudentId);
+    const diagnostics = containers.slice(0, 6).map((c) => ({
+      container_score: c.containerScore,
+      level: c.level,
+      selected: c.selectedEvidence,
+      field_count: c.fields.length,
+      fields: c.fields.map((f) => gradeFieldSummary(f.el, f.score))
+    }));
+
+    gradeTargetLog("grade_field_candidates", {
+      target_student_id: targetStudentId,
+      grade_field_candidates: diagnostics
+    });
+
+    if (!containers.length) return null;
+
+    const best = containers[0];
+    const fields = best.fields;
+    if (fields.length > 1) {
+      const gap = fields[0].score - fields[1].score;
+      if (gap < 25) {
+        throw new Error(
+          `PAUSA DE SEGURIDAD HF4: encontré varias cajas de nota ambiguas dentro del contenedor de ${targetStudentId}.`
+        );
+      }
+    }
+
+    const matched = fields[0];
+    const summary = gradeFieldSummary(matched.el, matched.score);
+    gradeTargetLog("matched_grade_field", {
+      target_student_id: targetStudentId,
+      matched_grade_field: summary
+    });
+    return { el: matched.el, summary, diagnostics };
+  }
+
+  function gradeDiagnostics(targetStudentId) {
+    const linkCount = [...document.querySelectorAll('a[href*="/student/"]')]
+      .filter((a) => studentIdFromClassroomUrl(a.href || a.getAttribute("href")) === targetStudentId).length;
+    return JSON.stringify({
+      target_student_id: targetStudentId,
+      current_student_id: studentIdFromClassroomUrl(location.href),
+      exact_target_links: linkCount,
+      url: location.href
+    });
+  }
+
+  async function waitForTargetGradeField(targetStudentId, expectedSubmissionUrl, timeoutMs = 25000) {
     const start = Date.now();
     while (Date.now() - start < timeoutMs) {
-      const input = findGradeInput();
-      if (input) return input;
+      assertSubmissionStudentTarget(targetStudentId, expectedSubmissionUrl);
+      const match = resolveTargetGradeField(targetStudentId);
+      if (match?.el) return match;
       await sleep(400);
     }
-    throw new Error(`No encontré el campo de calificación. Diagnóstico: ${gradeDiagnostics()}`);
+    throw new Error(
+      `No encontré una caja de calificación acotada al alumno objetivo. Diagnóstico: ${gradeDiagnostics(targetStudentId)}`
+    );
   }
 
-  async function applyGradeInBrowser(grade) {
+  async function applyGradeInBrowser(grade, targetStudentId, expectedSubmissionUrl) {
     if (grade === null || grade === undefined || grade === "") {
       return { applied: false, skipped: true };
     }
     const numeric = Number(grade);
     if (!Number.isFinite(numeric)) throw new Error(`Calificación inválida: ${grade}`);
 
-    const el = await waitForGradeInput();
+    const beforeGuard = assertSubmissionStudentTarget(targetStudentId, expectedSubmissionUrl);
+    const match = await waitForTargetGradeField(beforeGuard.targetStudentId, expectedSubmissionUrl);
+    const el = match.el;
+
+    assertSubmissionStudentTarget(beforeGuard.targetStudentId, expectedSubmissionUrl);
+    const before = String(el.value ?? el.innerText ?? el.textContent ?? "").trim();
+    gradeTargetLog("grade_before", {
+      target_student_id: beforeGuard.targetStudentId,
+      grade_before: before
+    });
+
     el.scrollIntoView({ block: "center", inline: "nearest" });
     el.focus();
 
@@ -607,27 +762,47 @@
       setComposerValue(el, value);
     }
 
-    // Classroom a veces persiste la nota al perder foco o al pulsar Enter.
-    try {
-      el.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", bubbles: true }));
-      el.dispatchEvent(new KeyboardEvent("keyup", { key: "Enter", code: "Enter", bubbles: true }));
-    } catch (_) {}
     try { el.blur(); } catch (_) {}
     await sleep(1100);
 
-    const persistedEl = findGradeInput() || el;
-    const current = String(persistedEl.value ?? persistedEl.innerText ?? persistedEl.textContent ?? "").trim();
+    const afterGuard = assertSubmissionStudentTarget(beforeGuard.targetStudentId, expectedSubmissionUrl);
+    const persistedMatch = resolveTargetGradeField(beforeGuard.targetStudentId);
+    if (!persistedMatch?.el) {
+      throw new Error("Classroom dejó de mostrar la caja de nota del alumno objetivo después de escribir.");
+    }
+
+    const current = String(
+      persistedMatch.el.value ?? persistedMatch.el.innerText ?? persistedMatch.el.textContent ?? ""
+    ).trim();
+    gradeTargetLog("grade_after", {
+      target_student_id: beforeGuard.targetStudentId,
+      current_student_id: afterGuard.currentStudentId,
+      grade_after: current
+    });
+
     const normalizedCurrent = current.replace(",", ".");
     const numericMatch = normalizedCurrent.match(/-?\d+(?:\.\d+)?/);
     const persistedNumber = numericMatch ? Number(numericMatch[0]) : NaN;
     if (!Number.isFinite(persistedNumber) || Math.abs(persistedNumber - numeric) > 1e-9) {
       throw new Error(
-        `Classroom no confirmó que la calificación ${value} quedara persistida. ` +
+        `Classroom no confirmó que la calificación ${value} quedara persistida en el alumno objetivo. ` +
         `Valor visible: ${current || "vacío"}.`
       );
     }
 
-    return { applied: true, grade: numeric, fieldMeta: meta(el).slice(0, 160) };
+    const result = {
+      applied: true,
+      grade: numeric,
+      target_student_id: beforeGuard.targetStudentId,
+      current_student_id: afterGuard.currentStudentId,
+      grade_field_candidates: match.diagnostics,
+      matched_grade_field: match.summary,
+      grade_before: before,
+      grade_after: current,
+      browser_grade_applied: true
+    };
+    gradeTargetLog("browser_grade_applied", result);
+    return result;
   }
 
   function buttonText(el) {
@@ -746,14 +921,18 @@
       await sleep(500);
     }
 
-    const gradeResult = await applyGradeInBrowser(grade);
+    const targetGuard = assertSubmissionStudentTarget(payload.targetStudentId, payload.expectedSubmissionUrl);
+    const gradeResult = await applyGradeInBrowser(grade, targetGuard.targetStudentId, payload.expectedSubmissionUrl);
     if (gradeResult.applied) await sleep(700);
 
     let returnResult = { returned: false, skipped: true };
     if (returnAfterComment) {
+      assertSubmissionStudentTarget(targetGuard.targetStudentId, payload.expectedSubmissionUrl);
       returnResult = await returnSubmissionInBrowser();
+      assertSubmissionStudentTarget(targetGuard.targetStudentId, payload.expectedSubmissionUrl);
     }
 
+    const finalTargetGuard = assertSubmissionStudentTarget(targetGuard.targetStudentId, payload.expectedSubmissionUrl);
     return {
       ok: true,
       method: "dom-v0.8.7",
@@ -764,7 +943,14 @@
       browser_followup_done: true,
       browser_grade_applied: Boolean(gradeResult.applied),
       browser_grade: gradeResult.applied ? Number(gradeResult.grade) : null,
-      browser_returned: Boolean(returnResult.returned)
+      browser_returned: Boolean(returnResult.returned),
+      target_student_id: finalTargetGuard.targetStudentId,
+      current_student_id: finalTargetGuard.currentStudentId,
+      grade_field_candidates: gradeResult.grade_field_candidates || [],
+      matched_grade_field: gradeResult.matched_grade_field || null,
+      grade_before: gradeResult.grade_before ?? null,
+      grade_after: gradeResult.grade_after ?? null,
+      content_build: SIEROOM_CONTENT_BUILD
     };
   }
 
@@ -933,7 +1119,7 @@
     if (!msg) return;
 
     if (msg.type === "SIEROOM_PING") {
-      sendResponse({ ok: true, version: "0.8.7", url: location.href });
+      sendResponse({ ok: true, version: "0.8.7", build: SIEROOM_CONTENT_BUILD, url: location.href });
       return;
     }
 
@@ -962,7 +1148,9 @@
       processSubmission({
         comment: msg.comment,
         grade: msg.grade,
-        returnAfterComment: msg.returnAfterComment
+        returnAfterComment: msg.returnAfterComment,
+        targetStudentId: msg.targetStudentId,
+        expectedSubmissionUrl: msg.expectedSubmissionUrl
       })
         .then((result) => sendResponse(result))
         .catch((err) => sendResponse({ ok: false, error: String(err?.message || err), url: location.href }));
