@@ -671,9 +671,112 @@
     return containers.sort((a, b) => b.containerScore - a.containerScore);
   }
 
+
+  function nearestStudentIdsForGradeField(el, maxLevels = 7) {
+    let cur = el;
+    for (let level = 0; cur && level < maxLevels; level++, cur = cur.parentElement) {
+      if (cur === document.body || cur === document.documentElement) break;
+      const ids = studentIdsInside(cur);
+      if (ids.length) return ids;
+    }
+    return [];
+  }
+
+  function explicitGradeMetaScore(el) {
+    const m = meta(el);
+    const aria = norm(el?.getAttribute?.("aria-label"));
+    const placeholder = norm(el?.getAttribute?.("placeholder"));
+    let score = 0;
+
+    const strongest = [
+      "modificar nota", "editar nota", "cambiar nota",
+      "edit grade", "modify grade", "change grade"
+    ];
+    if (strongest.some((x) => m.includes(x))) score += 320;
+
+    if (aria.includes("calificacion") || aria.includes("nota") || aria.includes("grade")) score += 220;
+    if (placeholder.includes("calificacion") || placeholder.includes("nota") || placeholder.includes("grade")) score += 180;
+
+    return score;
+  }
+
+  function targetRowGradeCandidates(targetStudentId) {
+    const selector = 'input,textarea,[role="textbox"],[contenteditable="true"]';
+    const targetLinks = [...document.querySelectorAll('a[href*="/student/"]')]
+      .filter((a) => studentIdFromClassroomUrl(a.href || a.getAttribute("href")) === targetStudentId)
+      .filter((a) => visible(a));
+
+    if (targetLinks.length !== 1) return [];
+
+    const link = targetLinks[0];
+    const lr = link.getBoundingClientRect();
+    const linkCenterY = lr.top + lr.height / 2;
+
+    return [...document.querySelectorAll(selector)]
+      .filter((el) => visible(el) && isEditable(el))
+      .map((el) => {
+        const baseScore = gradeCandidateScore(el, document.body);
+        if (baseScore <= 0) return null;
+
+        const ids = nearestStudentIdsForGradeField(el);
+        if (ids.some((id) => id !== targetStudentId)) return null;
+
+        const er = el.getBoundingClientRect();
+        const fieldCenterY = er.top + er.height / 2;
+        const yDistance = Math.abs(fieldCenterY - linkCenterY);
+        const maxRowDistance = Math.max(58, lr.height * 1.8);
+        if (yDistance > maxRowDistance) return null;
+
+        const xPlausible = er.right >= lr.left - 80;
+        if (!xPlausible) return null;
+
+        const explicitScore = explicitGradeMetaScore(el);
+        const score = 700 + baseScore + explicitScore - (yDistance * 5);
+        return {
+          el,
+          score,
+          yDistance: Math.round(yDistance),
+          scopeIds: ids,
+          strategy: "target_row_geometry"
+        };
+      })
+      .filter(Boolean)
+      .sort((a, b) => b.score - a.score);
+  }
+
+  function activeDetailGradeCandidates(targetStudentId) {
+    const selector = 'input,textarea,[role="textbox"],[contenteditable="true"]';
+
+    return [...document.querySelectorAll(selector)]
+      .filter((el) => visible(el) && isEditable(el))
+      .map((el) => {
+        const explicitScore = explicitGradeMetaScore(el);
+        if (explicitScore < 180) return null;
+
+        const baseScore = gradeCandidateScore(el, document.body);
+        if (baseScore <= 0) return null;
+
+        const ids = nearestStudentIdsForGradeField(el);
+        if (ids.some((id) => id !== targetStudentId)) return null;
+
+        // Preferimos controles del panel de detalle que no estén ligados a la fila
+        // de otro alumno. La URL exacta ya fue validada antes de llegar aquí.
+        const scopeBonus = ids.length === 0 ? 140 : 60;
+        return {
+          el,
+          score: explicitScore + baseScore + scopeBonus,
+          scopeIds: ids,
+          strategy: "active_detail_explicit_grade"
+        };
+      })
+      .filter(Boolean)
+      .sort((a, b) => b.score - a.score);
+  }
+
   function resolveTargetGradeField(targetStudentId) {
     const containers = targetStudentContainers(targetStudentId);
-    const diagnostics = containers.slice(0, 6).map((c) => ({
+    const ancestorDiagnostics = containers.slice(0, 6).map((c) => ({
+      strategy: "ancestor_scope",
       container_score: c.containerScore,
       level: c.level,
       selected: c.selectedEvidence,
@@ -681,26 +784,77 @@
       fields: c.fields.map((f) => gradeFieldSummary(f.el, f.score))
     }));
 
+    const rowCandidates = targetRowGradeCandidates(targetStudentId);
+    const detailCandidates = activeDetailGradeCandidates(targetStudentId);
+    const diagnostics = [
+      ...ancestorDiagnostics,
+      {
+        strategy: "target_row_geometry",
+        candidate_count: rowCandidates.length,
+        fields: rowCandidates.slice(0, 6).map((f) => ({
+          ...gradeFieldSummary(f.el, f.score),
+          y_distance: f.yDistance,
+          scope_student_ids: f.scopeIds
+        }))
+      },
+      {
+        strategy: "active_detail_explicit_grade",
+        candidate_count: detailCandidates.length,
+        fields: detailCandidates.slice(0, 6).map((f) => ({
+          ...gradeFieldSummary(f.el, f.score),
+          scope_student_ids: f.scopeIds
+        }))
+      }
+    ];
+
     gradeTargetLog("grade_field_candidates", {
       target_student_id: targetStudentId,
       grade_field_candidates: diagnostics
     });
 
-    if (!containers.length) return null;
+    let matched = null;
+    let strategy = "";
 
-    const best = containers[0];
-    const fields = best.fields;
-    if (fields.length > 1) {
-      const gap = fields[0].score - fields[1].score;
-      if (gap < 25) {
-        throw new Error(
-          `PAUSA DE SEGURIDAD HF4: encontré varias cajas de nota ambiguas dentro del contenedor de ${targetStudentId}.`
-        );
+    if (containers.length) {
+      const best = containers[0];
+      const fields = best.fields;
+      if (fields.length > 1) {
+        const gap = fields[0].score - fields[1].score;
+        if (gap < 25) {
+          throw new Error(
+            `PAUSA DE SEGURIDAD HF4: encontré varias cajas de nota ambiguas dentro del contenedor de ${targetStudentId}.`
+          );
+        }
       }
+      matched = fields[0];
+      strategy = "ancestor_scope";
+    } else if (rowCandidates.length) {
+      if (rowCandidates.length > 1) {
+        const gap = rowCandidates[0].score - rowCandidates[1].score;
+        if (gap < 45) {
+          throw new Error(
+            `PAUSA DE SEGURIDAD HF4: hay varias cajas alineadas con la fila del alumno objetivo; no se eligió ninguna.`
+          );
+        }
+      }
+      matched = rowCandidates[0];
+      strategy = "target_row_geometry";
+    } else if (detailCandidates.length === 1) {
+      matched = detailCandidates[0];
+      strategy = "active_detail_explicit_grade";
+    } else if (detailCandidates.length > 1) {
+      throw new Error(
+        `PAUSA DE SEGURIDAD HF4: el panel activo contiene varias cajas explícitas de nota; no se eligió ninguna.`
+      );
+    } else {
+      return null;
     }
 
-    const matched = fields[0];
-    const summary = gradeFieldSummary(matched.el, matched.score);
+    const summary = {
+      ...gradeFieldSummary(matched.el, matched.score),
+      strategy,
+      scope_student_ids: matched.scopeIds || []
+    };
     gradeTargetLog("matched_grade_field", {
       target_student_id: targetStudentId,
       matched_grade_field: summary
@@ -1047,7 +1201,9 @@
       student_scope_verified: true,
       scope_evidence: evidence,
       comment_order: "document_order",
-      method: "dom-v0.8.7-read",
+      method: "dom-v0.8.7-read-hf4",
+      content_build: SIEROOM_CONTENT_BUILD,
+      current_student_id: studentIdFromClassroomUrl(location.href),
       url: location.href,
     };
   }
