@@ -1,6 +1,7 @@
 const statusEl = document.getElementById("status");
 const logEl = document.getElementById("log");
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const SIEROOM_CONTENT_BUILD = "0.8.7-HF4-GRADE-TARGET";
 let classroomTabId = null;
 let busy = false;
 let resetGeneration = 0;
@@ -141,7 +142,7 @@ async function bridgeFetch(path, options = {}) {
   headers.set("X-SieRoom-Bridge-Version", chrome.runtime.getManifest().version);
   headers.set(
     "X-SieRoom-Bridge-Capabilities",
-    "post_private_comment,read_private_comments,verified_private_comment_read_v4,student_scoped_private_comment_read,browser_grade_return,teacher_account_guard,target_submission_guard"
+    "post_private_comment,read_private_comments,verified_private_comment_read_v4,student_scoped_private_comment_read,browser_grade_return,teacher_account_guard,target_submission_guard,grade_target_guard_v1"
   );
   if (options.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
   const r = await fetch(`${c.endpoint}${path}`, { ...options, headers, cache: "no-store" });
@@ -179,6 +180,12 @@ function classroomTargetMatches(actualUrl, expectedUrl) {
   const actual = normalizedClassroomPath(actualUrl);
   const expected = normalizedClassroomPath(expectedUrl);
   return Boolean(actual && expected && actual === expected);
+}
+
+function studentIdFromClassroomUrl(value) {
+  const path = normalizedClassroomPath(value);
+  const match = path?.match(/\/student\/([^/?#]+)/);
+  return match ? decodeURIComponent(match[1]) : "";
 }
 
 async function waitTabTargetComplete(tabId, expectedUrl, timeoutMs = 45000, generation = resetGeneration) {
@@ -260,21 +267,34 @@ function promiseTimeout(promise, ms, message) {
 async function ensureContentScript(tabId, generation = resetGeneration) {
   assertGeneration(generation);
   const expectedVersion = chrome.runtime.getManifest().version;
-  try {
-    const pong = await chrome.tabs.sendMessage(tabId, { type: "SIEROOM_PING" });
-    if (pong?.ok && pong?.version === expectedVersion) return true;
-  } catch (_) {}
 
-  // Si Classroom navegó internamente o Chrome descartó el content script,
-  // lo reinyectamos sin pedirle al usuario que recargue manualmente.
+  const ping = async () => {
+    try { return await chrome.tabs.sendMessage(tabId, { type: "SIEROOM_PING" }); }
+    catch (_) { return null; }
+  };
+  const compatible = (pong) => Boolean(
+    pong?.ok && pong?.version === expectedVersion && pong?.build === SIEROOM_CONTENT_BUILD
+  );
+
+  let pong = await ping();
+  if (compatible(pong)) return true;
+
+  if (pong?.ok && pong?.version === expectedVersion && pong?.build !== SIEROOM_CONTENT_BUILD) {
+    await chrome.tabs.reload(tabId);
+    await sleep(2200);
+    assertGeneration(generation);
+    pong = await ping();
+    if (compatible(pong)) return true;
+  }
+
   try {
     await chrome.scripting.executeScript({
       target: { tabId },
       files: ["content.js"]
     });
-    await sleep(350);
-    const pong = await chrome.tabs.sendMessage(tabId, { type: "SIEROOM_PING" });
-    return Boolean(pong?.ok && pong?.version === expectedVersion);
+    await sleep(400);
+    pong = await ping();
+    return compatible(pong);
   } catch (_) {
     return false;
   }
@@ -286,7 +306,10 @@ async function sendToContent(tabId, payload, attempts = 12, generation = resetGe
     assertGeneration(generation);
     try {
       if (i === 0 || i === 3 || i === 7) {
-        await ensureContentScript(tabId, generation);
+        const ready = await ensureContentScript(tabId, generation);
+        if (!ready) {
+          throw new Error(`Bridge incompatible: se requiere content build ${SIEROOM_CONTENT_BUILD}; no se enviará ninguna acción.`);
+        }
       }
       const response = await promiseTimeout(
         chrome.tabs.sendMessage(tabId, payload),
@@ -361,16 +384,23 @@ async function processJob(job, generation) {
     assertGeneration(generation);
 
     const isRead = job.operation === "read_private_comments";
-    // v0.8.7 conserva comentario + calificación + devolución en la MISMA
-    // sesión y vuelve a verificar la entrega justo antes de leer o escribir.
+    // HF4 conserva comentario + calificación + devolución en la MISMA sesión,
+    // pero la caja de nota queda acotada al student_id exacto de submission_url.
     await assertTabTarget(tab.id, forcedUrl, generation);
+    const targetStudentId = studentIdFromClassroomUrl(forcedUrl);
+    if (!isRead && !targetStudentId) {
+      throw new Error("PAUSA DE SEGURIDAD HF4: submission_url no contiene student_id.");
+    }
+    if (!isRead) log(`target_student_id=${targetStudentId}`);
     const contentPayload = isRead ? {
       type: "SIEROOM_READ_PRIVATE_COMMENTS"
     } : {
       type: "SIEROOM_PROCESS_SUBMISSION",
       comment: job.comment,
       grade: job.grade,
-      returnAfterComment: Boolean(job.return_after_comment)
+      returnAfterComment: Boolean(job.return_after_comment),
+      targetStudentId,
+      expectedSubmissionUrl: forcedUrl
     };
     let result = await sendToContent(tab.id, contentPayload, 10, generation);
     if (isMissingPrivateEditorResult(result)) {
@@ -392,6 +422,25 @@ async function processJob(job, generation) {
       throw new Error(result?.error || (isRead
         ? "Classroom no devolvió los comentarios privados."
         : "Classroom no confirmó el procesamiento de la entrega."));
+    }
+
+    if (!isRead) {
+      const currentStudentId = result?.current_student_id || studentIdFromClassroomUrl(result?.url);
+      log(`current_student_id=${currentStudentId || "desconocido"}`);
+      if (currentStudentId !== targetStudentId || result?.target_student_id !== targetStudentId) {
+        throw new Error(
+          `PAUSA DE SEGURIDAD HF4: el resultado no conserva el alumno objetivo. Esperado: ${targetStudentId}. Actual: ${currentStudentId || "desconocido"}.`
+        );
+      }
+      if (result?.grade_field_candidates) {
+        log(`grade_field_candidates=${JSON.stringify(result.grade_field_candidates).slice(0, 1600)}`);
+      }
+      if (result?.matched_grade_field) {
+        log(`matched_grade_field=${JSON.stringify(result.matched_grade_field)}`);
+      }
+      if (result?.grade_before !== undefined) log(`grade_before=${String(result.grade_before)}`);
+      if (result?.grade_after !== undefined) log(`grade_after=${String(result.grade_after)}`);
+      log(`browser_grade_applied=${Boolean(result?.browser_grade_applied)}`);
     }
 
     if (isRead) {
