@@ -25,7 +25,7 @@ def test_v0717_read_job_accepts_empty_comment_and_exposes_operation():
         course_id="course",
         course_work_id="work",
         submission_id="submission",
-        submission_url="https://classroom.google.com/example",
+        submission_url="https://classroom.google.com/example/student/TARGET123",
         operation="read_private_comments",
     )
     public = job.public()
@@ -314,17 +314,28 @@ def test_v084_old_bridge_cannot_claim_post_job(monkeypatch):
         operation="post_private_comment",
     )
     monkeypatch.setattr(server, "bridge_queue", queue)
-    caps = "post_private_comment,teacher_account_guard,target_submission_guard"
+    hf3_caps = "post_private_comment,teacher_account_guard,target_submission_guard"
     old_response = asyncio.run(server.classroom_bridge_http_next(_FakeBridgeRequest(
-        capabilities=caps, version="0.8.3"
+        capabilities=hf3_caps, version="0.8.3"
     )))
     old_payload = _json_response(old_response)
     assert old_payload["job"] is None
     assert old_payload["post_waiting_for_compatible_bridge"] is True
     assert queue.stats()["queued"] == 1
 
+    # HF3 usa la misma versión numérica 0.8.7, por eso HF4 exige además una
+    # capacidad inequívoca antes de permitir cualquier trabajo de escritura.
+    hf3_same_version = asyncio.run(server.classroom_bridge_http_next(_FakeBridgeRequest(
+        capabilities=hf3_caps, version="0.8.7"
+    )))
+    hf3_payload = _json_response(hf3_same_version)
+    assert hf3_payload["job"] is None
+    assert hf3_payload["required_post_capability"] == "grade_target_guard_v1"
+    assert queue.stats()["queued"] == 1
+
+    hf4_caps = hf3_caps + ",grade_target_guard_v1"
     current_response = asyncio.run(server.classroom_bridge_http_next(_FakeBridgeRequest(
-        capabilities=caps, version="0.8.7"
+        capabilities=hf4_caps, version="0.8.7"
     )))
     assert _json_response(current_response)["job"]["operation"] == "post_private_comment"
 
@@ -509,13 +520,16 @@ def test_v081_server_accepts_verified_browser_grade_and_return(monkeypatch):
     browser_result = {
         "ok": True,
         "method": "dom-v0.8.7",
-        "url": "https://classroom.google.com/example",
+        "url": "https://classroom.google.com/example/student/TARGET123",
         "teacher_account_verified": True,
         "comment": {"ok": True, "alreadyPresent": False},
         "browser_followup_done": True,
         "browser_grade_applied": True,
         "browser_grade": 16,
         "browser_returned": True,
+        "content_build": "0.8.7-HF4-GRADE-TARGET",
+        "target_student_id": "TARGET123",
+        "current_student_id": "TARGET123",
     }
     response = asyncio.run(server.classroom_bridge_http_complete(_FakeBridgeRequest(
         job_id=job.id, body=browser_result
@@ -525,6 +539,70 @@ def test_v081_server_accepts_verified_browser_grade_and_return(monkeypatch):
     assert payload["job"]["status"] == "completed"
     assert payload["job"]["classroom_result"]["mode"] == "local_browser"
     assert payload["job"]["classroom_result"]["teacher_account_guard"] is True
+
+
+def test_hf4_server_rejects_grade_result_without_exact_student_target(monkeypatch):
+    queue = ClassroomBridgeQueue()
+    job = queue.enqueue(
+        course_id="course",
+        course_work_id="work",
+        submission_id="submission",
+        submission_url="https://classroom.google.com/example/student/TARGET123",
+        grade=16,
+    )
+    queue.next_job()
+    monkeypatch.setattr(server, "bridge_queue", queue)
+    response = asyncio.run(server.classroom_bridge_http_complete(_FakeBridgeRequest(
+        job_id=job.id,
+        body={
+            "ok": True,
+            "method": "dom-v0.8.7",
+            "url": "https://classroom.google.com/example/student/TARGET123",
+            "teacher_account_verified": True,
+            "comment": {"ok": True, "skipped": True},
+            "browser_followup_done": True,
+            "browser_grade_applied": True,
+            "browser_grade": 16,
+            "browser_returned": False,
+            "content_build": "0.8.7-HF4-GRADE-TARGET",
+            "target_student_id": "TARGET123",
+            "current_student_id": "OTHER456",
+        },
+    )))
+    payload = _json_response(response)
+    assert response.status_code == 409
+    assert payload["job"]["status"] == "failed"
+    assert "current_student_id_distinto" in payload["job"]["error"]
+
+
+def test_hf4_server_rejects_hf3_grade_result_even_if_numeric_version_matches(monkeypatch):
+    queue = ClassroomBridgeQueue()
+    job = queue.enqueue(
+        course_id="course",
+        course_work_id="work",
+        submission_id="submission",
+        submission_url="https://classroom.google.com/example/student/TARGET123",
+        grade=16,
+    )
+    queue.next_job()
+    monkeypatch.setattr(server, "bridge_queue", queue)
+    response = asyncio.run(server.classroom_bridge_http_complete(_FakeBridgeRequest(
+        job_id=job.id,
+        body={
+            "ok": True,
+            "method": "dom-v0.8.7",
+            "url": "https://classroom.google.com/example/student/TARGET123",
+            "teacher_account_verified": True,
+            "comment": {"ok": True, "skipped": True},
+            "browser_followup_done": True,
+            "browser_grade_applied": True,
+            "browser_grade": 16,
+            "browser_returned": False,
+        },
+    )))
+    payload = _json_response(response)
+    assert response.status_code == 409
+    assert "hf4_grade_target_build_no_verificado" in payload["job"]["error"]
 
 
 def test_v081_server_rejects_unconfirmed_browser_grade(monkeypatch):
