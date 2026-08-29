@@ -691,3 +691,55 @@ def test_hf4_grade_target_rev2_anchors_grade_field_to_exact_student_context():
     assert "el panel activo contiene varias cajas explícitas de nota" in content
     assert 'method: "dom-v0.8.7-read-hf4"' in content
     assert "content_build: SIEROOM_CONTENT_BUILD" in content
+
+
+def test_hf4_rev2_server_accepts_build_tagged_safe_read(monkeypatch):
+    queue = ClassroomBridgeQueue()
+    job = queue.enqueue(
+        course_id="course",
+        course_work_id="work",
+        submission_id="submission",
+        submission_url="https://classroom.google.com/example/student/TARGET123",
+        operation="read_private_comments",
+    )
+    queue.next_job(allowed_operations={"read_private_comments"})
+    monkeypatch.setattr(server, "bridge_queue", queue)
+    result = _valid_read(
+        "https://classroom.google.com/example/student/TARGET123",
+        "Nota cuantitativa: 20. Calificación cualitativa: A.",
+    )
+    result["method"] = "dom-v0.8.7-read-hf4"
+    result["content_build"] = "0.8.7-HF4-GRADE-TARGET"
+    result["current_student_id"] = "TARGET123"
+    response = asyncio.run(server.classroom_bridge_http_complete(_FakeBridgeRequest(
+        job_id=job.id, body=result
+    )))
+    payload = _json_response(response)
+    assert response.status_code == 200
+    assert payload["job"]["status"] == "completed"
+
+
+def test_hf4_rev2_server_rejects_build_tagged_read_for_other_student(monkeypatch):
+    queue = ClassroomBridgeQueue()
+    job = queue.enqueue(
+        course_id="course",
+        course_work_id="work",
+        submission_id="submission",
+        submission_url="https://classroom.google.com/example/student/TARGET123",
+        operation="read_private_comments",
+    )
+    queue.next_job(allowed_operations={"read_private_comments"})
+    monkeypatch.setattr(server, "bridge_queue", queue)
+    result = _valid_read(
+        "https://classroom.google.com/example/student/TARGET123",
+        "Nota cuantitativa: 20. Calificación cualitativa: A.",
+    )
+    result["method"] = "dom-v0.8.7-read-hf4"
+    result["content_build"] = "0.8.7-HF4-GRADE-TARGET"
+    result["current_student_id"] = "OTHER456"
+    response = asyncio.run(server.classroom_bridge_http_complete(_FakeBridgeRequest(
+        job_id=job.id, body=result
+    )))
+    payload = _json_response(response)
+    assert response.status_code == 409
+    assert payload["job"]["status"] == "failed"
