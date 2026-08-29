@@ -1047,7 +1047,9 @@
       student_scope_verified: true,
       scope_evidence: evidence,
       comment_order: "document_order",
-      method: "dom-v0.8.7-read",
+      method: "dom-v0.8.7-read-hf4",
+      content_build: SIEROOM_CONTENT_BUILD,
+      current_student_id: studentIdFromClassroomUrl(location.href),
       url: location.href,
     };
   }
