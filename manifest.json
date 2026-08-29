@@ -27,5 +27,6 @@
   "action": {
     "default_title": "SieRoom Classroom Bridge",
     "default_popup": "popup.html"
-  }
+  },
+  "version_name": "0.8.7-HF4-GRADE-TARGET"
 }
