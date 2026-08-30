@@ -255,6 +255,198 @@
     return { confirmed: false, noDialog: true };
   }
 
+
+  function activeTeacherIdentity() {
+    const selectors = [
+      '[aria-label^="Cuenta de Google"]', '[aria-label^="Google Account"]',
+      '[aria-label*="Cuenta de Google:"]', '[aria-label*="Google Account:"]',
+      '[title^="Cuenta de Google"]', '[title^="Google Account"]'
+    ].join(",");
+    const values = [...document.querySelectorAll(selectors)]
+      .filter(visible)
+      .flatMap((el) => [
+        el.getAttribute("aria-label"),
+        el.getAttribute("title"),
+        el.getAttribute("data-email")
+      ])
+      .filter(Boolean)
+      .map((value) => String(value).trim());
+
+    const emails = new Set();
+    const names = new Set();
+    const emailRx = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/ig;
+    for (const value of values) {
+      for (const match of value.matchAll(emailRx)) emails.add(String(match[0]).toLowerCase());
+      let candidate = value
+        .replace(/^(cuenta de google|google account)\s*:?\s*/i, "")
+        .replace(/\([^)]*@[A-Z0-9._%+-]+\.[A-Z]{2,}\)/ig, "")
+        .replace(emailRx, "")
+        .replace(/[·|,;]+\s*$/g, "")
+        .trim();
+      if (candidate.length >= 3 && candidate.length <= 120) names.add(norm(candidate));
+    }
+    return { emails: [...emails], names: [...names].filter(Boolean) };
+  }
+
+  function rowLooksAuthoredByActiveTeacher(row) {
+    const identity = activeTeacherIdentity();
+    if (!identity.names.length) return false;
+    const host = row?.host;
+    const values = [
+      host?.innerText,
+      host?.textContent,
+      host?.getAttribute?.("aria-label"),
+      host?.getAttribute?.("title"),
+      ...[...(host?.querySelectorAll?.("[aria-label],[title]") || [])].slice(0, 30)
+        .flatMap((el) => [el.getAttribute("aria-label"), el.getAttribute("title")])
+    ].filter(Boolean).join(" ");
+    const haystack = norm(values);
+    return identity.names.some((name) => name.length >= 3 && haystack.includes(name));
+  }
+
+  async function closeTransientMenu() {
+    try {
+      document.dispatchEvent(new KeyboardEvent("keydown", {
+        key: "Escape", code: "Escape", keyCode: 27, which: 27, bubbles: true
+      }));
+      document.dispatchEvent(new KeyboardEvent("keyup", {
+        key: "Escape", code: "Escape", keyCode: 27, which: 27, bubbles: true
+      }));
+    } catch (_) {}
+    await sleep(100);
+  }
+
+  async function rowOffersDelete(row, container) {
+    const menu = findMenuButton(row.host, container);
+    if (!menu) return false;
+    try {
+      menu.scrollIntoView({ block: "nearest", inline: "nearest" });
+      menu.click();
+      const start = Date.now();
+      while (Date.now() - start < 1800) {
+        const controls = visibleDeleteControls(document);
+        if (controls.length) {
+          await closeTransientMenu();
+          return true;
+        }
+        await sleep(120);
+      }
+      return false;
+    } finally {
+      await closeTransientMenu();
+    }
+  }
+
+  async function auditTeacherPrivateComments() {
+    const section = await waitPrivateSection();
+    await sleep(250);
+    const rows = commentRows(section.container, section.label, section.composer);
+    const comments = [];
+    for (const row of rows) {
+      const authoredByTeacherName = rowLooksAuthoredByActiveTeacher(row);
+      const structuredFeedback = row.markers.length >= 2;
+      const deleteAvailable = authoredByTeacherName
+        ? true
+        : (structuredFeedback ? await rowOffersDelete(row, section.container) : false);
+      const teacherOwned = Boolean(authoredByTeacherName || (structuredFeedback && deleteAvailable));
+      comments.push({
+        text: row.text,
+        domOrder: row.domOrder,
+        characterCount: clean(row.text).length,
+        markers: row.markers,
+        structuredFeedback,
+        teacherOwned,
+        authoredByTeacherName,
+        deleteAvailable,
+      });
+    }
+    return {
+      ok: true,
+      operation: "audit_teacher_private_comments",
+      comments,
+      teacherCommentCount: comments.filter((item) => item.teacherOwned).length,
+      method: "dom-v0.8.11-teacher-comment-audit-v1",
+      url: location.href,
+    };
+  }
+
+  function commentsAreDuplicates(a, b) {
+    const left = norm(a?.text);
+    const right = norm(b?.text);
+    if (!left || !right) return false;
+    if (left === right) return true;
+    const shorter = left.length <= right.length ? left : right;
+    const longer = left.length <= right.length ? right : left;
+    const ratio = shorter.length / Math.max(1, longer.length);
+    return shorter.length >= 80 && ratio >= 0.70 && longer.includes(shorter);
+  }
+
+  function duplicateTeacherGroups(comments) {
+    const teacher = comments.filter((item) => item.teacherOwned);
+    const visited = new Set();
+    const groups = [];
+    for (let i = 0; i < teacher.length; i++) {
+      if (visited.has(i)) continue;
+      const group = [teacher[i]];
+      visited.add(i);
+      let expanded = true;
+      while (expanded) {
+        expanded = false;
+        for (let j = 0; j < teacher.length; j++) {
+          if (visited.has(j)) continue;
+          if (group.some((member) => commentsAreDuplicates(member, teacher[j]))) {
+            visited.add(j);
+            group.push(teacher[j]);
+            expanded = true;
+          }
+        }
+      }
+      if (group.length > 1) groups.push(group);
+    }
+    return groups;
+  }
+
+  async function cleanupTeacherPrivateCommentDuplicates() {
+    const before = await auditTeacherPrivateComments();
+    const groups = duplicateTeacherGroups(before.comments);
+    const deleted = [];
+
+    for (const group of groups) {
+      const sorted = [...group].sort((a, b) => {
+        if (b.characterCount !== a.characterCount) return b.characterCount - a.characterCount;
+        return a.domOrder - b.domOrder;
+      });
+      const keeper = sorted[0];
+      const targets = sorted.slice(1).sort((a, b) => b.domOrder - a.domOrder);
+
+      for (const target of targets) {
+        const result = await deletePrivateComment(target.text, target.domOrder);
+        deleted.push({
+          text: target.text,
+          domOrder: target.domOrder,
+          characterCount: target.characterCount,
+          keptDomOrder: keeper.domOrder,
+          keptCharacterCount: keeper.characterCount,
+          exactDuplicate: norm(target.text) === norm(keeper.text),
+          result,
+        });
+      }
+    }
+
+    const after = deleted.length ? await auditTeacherPrivateComments() : before;
+    return {
+      ok: true,
+      operation: "cleanup_teacher_private_comment_duplicates",
+      duplicateGroups: groups.length,
+      deletedCount: deleted.length,
+      deleted,
+      comments: after.comments,
+      teacherCommentCount: after.teacherCommentCount,
+      method: "dom-v0.8.11-duplicate-cleanup-v1",
+      url: location.href,
+    };
+  }
+
   async function deletePrivateComment(text, domOrder = null) {
     const targetText = clean(text);
     if (!targetText) throw new Error("Texto de comentario vacío.");
@@ -302,16 +494,47 @@
     throw new Error("Se ejecutó la acción de borrado, pero Classroom no confirmó que desapareciera exactamente un comentario coincidente.");
   }
 
+  window.__SIEROOM_AUDIT_TEACHER_PRIVATE_COMMENTS__ = auditTeacherPrivateComments;
+  window.__SIEROOM_CLEANUP_TEACHER_PRIVATE_COMMENT_DUPLICATES__ = cleanupTeacherPrivateCommentDuplicates;
+  window.__SIEROOM_DELETE_PRIVATE_COMMENT_FN__ = deletePrivateComment;
+
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-    if (!msg || msg.type !== "SIEROOM_DELETE_PRIVATE_COMMENT") return;
-    deletePrivateComment(msg.commentText, msg.domOrder)
-      .then((result) => sendResponse(result))
-      .catch((err) => sendResponse({
-        ok: false,
-        operation: "delete_private_comment",
-        error: String(err?.message || err),
-        url: location.href,
-      }));
-    return true;
+    if (!msg) return;
+
+    if (msg.type === "SIEROOM_AUDIT_TEACHER_PRIVATE_COMMENTS") {
+      auditTeacherPrivateComments()
+        .then((result) => sendResponse(result))
+        .catch((err) => sendResponse({
+          ok: false,
+          operation: "audit_teacher_private_comments",
+          error: String(err?.message || err),
+          url: location.href,
+        }));
+      return true;
+    }
+
+    if (msg.type === "SIEROOM_CLEANUP_TEACHER_PRIVATE_COMMENT_DUPLICATES") {
+      cleanupTeacherPrivateCommentDuplicates()
+        .then((result) => sendResponse(result))
+        .catch((err) => sendResponse({
+          ok: false,
+          operation: "cleanup_teacher_private_comment_duplicates",
+          error: String(err?.message || err),
+          url: location.href,
+        }));
+      return true;
+    }
+
+    if (msg.type === "SIEROOM_DELETE_PRIVATE_COMMENT") {
+      deletePrivateComment(msg.commentText, msg.domOrder)
+        .then((result) => sendResponse(result))
+        .catch((err) => sendResponse({
+          ok: false,
+          operation: "delete_private_comment",
+          error: String(err?.message || err),
+          url: location.href,
+        }));
+      return true;
+    }
   });
 })();
