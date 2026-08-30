@@ -196,7 +196,7 @@ async def classroom_bridge_http_next(request: Request):
             "job": None,
             "bulk_cleanup_client_filtered": True,
         })
-    job = bridge_queue.next_job(allowed_operations=allowed_operations)
+    job = bridge_queue.next_job(claim_seconds=90, allowed_operations=allowed_operations)
     if not job:
         read_waiting = bridge_queue.has_queued_operation("read_private_comments")
         post_waiting = bridge_queue.has_queued_operation("post_private_comment")
