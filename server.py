@@ -382,6 +382,219 @@ def classroom_delete_private_comment(
 # PRUEBA TEMPORAL BARBARA / R3. Solo 2.º A, C1 Áreas y Perímetros.
 # No publica comentarios, no califica y no devuelve entregas.
 # ---------------------------------------------------------------------------
+
+# Piloto temporal y protegido: exactamente DOS estudiantes nuevos con duplicado real.
+_PILOT2_COURSE_ID = "794101973737"
+_PILOT2_WORK_ID = "874845898173"
+_PILOT2_SKIP_EXACT = {
+    "Barbara Rafaela ALVAREZ QUEVEDO",
+    "Luis Gonzalo Vargas Guerrero",
+}
+
+def _pilot2_wait_read(job_id: str, timeout_seconds: int = 90):
+    deadline = _time.time() + timeout_seconds
+    while _time.time() < deadline:
+        job = bridge_queue.get(job_id)
+        if job and job.status in {"completed", "failed", "blocked"}:
+            return job
+        _time.sleep(0.5)
+    return bridge_queue.get(job_id)
+
+def _pilot2_wait_delete(job_id: str, timeout_seconds: int = 90):
+    deadline = _time.time() + timeout_seconds
+    while _time.time() < deadline:
+        job = _private_comment_delete_queue.get(job_id)
+        if job and job.status in {"completed", "failed"}:
+            return job
+        _time.sleep(0.5)
+    return _private_comment_delete_queue.get(job_id)
+
+def _pilot2_structured_teacher_comments(result):
+    payload = result if isinstance(result, dict) else {}
+    comments = payload.get("comments")
+    if not isinstance(comments, list):
+        return []
+    out = []
+    for item in comments:
+        if not isinstance(item, dict):
+            continue
+        text = str(item.get("text") or "").strip()
+        markers = item.get("markers")
+        if (
+            text
+            and item.get("teacherOwned") is True
+            and item.get("structuredFeedback") is True
+            and isinstance(markers, list)
+            and len(markers) >= 2
+        ):
+            out.append({
+                "text": text,
+                "characterCount": len(text),
+            })
+    return out
+
+def _pilot2_teacher_texts(result):
+    payload = result if isinstance(result, dict) else {}
+    comments = payload.get("comments")
+    if not isinstance(comments, list):
+        return []
+    out = []
+    for item in comments:
+        if not isinstance(item, dict):
+            continue
+        text = str(item.get("text") or "").strip()
+        if text and item.get("teacherOwned") is True:
+            out.append(text)
+    return out
+
+def _pilot2_verify_remaining(sid: str, url: str, keeper_text: str, target_text: str):
+    keeper_norm = _delete_norm_text(keeper_text)
+    target_norm = _delete_norm_text(target_text)
+    last = None
+    for attempt in range(3):
+        read = bridge_queue.enqueue(
+            course_id=_PILOT2_COURSE_ID,
+            course_work_id=_PILOT2_WORK_ID,
+            submission_id=sid,
+            submission_url=url,
+            operation="read_private_comments",
+        )
+        job = _pilot2_wait_read(read.id)
+        if not job or job.status != "completed":
+            last = {
+                "ok": False,
+                "reason": "read_failed",
+                "status": getattr(job, "status", None),
+                "error": getattr(job, "error", None),
+            }
+        else:
+            texts = _pilot2_teacher_texts(job.bridge_result or {})
+            norms = [_delete_norm_text(t) for t in texts]
+            last = {
+                "ok": norms.count(keeper_norm) == 1 and target_norm not in norms,
+                "teacher_count": len(texts),
+                "keeper_count": norms.count(keeper_norm),
+                "target_count": norms.count(target_norm),
+            }
+            if last["ok"]:
+                return last
+        if attempt < 2:
+            _time.sleep(2.0)
+    return last or {"ok": False, "reason": "no_verification"}
+
+def _pilot2_worker():
+    if not str(os.getenv("SIEROOM_DEDUP_PILOT2_TOKEN") or "").strip():
+        return
+    print("DEDUP PILOT2: inicio protegido, limite=2.", flush=True)
+    processed = 0
+    try:
+        students = classroom.list_students(_PILOT2_COURSE_ID)
+        submissions = classroom.list_submissions(_PILOT2_COURSE_ID, _PILOT2_WORK_ID)
+        by_user = {}
+        for sub in submissions:
+            uid = str(sub.get("userId") or "")
+            if uid:
+                by_user.setdefault(uid, []).append(sub)
+
+        for student in students:
+            if processed >= 2:
+                break
+            name = str(student.get("name") or "").strip()
+            if (
+                not name
+                or name in _PILOT2_SKIP_EXACT
+                or name.lower().startswith("carlos ")
+                or name.lower() == "carlos"
+            ):
+                continue
+
+            uid = str(student.get("userId") or "")
+            subs = by_user.get(uid, [])
+            if len(subs) != 1:
+                continue
+            sub = subs[0]
+            sid = str(sub.get("id") or "")
+            url = str(sub.get("alternateLink") or "")
+            if not sid or not url:
+                continue
+
+            read = bridge_queue.enqueue(
+                course_id=_PILOT2_COURSE_ID,
+                course_work_id=_PILOT2_WORK_ID,
+                submission_id=sid,
+                submission_url=url,
+                operation="read_private_comments",
+            )
+            current = _pilot2_wait_read(read.id)
+            if not current or current.status != "completed":
+                print(
+                    f"DEDUP PILOT2 SCAN: {name} lectura_no_disponible status={getattr(current,'status',None)}.",
+                    flush=True,
+                )
+                continue
+
+            comments = _pilot2_structured_teacher_comments(current.bridge_result or {})
+            if len(comments) != 2:
+                continue
+            a, b = comments
+            if a["characterCount"] == b["characterCount"]:
+                print(f"DEDUP PILOT2 STOP: {name} empate de longitud; no se borra.", flush=True)
+                return
+
+            keeper, target = (
+                (a, b)
+                if a["characterCount"] > b["characterCount"]
+                else (b, a)
+            )
+            print(
+                f"DEDUP PILOT2 CANDIDATO {processed+1}: {name} conservar={keeper['characterCount']} borrar={target['characterCount']}.",
+                flush=True,
+            )
+
+            dj, _ = _private_comment_delete_queue.enqueue(
+                course_id=_PILOT2_COURSE_ID,
+                course_work_id=_PILOT2_WORK_ID,
+                submission_id=sid,
+                submission_url=url,
+                comment_text=str(target["text"]),
+                dom_order=None,
+            )
+            deleted = _pilot2_wait_delete(dj.id)
+            print(
+                f"DEDUP PILOT2 DELETE: {name} status={getattr(deleted,'status',None)} error={getattr(deleted,'error',None)}.",
+                flush=True,
+            )
+            if not deleted or deleted.status != "completed":
+                print(f"DEDUP PILOT2 STOP: {name} borrado no confirmado.", flush=True)
+                return
+
+            verification = _pilot2_verify_remaining(
+                sid,
+                url,
+                str(keeper["text"]),
+                str(target["text"]),
+            )
+            print(
+                f"DEDUP PILOT2 VERIFY: {name} {verification}.",
+                flush=True,
+            )
+            if not verification.get("ok"):
+                print(f"DEDUP PILOT2 STOP: {name} verificacion ambigua; no continuar.", flush=True)
+                return
+
+            processed += 1
+            print(
+                f"DEDUP PILOT2 OK {processed}/2: {name}; conservado={keeper['characterCount']} eliminado={target['characterCount']}.",
+                flush=True,
+            )
+
+        print(f"DEDUP PILOT2 FIN: procesados_verificados={processed}.", flush=True)
+    except Exception as exc:
+        print(f"DEDUP PILOT2 ERROR FATAL: {type(exc).__name__}: {exc}", flush=True)
+
+if str(os.getenv("SIEROOM_DEDUP_PILOT2_TOKEN") or "").strip():
+    Thread(target=_pilot2_worker, name="sieroom-dedup-pilot2", daemon=True).start()
+
 install_attendance(mcp, sieweb, settings, classroom)
 setattr(mcp, "_sieroom_attendance_installed", True)
 print("SieRoom Asistencia: rutas /asesoria restauradas.", flush=True)
