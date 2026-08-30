@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
-from threading import RLock
+from threading import RLock, Thread
 from urllib.parse import urlsplit
 from uuid import uuid4
 import secrets as _secrets
+import os
+import time as _time
 
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -372,6 +374,226 @@ def classroom_delete_private_comment(
         "job": job.public(),
         "note": "El bridge de borrado se ejecuta cuando la cola normal de Classroom queda libre.",
     }
+
+
+
+# ---------------------------------------------------------------------------
+# PILOTO TEMPORAL DEDUP: 3 estudiantes, solo 2.º A / C1 Áreas y Perímetros.
+# Se activa únicamente cuando SIEROOM_DEDUP_BATCH3_TOKEN tiene valor.
+# No publica comentarios, no califica y no devuelve entregas.
+# ---------------------------------------------------------------------------
+
+_DEDUP_BATCH3_COURSE_ID = "794101973737"
+_DEDUP_BATCH3_COURSE_WORK_ID = "874845898173"
+_DEDUP_BATCH3_LIMIT = 3
+
+
+def _dedup_batch3_wait_read(job_id: str, timeout_seconds: int = 90):
+    deadline = _time.time() + timeout_seconds
+    while _time.time() < deadline:
+        job = bridge_queue.get(job_id)
+        if job and job.status in {"completed", "failed", "blocked"}:
+            return job
+        _time.sleep(0.5)
+    return bridge_queue.get(job_id)
+
+
+def _dedup_batch3_wait_delete(job_id: str, timeout_seconds: int = 90):
+    deadline = _time.time() + timeout_seconds
+    while _time.time() < deadline:
+        job = _private_comment_delete_queue.get(job_id)
+        if job and job.status in {"completed", "failed"}:
+            return job
+        _time.sleep(0.5)
+    return _private_comment_delete_queue.get(job_id)
+
+
+def _dedup_batch3_structured(result: dict[str, object] | None) -> list[dict[str, object]]:
+    payload = result if isinstance(result, dict) else {}
+    comments = payload.get("comments")
+    if not isinstance(comments, list):
+        return []
+    found: list[dict[str, object]] = []
+    for item in comments:
+        if not isinstance(item, dict):
+            continue
+        text_value = str(item.get("text") or "").strip()
+        markers = item.get("markers")
+        if (
+            not text_value
+            or item.get("structuredFeedback") is not True
+            or not isinstance(markers, list)
+            or len(markers) < 2
+            or not isinstance(item.get("domOrder"), int)
+        ):
+            continue
+        found.append({
+            "text": text_value,
+            "domOrder": int(item["domOrder"]),
+            "characterCount": len(text_value),
+        })
+    return found
+
+
+def _dedup_batch3_enqueue_read(submission: dict[str, object]):
+    submission_id = str(submission.get("id") or "")
+    submission_url = str(submission.get("alternateLink") or "")
+    if not submission_id or not submission_url:
+        return None
+    return bridge_queue.enqueue(
+        course_id=_DEDUP_BATCH3_COURSE_ID,
+        course_work_id=_DEDUP_BATCH3_COURSE_WORK_ID,
+        submission_id=submission_id,
+        submission_url=submission_url,
+        operation="read_private_comments",
+    )
+
+
+def _dedup_batch3_worker() -> None:
+    if not str(os.getenv("SIEROOM_DEDUP_BATCH3_TOKEN") or "").strip():
+        return
+
+    print(
+        "DEDUP BATCH3: inicio protegido; curso=2A, tarea=C1 AREAS Y PERIMETROS, limite=3.",
+        flush=True,
+    )
+
+    try:
+        students = classroom.list_students(_DEDUP_BATCH3_COURSE_ID)
+        submissions = classroom.list_submissions(
+            _DEDUP_BATCH3_COURSE_ID,
+            _DEDUP_BATCH3_COURSE_WORK_ID,
+        )
+        names = {
+            str(item.get("userId") or ""): str(item.get("name") or "").strip()
+            for item in students
+        }
+        ordered = sorted(
+            submissions,
+            key=lambda item: (
+                names.get(str(item.get("userId") or ""), "").casefold(),
+                str(item.get("id") or ""),
+            ),
+        )
+
+        verified = 0
+        scanned = 0
+        for submission in ordered:
+            if verified >= _DEDUP_BATCH3_LIMIT:
+                break
+
+            student_id = str(submission.get("userId") or "")
+            student_name = names.get(student_id) or f"user:{student_id}"
+            scanned += 1
+
+            read_job = _dedup_batch3_enqueue_read(submission)
+            if read_job is None:
+                continue
+            current = _dedup_batch3_wait_read(read_job.id)
+            if not current or current.status != "completed":
+                print(
+                    f"DEDUP BATCH3 ERROR: lectura falló para {student_name}; "
+                    f"status={getattr(current, 'status', None)} "
+                    f"error={getattr(current, 'error', None)}. PILOTO DETENIDO.",
+                    flush=True,
+                )
+                return
+
+            comments = _dedup_batch3_structured(current.bridge_result or {})
+            # Piloto conservador: solo casos con EXACTAMENTE dos retroalimentaciones
+            # estructuradas y longitudes diferentes.
+            if len(comments) != 2:
+                continue
+
+            left, right = comments
+            if int(left["characterCount"]) == int(right["characterCount"]):
+                print(
+                    f"DEDUP BATCH3: {student_name} tiene 2 comentarios con empate; se omite.",
+                    flush=True,
+                )
+                continue
+
+            keeper, target = (
+                (left, right)
+                if int(left["characterCount"]) > int(right["characterCount"])
+                else (right, left)
+            )
+            print(
+                f"DEDUP BATCH3 CANDIDATO {verified + 1}: {student_name}; "
+                f"conservar={keeper['characterCount']} borrar={target['characterCount']} "
+                f"domOrder={target['domOrder']}.",
+                flush=True,
+            )
+
+            delete_job, reused = _private_comment_delete_queue.enqueue(
+                course_id=_DEDUP_BATCH3_COURSE_ID,
+                course_work_id=_DEDUP_BATCH3_COURSE_WORK_ID,
+                submission_id=str(submission.get("id") or ""),
+                submission_url=str(submission.get("alternateLink") or ""),
+                comment_text=str(target["text"]),
+                dom_order=int(target["domOrder"]),
+            )
+            deleted = _dedup_batch3_wait_delete(delete_job.id)
+
+            # Siempre hacemos una lectura independiente posterior, incluso si la
+            # verificación DOM del borrado reportó fallo, para no reintentar a ciegas.
+            verify_job = _dedup_batch3_enqueue_read(submission)
+            if verify_job is None:
+                print(
+                    f"DEDUP BATCH3 ERROR: no se pudo encolar verificación de {student_name}. "
+                    "PILOTO DETENIDO.",
+                    flush=True,
+                )
+                return
+            verify = _dedup_batch3_wait_read(verify_job.id)
+            if not verify or verify.status != "completed":
+                print(
+                    f"DEDUP BATCH3 ERROR: verificación de lectura falló para {student_name}; "
+                    f"delete_status={getattr(deleted, 'status', None)}. PILOTO DETENIDO.",
+                    flush=True,
+                )
+                return
+
+            after = _dedup_batch3_structured(verify.bridge_result or {})
+            keeper_norm = _delete_norm_text(str(keeper["text"]))
+            verified_clean = (
+                len(after) == 1
+                and _delete_norm_text(str(after[0]["text"])) == keeper_norm
+            )
+            print(
+                f"DEDUP BATCH3 VERIFICACION: {student_name}; "
+                f"delete_status={getattr(deleted, 'status', None)} "
+                f"comentarios_estructurados_despues={len(after)} "
+                f"keeper_confirmado={verified_clean}.",
+                flush=True,
+            )
+
+            if not verified_clean:
+                print(
+                    f"DEDUP BATCH3 ERROR: resultado ambiguo en {student_name}; "
+                    "no se procesará ningún estudiante adicional.",
+                    flush=True,
+                )
+                return
+
+            verified += 1
+            print(
+                f"DEDUP BATCH3 OK {verified}/{_DEDUP_BATCH3_LIMIT}: {student_name}; "
+                f"se conservó {keeper['characterCount']} y se eliminó {target['characterCount']}.",
+                flush=True,
+            )
+
+        print(
+            f"DEDUP BATCH3 FINAL: verificados={verified} escaneados={scanned} "
+            f"limite={_DEDUP_BATCH3_LIMIT}.",
+            flush=True,
+        )
+    except Exception as exc:
+        print(f"DEDUP BATCH3 ERROR FATAL: {type(exc).__name__}: {exc}", flush=True)
+
+
+if str(os.getenv("SIEROOM_DEDUP_BATCH3_TOKEN") or "").strip():
+    Thread(target=_dedup_batch3_worker, name="sieroom-dedup-batch3", daemon=True).start()
 
 
 install_attendance(mcp, sieweb, settings, classroom)
