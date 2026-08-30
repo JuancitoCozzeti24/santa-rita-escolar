@@ -595,6 +595,124 @@ def _pilot2_worker():
 if str(os.getenv("SIEROOM_DEDUP_PILOT2_TOKEN") or "").strip():
     Thread(target=_pilot2_worker, name="sieroom-dedup-pilot2", daemon=True).start()
 
+
+# Reintento temporal: solo estudiantes cuya lectura falló en el piloto anterior.
+_RETRY2_NAMES = [
+    "Natalia Graña Amoretti",
+    "Facundo RODAS PANEZ",
+    "Gustavo Eduardo OSORIO DIAZ",
+    "Joaquín Gonzalo Peralta Díaz",
+    "Valia Sara Victoria GALVEZ SANCHEZ",
+    "Mikaela Daniela JARA LEON",
+]
+
+def _retry2_worker():
+    if not str(os.getenv("SIEROOM_DEDUP_RETRY2_TOKEN") or "").strip():
+        return
+    print("DEDUP RETRY2: inicio protegido; candidatos_fallidos=6 limite=2.", flush=True)
+    processed = 0
+    try:
+        students = classroom.list_students(_PILOT2_COURSE_ID)
+        submissions = classroom.list_submissions(_PILOT2_COURSE_ID, _PILOT2_WORK_ID)
+        student_by_name = {
+            str(s.get("name") or "").strip().casefold(): s
+            for s in students
+            if str(s.get("name") or "").strip()
+        }
+        by_user = {}
+        for sub in submissions:
+            uid = str(sub.get("userId") or "")
+            if uid:
+                by_user.setdefault(uid, []).append(sub)
+
+        for requested_name in _RETRY2_NAMES:
+            if processed >= 2:
+                break
+            student = student_by_name.get(requested_name.casefold())
+            if not student:
+                print(f"DEDUP RETRY2 SKIP: {requested_name} no encontrado.", flush=True)
+                continue
+            name = str(student.get("name") or "").strip()
+            uid = str(student.get("userId") or "")
+            subs = by_user.get(uid, [])
+            if len(subs) != 1:
+                print(f"DEDUP RETRY2 SKIP: {name} entregas={len(subs)}.", flush=True)
+                continue
+            sub = subs[0]
+            sid = str(sub.get("id") or "")
+            url = str(sub.get("alternateLink") or "")
+            if not sid or not url:
+                continue
+
+            read = bridge_queue.enqueue(
+                course_id=_PILOT2_COURSE_ID,
+                course_work_id=_PILOT2_WORK_ID,
+                submission_id=sid,
+                submission_url=url,
+                operation="read_private_comments",
+            )
+            current = _pilot2_wait_read(read.id)
+            if not current or current.status != "completed":
+                print(
+                    f"DEDUP RETRY2 READ FAIL: {name} status={getattr(current,'status',None)} error={getattr(current,'error',None)}.",
+                    flush=True,
+                )
+                continue
+
+            comments = _pilot2_structured_teacher_comments(current.bridge_result or {})
+            print(f"DEDUP RETRY2 READ: {name} estructurados_docente={len(comments)}.", flush=True)
+            if len(comments) != 2:
+                continue
+            a, b = comments
+            if a["characterCount"] == b["characterCount"]:
+                print(f"DEDUP RETRY2 STOP: {name} empate de longitud.", flush=True)
+                return
+            keeper, target = (
+                (a, b) if a["characterCount"] > b["characterCount"] else (b, a)
+            )
+            print(
+                f"DEDUP RETRY2 CANDIDATO {processed+1}: {name} conservar={keeper['characterCount']} borrar={target['characterCount']}.",
+                flush=True,
+            )
+
+            dj, _ = _private_comment_delete_queue.enqueue(
+                course_id=_PILOT2_COURSE_ID,
+                course_work_id=_PILOT2_WORK_ID,
+                submission_id=sid,
+                submission_url=url,
+                comment_text=str(target["text"]),
+                dom_order=None,
+            )
+            deleted = _pilot2_wait_delete(dj.id)
+            print(
+                f"DEDUP RETRY2 DELETE: {name} status={getattr(deleted,'status',None)} error={getattr(deleted,'error',None)}.",
+                flush=True,
+            )
+            if not deleted or deleted.status != "completed":
+                print(f"DEDUP RETRY2 STOP: {name} borrado no confirmado.", flush=True)
+                return
+
+            verification = _pilot2_verify_remaining(
+                sid, url, str(keeper["text"]), str(target["text"])
+            )
+            print(f"DEDUP RETRY2 VERIFY: {name} {verification}.", flush=True)
+            if not verification.get("ok"):
+                print(f"DEDUP RETRY2 STOP: {name} verificacion ambigua.", flush=True)
+                return
+
+            processed += 1
+            print(
+                f"DEDUP RETRY2 OK {processed}/2: {name}; conservado={keeper['characterCount']} eliminado={target['characterCount']}.",
+                flush=True,
+            )
+
+        print(f"DEDUP RETRY2 FIN: procesados_verificados={processed}.", flush=True)
+    except Exception as exc:
+        print(f"DEDUP RETRY2 ERROR FATAL: {type(exc).__name__}: {exc}", flush=True)
+
+if str(os.getenv("SIEROOM_DEDUP_RETRY2_TOKEN") or "").strip():
+    Thread(target=_retry2_worker, name="sieroom-dedup-retry2", daemon=True).start()
+
 install_attendance(mcp, sieweb, settings, classroom)
 setattr(mcp, "_sieroom_attendance_installed", True)
 print("SieRoom Asistencia: rutas /asesoria restauradas.", flush=True)
