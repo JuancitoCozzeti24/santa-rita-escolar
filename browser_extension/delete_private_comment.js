@@ -455,27 +455,56 @@
     await confirmDeleteDialogIfNeeded();
 
     const started = Date.now();
-    while (Date.now() - started < 12000) {
-      await sleep(400);
-      const currentSection = section.container?.isConnected ? section : await waitPrivateSection(3000);
+    let stableDisappearances = 0;
+    let lastAfterMatchingCount = beforeMatchingCount;
+
+    while (Date.now() - started < 18000) {
+      await sleep(500);
+
+      // IMPORTANTE: no reutilizamos el contenedor anterior. Classroom puede
+      // mantener un nodo viejo conectado durante varios segundos después de
+      // eliminar el comentario, aunque la interfaz visible ya se haya actualizado.
+      // Reubicamos desde cero la sección privada en cada comprobación.
+      let currentSection;
+      try {
+        currentSection = await waitPrivateSection(3500);
+      } catch (_) {
+        stableDisappearances = 0;
+        continue;
+      }
+
       rows = commentRows(currentSection.container, currentSection.label, currentSection.composer);
       const afterMatchingCount = rows.filter((row) => norm(row.text) === norm(targetText)).length;
+      lastAfterMatchingCount = afterMatchingCount;
+
       if (afterMatchingCount === beforeMatchingCount - 1) {
-        return {
-          ok: true,
-          operation: "delete_private_comment",
-          deleted: true,
-          comment_text: targetText,
-          dom_order: target.domOrder,
-          before_matching_count: beforeMatchingCount,
-          after_matching_count: afterMatchingCount,
-          method: "dom-v0.8.7-delete-v1",
-          url: location.href,
-        };
+        stableDisappearances += 1;
+        // Exigimos dos lecturas consecutivas del DOM fresco para evitar declarar
+        // éxito por una transición temporal de Classroom.
+        if (stableDisappearances >= 2) {
+          return {
+            ok: true,
+            operation: "delete_private_comment",
+            deleted: true,
+            comment_text: targetText,
+            dom_order: target.domOrder,
+            before_matching_count: beforeMatchingCount,
+            after_matching_count: afterMatchingCount,
+            verification: "fresh_private_section_two_pass",
+            method: "dom-v0.8.7-delete-v1",
+            url: location.href,
+          };
+        }
+      } else {
+        stableDisappearances = 0;
       }
     }
 
-    throw new Error("Se ejecutó la acción de borrado, pero Classroom no confirmó que desapareciera exactamente un comentario coincidente.");
+    throw new Error(
+      "Se ejecutó la acción de borrado, pero Classroom no confirmó de forma estable " +
+      "que desapareciera exactamente un comentario coincidente. " +
+      `Antes: ${beforeMatchingCount}; última lectura fresca: ${lastAfterMatchingCount}.`
+    );
   }
 
   window.__SIEROOM_AUDIT_TEACHER_PRIVATE_COMMENTS__ = auditTeacherPrivateComments;
