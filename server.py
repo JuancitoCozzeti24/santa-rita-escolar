@@ -317,7 +317,7 @@ def _dedup_structured_comments(result: dict[str, object]) -> list[dict[str, obje
         markers = item.get("markers")
         if item.get("structuredFeedback") is not True:
             continue
-        if not isinstance(markers, list) or len(markers) < 3:
+        if not isinstance(markers, list) or len(markers) < 2:
             continue
         text = str(item.get("text") or "").strip()
         dom_order = item.get("domOrder")
