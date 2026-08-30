@@ -176,10 +176,19 @@
         selected = exact[0];
       }
 
+      const requestedDomOrder =
+        job.dom_order !== null && job.dom_order !== undefined
+          ? selected.domOrder
+          : null;
+
       const result = await send(tab.id, {
         type: "SIEROOM_DELETE_PRIVATE_COMMENT",
         commentText: job.comment_text,
-        domOrder: selected.domOrder,
+        // Si el servidor no fijó posición, conservamos el borrado por texto
+        // exacto y único. Classroom puede reordenar el DOM entre esta lectura
+        // y el clic destructivo, por lo que no convertimos artificialmente la
+        // coincidencia única en un índice rígido.
+        domOrder: requestedDomOrder,
       }, 70000);
       if (!result?.ok || result.operation !== "delete_private_comment" || result.deleted !== true) {
         throw new Error(result?.error || "Classroom no confirmó el borrado del comentario privado.");
