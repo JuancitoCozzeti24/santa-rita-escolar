@@ -8,6 +8,7 @@ from uuid import uuid4
 import secrets as _secrets
 import os
 import time as _time
+from difflib import SequenceMatcher
 
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -261,16 +262,48 @@ def _dedup_norm(value: object) -> str:
     return " ".join(str(value or "").split()).strip().casefold()
 
 
-def _dedup_is_clear_duplicate(left: dict[str, object], right: dict[str, object]) -> bool:
+def _dedup_similarity_metrics(left: dict[str, object], right: dict[str, object]) -> dict[str, float | int | bool]:
     a = _dedup_norm(left.get("text"))
     b = _dedup_norm(right.get("text"))
-    if not a or not b:
-        return False
-    if a == b:
-        return True
     shorter, longer = (a, b) if len(a) <= len(b) else (b, a)
-    ratio = len(shorter) / max(1, len(longer))
-    return len(shorter) >= 80 and ratio >= 0.70 and shorter in longer
+    containment = bool(shorter and shorter in longer)
+    length_ratio = len(shorter) / max(1, len(longer))
+    sequence_ratio = SequenceMatcher(None, a, b, autojunk=False).ratio() if a and b else 0.0
+    a_tokens = set(a.split())
+    b_tokens = set(b.split())
+    token_overlap = (
+        len(a_tokens & b_tokens) / max(1, min(len(a_tokens), len(b_tokens)))
+        if a_tokens and b_tokens else 0.0
+    )
+    return {
+        "left_len": len(a),
+        "right_len": len(b),
+        "length_ratio": round(length_ratio, 4),
+        "sequence_ratio": round(sequence_ratio, 4),
+        "token_overlap": round(token_overlap, 4),
+        "containment": containment,
+    }
+
+
+def _dedup_is_clear_duplicate(left: dict[str, object], right: dict[str, object]) -> bool:
+    metrics = _dedup_similarity_metrics(left, right)
+    left_len = int(metrics["left_len"])
+    right_len = int(metrics["right_len"])
+    if not left_len or not right_len:
+        return False
+    if _dedup_norm(left.get("text")) == _dedup_norm(right.get("text")):
+        return True
+    shorter_len = min(left_len, right_len)
+    return bool(
+        shorter_len >= 80
+        and (
+            (metrics["containment"] and float(metrics["length_ratio"]) >= 0.55)
+            or (
+                float(metrics["sequence_ratio"]) >= 0.72
+                and float(metrics["token_overlap"]) >= 0.78
+            )
+        )
+    )
 
 
 def _dedup_structured_comments(result: dict[str, object]) -> list[dict[str, object]]:
@@ -705,6 +738,15 @@ def _dedup_test_autorun_worker() -> None:
             f"DEDUP TEST: lectura completada; comentarios_estructurados={len(comments)}.",
             flush=True,
         )
+        if len(comments) == 2:
+            metrics = _dedup_similarity_metrics(comments[0], comments[1])
+            print(
+                "DEDUP TEST METRICS: "
+                f"left_len={metrics['left_len']} right_len={metrics['right_len']} "
+                f"length_ratio={metrics['length_ratio']} sequence_ratio={metrics['sequence_ratio']} "
+                f"token_overlap={metrics['token_overlap']} containment={metrics['containment']}.",
+                flush=True,
+            )
         if pair is None:
             print(
                 "DEDUP TEST RESULTADO: no se encontró duplicado claro con distinta longitud; no se borró nada.",
