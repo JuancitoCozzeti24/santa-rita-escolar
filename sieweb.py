@@ -2909,8 +2909,10 @@ class SieWebClient:
         }
 
 
+
+    # ---------- HF v0.8.10: edición nativa segura de abreviaturas ----------
     @staticmethod
-    def _criteria_hotfix_value(obj, *keys, default=None):
+    def _criteria_hf10_value(obj, *keys, default=None):
         if not isinstance(obj, dict):
             return default
         lower = {str(k).lower(): v for k, v in obj.items()}
@@ -2923,8 +2925,11 @@ class SieWebClient:
         return default
 
     @classmethod
-    def _criteria_hotfix_editor_nodes(cls, payload):
-        """Aplana únicamente nodos reales del editor de criterios de SIEweb."""
+    def _criteria_hf10_norm_text(cls, value):
+        return " ".join(str(value or "").strip().split())
+
+    @classmethod
+    def _criteria_hf10_real_nodes(cls, tree):
         out = []
 
         def walk(value):
@@ -2934,28 +2939,23 @@ class SieWebClient:
                 return
             if not isinstance(value, dict):
                 return
-            cid = cls._criteria_hotfix_value(value, "ID_CONTENIDO", "id")
-            ccid = cls._criteria_hotfix_value(value, "ID_CLASE_CONTENIDO", "idClaseContenido")
+            cid = cls._criteria_hf10_value(value, "ID_CONTENIDO", "id")
+            ccid = cls._criteria_hf10_value(value, "ID_CLASE_CONTENIDO", "idClaseContenido")
             if cid not in (None, "") and ccid not in (None, ""):
                 out.append(value)
-            children = cls._criteria_hotfix_value(value, "children", default=[])
+            children = cls._criteria_hf10_value(value, "children", default=[])
             if isinstance(children, list):
                 walk(children)
 
-        root = payload
-        if isinstance(payload, dict):
-            root = cls._criteria_hotfix_value(payload, "json", default=payload)
-            if isinstance(root, dict):
-                root = cls._criteria_hotfix_value(root, "resCriterios", default=root)
-        walk(root)
+        walk(tree)
         return out
 
     @classmethod
-    def _criteria_hotfix_find_by_id(cls, payload, criterion_id):
+    def _criteria_hf10_find_node(cls, tree, criterion_id):
         target = str(criterion_id)
         matches = []
-        for node in cls._criteria_hotfix_editor_nodes(payload):
-            cid = cls._criteria_hotfix_value(node, "ID_CONTENIDO", "id")
+        for node in cls._criteria_hf10_real_nodes(tree):
+            cid = cls._criteria_hf10_value(node, "ID_CONTENIDO", "id")
             if str(cid) == target:
                 matches.append(node)
         if len(matches) != 1:
@@ -2963,36 +2963,88 @@ class SieWebClient:
         return matches[0], 1
 
     @classmethod
-    def _criteria_hotfix_norm_text(cls, value):
-        return " ".join(str(value or "").strip().split())
-
-    def _criteria_hotfix_native_replica(self, *, class_id, class_period_id, root_content_id, id_ambito):
-        """Obtiene datosReplica del preflight si existe; para edición nunca replica a ciegas."""
-        replica = {"replicar": False}
-        preflight = getattr(self, "criteria_write_preflight", None)
-        if not callable(preflight):
-            return replica
-        try:
-            info = preflight(
-                class_id=int(class_id),
-                class_period_id=int(class_period_id),
-                root_content_id=int(root_content_id),
-                id_ambito=int(id_ambito),
+    def _criteria_hf10_extract_tree(cls, payload):
+        data = payload
+        if isinstance(data, dict) and isinstance(data.get("json"), dict):
+            data = data["json"]
+        if not isinstance(data, dict):
+            raise SieWebError(
+                "PROTECCIÓN HF10: dataInicialPesosCriterios no devolvió un objeto JSON utilizable."
             )
-        except TypeError:
-            # Algunas revisiones aceptan argumentos posicionales distintos. La edición
-            # continúa sin replicación; el registro existente lleva sus IDs nativos.
-            return replica
-        except Exception:
-            return replica
-        if isinstance(info, dict):
-            native = info.get("native_replica_context")
-            if isinstance(native, dict):
-                replica = dict(native)
-                replica["replicar"] = False
+        tree = data.get("resCriterios")
+        if not isinstance(tree, list) or not tree:
+            raise SieWebError(
+                "PROTECCIÓN HF10: no encontré resCriterios del modal nativo. No se envió nada."
+            )
+        return tree
+
+    @classmethod
+    def _criteria_hf10_signature(cls, tree):
+        rows = []
+        for node in cls._criteria_hf10_real_nodes(tree):
+            cid = int(cls._criteria_hf10_value(node, "ID_CONTENIDO", "id"))
+            ccid = int(cls._criteria_hf10_value(node, "ID_CLASE_CONTENIDO", "idClaseContenido"))
+            parent = int(cls._criteria_hf10_value(node, "ID_CONTENIDO_REF", "idpadre", default=0) or 0)
+            desc = cls._criteria_hf10_norm_text(
+                cls._criteria_hf10_value(node, "DESCRIPCION", "descripcion")
+            )
+            rows.append((cid, ccid, parent, desc))
+        return sorted(rows)
+
+    def _criteria_hf10_replica_from_payload(self, payload, *, class_id=None, class_period_id=None, root_content_id=None, id_ambito=None):
+        """Obtiene datosReplica nativo; para una edición local siempre fuerza replicar=False."""
+        preflight = getattr(self, "criteria_write_preflight", None)
+        if callable(preflight) and all(v not in (None, "") for v in (class_id, class_period_id, root_content_id, id_ambito)):
+            try:
+                info = preflight(
+                    class_id=int(class_id),
+                    class_period_id=int(class_period_id),
+                    root_content_id=int(root_content_id),
+                    id_ambito=int(id_ambito),
+                )
+                if isinstance(info, dict):
+                    native = info.get("native_replica_context")
+                    if isinstance(native, dict):
+                        replica = dict(native)
+                        replica["replicar"] = False
+                        return replica
+            except Exception:
+                # La edición puede continuar con el contexto derivado del mismo
+                # payload nativo si esta revisión no expone el preflight como método.
+                pass
+
+        data = payload.get("json") if isinstance(payload, dict) and isinstance(payload.get("json"), dict) else payload
+        if not isinstance(data, dict):
+            data = {}
+
+        # El modal oficial usa nivelReplicaAnual para el límite. Para una edición
+        # local siempre se fuerza replicar=False.
+        limite = 1
+        nra = data.get("nivelReplicaAnual")
+        if isinstance(nra, list) and nra and isinstance(nra[0], dict):
+            try:
+                limite = int(nra[0].get("LIMITE", 1) or 1)
+            except Exception:
+                limite = 1
+
+        # idCurso / grupocod se obtienen de un nodo real del propio editor.
+        nodes = cls._criteria_hf10_real_nodes(data.get("resCriterios") or [])
+        id_curso = None
+        grupocod = None
+        if nodes:
+            id_curso = cls._criteria_hf10_value(nodes[0], "ID_CURSO")
+            grupocod = cls._criteria_hf10_value(nodes[0], "GRUPOCOD")
+
+        # SIEweb tolera campos adicionales; estos son los mismos que expone el
+        # preflight v0.8.4. Si alguno no está disponible se omite, nunca se inventa.
+        replica = {"replicar": False, "limiteReplica": limite}
+        if id_curso not in (None, ""):
+            replica["idCurso"] = id_curso
+        if grupocod not in (None, ""):
+            replica["grupocod"] = grupocod
         return replica
 
-    def _criteria_hotfix_update_abbreviations_verified(
+    def _criteria_hf10_update_abbreviations_verified(
         self,
         *,
         class_id,
@@ -3001,111 +3053,120 @@ class SieWebClient:
         id_ambito,
         changes,
     ):
-        """Edita SOLO abreviaturas de desempeños existentes y verifica que no cree columnas nuevas."""
-        before = self.get_criteria(
+        """
+        Edita abreviaturas usando el contrato real del modal: envía el árbol
+        COMPLETO resCriterios con el mismo ID_CONTENIDO/ID_CLASE_CONTENIDO.
+        No envía una hoja suelta, porque HyoClaseContenido/insertar interpreta
+        esos registros como altas nuevas o puede ignorar la modificación.
+        """
+        before_payload = self.get_criteria(
             class_id=int(class_id),
             class_period_id=int(class_period_id),
             root_content_id=int(root_content_id),
             id_ambito=int(id_ambito),
         )
-        before_nodes = self._criteria_hotfix_editor_nodes(before)
-        before_ids = [str(self._criteria_hotfix_value(n, "ID_CONTENIDO", "id")) for n in before_nodes]
-        records = []
+        before_tree = self._criteria_hf10_extract_tree(before_payload)
+        before_signature = self._criteria_hf10_signature(before_tree)
+        working_tree = copy.deepcopy(before_tree)
         operations = []
+        touched = []
 
         for change in changes:
             cid = int(change["id"])
-            node, count = self._criteria_hotfix_find_by_id(before, cid)
-            if node is None:
+            before_node, before_count = self._criteria_hf10_find_node(before_tree, cid)
+            work_node, work_count = self._criteria_hf10_find_node(working_tree, cid)
+            if before_node is None or work_node is None or before_count != 1 or work_count != 1:
                 raise SieWebError(
-                    f"PROTECCIÓN DE CRITERIOS: ID_CONTENIDO={cid} no existe de forma única (coincidencias={count}). No se envió nada."
+                    f"PROTECCIÓN HF10: criterio {cid} no es único en el árbol nativo. No se envió nada."
                 )
 
-            program = self._criteria_hotfix_norm_text(
-                self._criteria_hotfix_value(node, "DESCPROGRAMA", "programa")
+            program_id = self._criteria_hf10_value(before_node, "ID_PROGRAMA")
+            program_name = self._criteria_hf10_norm_text(
+                self._criteria_hf10_value(before_node, "DESCPROGRAMA", "programa")
             ).lower()
-            level = self._criteria_hotfix_value(node, "NIVEL", "nivelEva")
-            if program and program != "desempeño":
+            if program_id not in (None, "", 5, "5") and program_name != "desempeño":
                 raise SieWebError(
-                    f"PROTECCIÓN DE CRITERIOS: ID_CONTENIDO={cid} no es un Desempeño. No se envió nada."
-                )
-            if level not in (None, "", 3, "3"):
-                raise SieWebError(
-                    f"PROTECCIÓN DE CRITERIOS: ID_CONTENIDO={cid} no está en nivel de desempeño. No se envió nada."
+                    f"PROTECCIÓN HF10: criterio {cid} no es un desempeño. No se envió nada."
                 )
 
-            parent = int(self._criteria_hotfix_value(node, "ID_CONTENIDO_REF", "idpadre", default=0) or 0)
+            parent = int(self._criteria_hf10_value(before_node, "ID_CONTENIDO_REF", "idpadre", default=0) or 0)
             expected_parent = change.get("parent_id")
             if expected_parent not in (None, "") and parent != int(expected_parent):
                 raise SieWebError(
-                    f"PROTECCIÓN DE CRITERIOS: el padre de {cid} cambió ({parent} != {expected_parent}). No se envió nada."
+                    f"PROTECCIÓN HF10: el padre de {cid} cambió ({parent} != {expected_parent}). No se envió nada."
                 )
 
-            current_description = self._criteria_hotfix_norm_text(
-                self._criteria_hotfix_value(node, "DESCRIPCION", "descripcion")
+            current_description = self._criteria_hf10_norm_text(
+                self._criteria_hf10_value(before_node, "DESCRIPCION", "descripcion")
             )
-            expected_description = self._criteria_hotfix_norm_text(change.get("description"))
+            expected_description = self._criteria_hf10_norm_text(change.get("description"))
             if expected_description and current_description != expected_description:
                 raise SieWebError(
-                    f"PROTECCIÓN DE CRITERIOS: la descripción de {cid} no coincide exactamente. No se envió nada."
+                    f"PROTECCIÓN HF10: la descripción de {cid} no coincide exactamente. No se envió nada."
                 )
 
-            desired_abbreviation = str(change.get("abbreviation") or "").strip()
-            if not desired_abbreviation:
+            desired = str(change.get("abbreviation") or "").strip()
+            if not desired:
+                raise SieWebError(f"PROTECCIÓN HF10: abreviatura vacía para {cid}.")
+            if len(desired) > 80:
+                raise SieWebError(f"PROTECCIÓN HF10: abreviatura demasiado larga para {cid}.")
+            if desired.startswith("__"):
                 raise SieWebError(
-                    f"PROTECCIÓN DE CRITERIOS: abreviatura vacía para {cid}. No se envió nada."
-                )
-            if len(desired_abbreviation) > 80:
-                raise SieWebError(
-                    f"PROTECCIÓN DE CRITERIOS: abreviatura demasiado larga para {cid}. No se envió nada."
-                )
-            if desired_abbreviation.startswith("__"):
-                raise SieWebError(
-                    "PROTECCIÓN DE CRITERIOS: se bloquean abreviaturas/marcadores internos que empiezan por '__'."
+                    "PROTECCIÓN HF10: se bloquean marcadores internos '__...__'."
                 )
 
-            current_abbreviation = str(
-                self._criteria_hotfix_value(node, "ABREVIATURA", "abreviatura", default="") or ""
+            current = str(
+                self._criteria_hf10_value(before_node, "ABREVIATURA", "abreviatura", default="") or ""
             ).strip()
-            if current_abbreviation == desired_abbreviation:
+            if current == desired:
                 operations.append({
                     "action": "already-correct",
                     "idContenido": cid,
-                    "abbreviation": desired_abbreviation,
+                    "abbreviation": desired,
                 })
                 continue
 
-            record = dict(node)
-            record.pop("children", None)
-            record["ID_CLASE"] = int(class_id)
-            record["ID_CLASE_PERIODO"] = int(class_period_id)
-            record["ID_CONTENIDO"] = cid
-            record["ID_CONTENIDO_REF"] = parent
-            record["DESCRIPCION"] = current_description
-            record["ORIGI"] = current_description
-            record["ABREV_ORIGI"] = current_abbreviation
-            record["ABREVIATURA"] = desired_abbreviation
-            record["EDITOREG"] = 1
-            record["flExiste"] = True
-            records.append(record)
+            # Cambia SOLO lo que el usuario pidió. Los campos *_ORIGI conservan
+            # el valor que SIEweb leyó originalmente; sirven para que el modal
+            # detecte que el registro EXISTENTE fue editado.
+            work_node["ABREVIATURA"] = desired
+            if "ABREV_ORIGI" not in work_node or work_node.get("ABREV_ORIGI") in (None, ""):
+                work_node["ABREV_ORIGI"] = current
+            work_node["EDITOREG"] = 1
+            work_node["flExiste"] = True
+
+            # Nunca reescribir descripción ni ORIGI al cambiar una abreviatura.
+            work_node["DESCRIPCION"] = self._criteria_hf10_value(before_node, "DESCRIPCION")
+            if "ORIGI" in before_node:
+                work_node["ORIGI"] = before_node.get("ORIGI")
+
+            touched.append(cid)
             operations.append({
                 "action": "update-existing-abbreviation",
                 "idContenido": cid,
-                "from": current_abbreviation,
-                "to": desired_abbreviation,
+                "from": current,
+                "to": desired,
             })
 
-        if not records:
+        if not touched:
             return {
                 "saved": True,
                 "already_present": True,
                 "updated_existing": False,
                 "operations": operations,
-                "sent_record_count": 0,
-                "protection": "abbreviation-only; no criteria created",
+                "protection": "HF10 full native tree; no new criteria; no grade writes",
             }
 
-        replica = self._criteria_hotfix_native_replica(
+        # Protección previa al POST: el árbol a enviar debe contener exactamente
+        # los mismos IDs, class-content IDs, padres y descripciones.
+        working_signature = self._criteria_hf10_signature(working_tree)
+        if working_signature != before_signature:
+            raise SieWebError(
+                "ALERTA HF10: además de la abreviatura cambió la estructura o una descripción. No se envió nada."
+            )
+
+        replica = self._criteria_hf10_replica_from_payload(
+            before_payload,
             class_id=class_id,
             class_period_id=class_period_id,
             root_content_id=root_content_id,
@@ -3113,50 +3174,43 @@ class SieWebClient:
         )
         write = self.upsert_criteria(
             class_id=int(class_id),
-            records=records,
+            records=working_tree,
             replica=replica,
         )
 
-        after = self.get_criteria(
+        after_payload = self.get_criteria(
             class_id=int(class_id),
             class_period_id=int(class_period_id),
             root_content_id=int(root_content_id),
             id_ambito=int(id_ambito),
         )
-        after_nodes = self._criteria_hotfix_editor_nodes(after)
-        after_ids = [str(self._criteria_hotfix_value(n, "ID_CONTENIDO", "id")) for n in after_nodes]
-        if len(after_ids) != len(before_ids) or sorted(after_ids) != sorted(before_ids):
+        after_tree = self._criteria_hf10_extract_tree(after_payload)
+        after_signature = self._criteria_hf10_signature(after_tree)
+        if after_signature != before_signature:
             raise SieWebError(
-                "ALERTA DE INTEGRIDAD: la edición de abreviatura cambió la cantidad o los IDs de criterios. Revisa SIEweb; se bloquean nuevas operaciones."
+                "ALERTA DE INTEGRIDAD HF10: después del guardado cambió un ID, padre o descripción. Se bloquean nuevas operaciones."
             )
 
         verification = []
         for change in changes:
             cid = int(change["id"])
-            desired = str(change.get("abbreviation") or "").strip()
-            node, count = self._criteria_hotfix_find_by_id(after, cid)
-            if node is None:
+            node, count = self._criteria_hf10_find_node(after_tree, cid)
+            if node is None or count != 1:
                 raise SieWebError(
-                    f"VERIFICACIÓN FALLIDA: el criterio {cid} dejó de ser único después del guardado (coincidencias={count})."
+                    f"VERIFICACIÓN HF10 FALLIDA: criterio {cid} dejó de ser único."
                 )
             observed = str(
-                self._criteria_hotfix_value(node, "ABREVIATURA", "abreviatura", default="") or ""
+                self._criteria_hf10_value(node, "ABREVIATURA", "abreviatura", default="") or ""
             ).strip()
-            observed_description = self._criteria_hotfix_norm_text(
-                self._criteria_hotfix_value(node, "DESCRIPCION", "descripcion")
-            )
-            expected_description = self._criteria_hotfix_norm_text(change.get("description"))
+            desired = str(change.get("abbreviation") or "").strip()
             if observed != desired:
                 raise SieWebError(
-                    f"VERIFICACIÓN FALLIDA: abreviatura de {cid}: {observed!r} != {desired!r}."
-                )
-            if expected_description and observed_description != expected_description:
-                raise SieWebError(
-                    f"VERIFICACIÓN FALLIDA: la descripción de {cid} fue modificada."
+                    f"VERIFICACIÓN HF10 FALLIDA: abreviatura de {cid}: {observed!r} != {desired!r}."
                 )
             verification.append({
                 "id": cid,
                 "abbreviation": observed,
+                "same_id": True,
                 "description_unchanged": True,
             })
 
@@ -3166,68 +3220,74 @@ class SieWebClient:
             "write": write,
             "operations": operations,
             "verification": verification,
-            "sent_record_count": len(records),
-            "protection": "abbreviation-only; same criterion IDs; no grade writes; no replication",
+            "sent_full_native_tree": True,
+            "touched_ids": touched,
+            "protection": "HF10: full resCriterios tree; same IDs/parents/descriptions; no grade writes; no replication",
         }
 
     def upsert_criteria_verified(self, *args, **kwargs):
-        """HF v0.8.9: edita abreviaturas de criterios existentes sin tratarlos como 'already-present'."""
+        """
+        HF v0.8.10: intercepta SOLO una edición de abreviatura sobre criterios
+        existentes. Las altas nuevas y otros cambios siguen usando el flujo legado.
+        """
         records = kwargs.get("records")
         expected = kwargs.get("expected")
         required = ("class_id", "class_period_id", "root_content_id", "id_ambito")
 
-        if not isinstance(records, list) or not isinstance(expected, list) or not records or len(records) != len(expected):
-            return self._upsert_criteria_verified_legacy(*args, **kwargs)
-        if not all(k in kwargs and kwargs.get(k) not in (None, "") for k in required):
+        if (
+            not isinstance(records, list)
+            or not isinstance(expected, list)
+            or not records
+            or len(records) != len(expected)
+            or not all(k in kwargs and kwargs.get(k) not in (None, "") for k in required)
+        ):
             return self._upsert_criteria_verified_legacy(*args, **kwargs)
 
-        # Bloquea el patrón de marcador que provocó la columna accidental del incidente.
-        for item in expected:
-            desc = self._criteria_hotfix_norm_text(
-                self._criteria_hotfix_value(item, "description", "DESCRIPCION")
-            )
-            if desc.startswith("__"):
-                raise SieWebError(
-                    "PROTECCIÓN DE CRITERIOS v0.8.9: no se permiten descripciones internas '__...__' como mecanismo para forzar una actualización."
-                )
-
-        before = self.get_criteria(
+        before_payload = self.get_criteria(
             class_id=int(kwargs["class_id"]),
             class_period_id=int(kwargs["class_period_id"]),
             root_content_id=int(kwargs["root_content_id"]),
             id_ambito=int(kwargs["id_ambito"]),
         )
+        before_tree = self._criteria_hf10_extract_tree(before_payload)
         changes = []
-        all_existing = True
 
         for record, exp in zip(records, expected):
-            cid = self._criteria_hotfix_value(exp, "id", "ID_CONTENIDO")
+            cid = self._criteria_hf10_value(exp, "id", "ID_CONTENIDO")
             if cid in (None, ""):
-                cid = self._criteria_hotfix_value(record, "id", "ID_CONTENIDO")
+                cid = self._criteria_hf10_value(record, "id", "ID_CONTENIDO")
             if cid in (None, ""):
-                all_existing = False
-                break
-            node, count = self._criteria_hotfix_find_by_id(before, cid)
+                return self._upsert_criteria_verified_legacy(*args, **kwargs)
+
+            node, count = self._criteria_hf10_find_node(before_tree, cid)
             if node is None or count != 1:
-                all_existing = False
-                break
+                return self._upsert_criteria_verified_legacy(*args, **kwargs)
 
-            current_description = self._criteria_hotfix_norm_text(
-                self._criteria_hotfix_value(node, "DESCRIPCION", "descripcion")
+            current_description = self._criteria_hf10_norm_text(
+                self._criteria_hf10_value(node, "DESCRIPCION", "descripcion")
             )
-            desired_description = self._criteria_hotfix_norm_text(
-                self._criteria_hotfix_value(exp, "description", "DESCRIPCION", default=current_description)
+            desired_description = self._criteria_hf10_norm_text(
+                self._criteria_hf10_value(exp, "description", "DESCRIPCION", default=current_description)
             )
-            parent = int(self._criteria_hotfix_value(node, "ID_CONTENIDO_REF", "idpadre", default=0) or 0)
-            desired_parent = self._criteria_hotfix_value(exp, "parent_id", "ID_CONTENIDO_REF", default=parent)
-            desired_abbreviation = self._criteria_hotfix_value(exp, "abbreviation", "ABREVIATURA")
+            parent = int(self._criteria_hf10_value(node, "ID_CONTENIDO_REF", "idpadre", default=0) or 0)
+            desired_parent = self._criteria_hf10_value(exp, "parent_id", "ID_CONTENIDO_REF", default=parent)
+            desired_abbreviation = self._criteria_hf10_value(exp, "abbreviation", "ABREVIATURA")
             if desired_abbreviation in (None, ""):
-                desired_abbreviation = self._criteria_hotfix_value(record, "abbreviation", "ABREVIATURA")
+                desired_abbreviation = self._criteria_hf10_value(record, "abbreviation", "ABREVIATURA")
 
-            # Este hotfix es deliberadamente conservador: solo intercepta edición de abreviatura.
-            if desired_description != current_description or int(desired_parent) != parent or desired_abbreviation in (None, ""):
-                all_existing = False
-                break
+            # Si intentan cambiar descripción/padre o crear un registro, no lo
+            # intercepta HF10: queda en manos del flujo verificado legado.
+            if (
+                desired_description != current_description
+                or int(desired_parent) != parent
+                or desired_abbreviation in (None, "")
+            ):
+                return self._upsert_criteria_verified_legacy(*args, **kwargs)
+
+            if desired_description.startswith("__"):
+                raise SieWebError(
+                    "PROTECCIÓN HF10: no se permiten descripciones internas '__...__' para forzar una actualización."
+                )
 
             changes.append({
                 "id": int(cid),
@@ -3236,16 +3296,13 @@ class SieWebClient:
                 "abbreviation": str(desired_abbreviation).strip(),
             })
 
-        if all_existing and changes:
-            return self._criteria_hotfix_update_abbreviations_verified(
-                class_id=kwargs["class_id"],
-                class_period_id=kwargs["class_period_id"],
-                root_content_id=kwargs["root_content_id"],
-                id_ambito=kwargs["id_ambito"],
-                changes=changes,
-            )
-
-        return self._upsert_criteria_verified_legacy(*args, **kwargs)
+        return self._criteria_hf10_update_abbreviations_verified(
+            class_id=kwargs["class_id"],
+            class_period_id=kwargs["class_period_id"],
+            root_content_id=kwargs["root_content_id"],
+            id_ambito=kwargs["id_ambito"],
+            changes=changes,
+        )
     def save_grades_verified(
         self,
         *,
