@@ -382,28 +382,12 @@
   }
 
   function duplicateTeacherGroups(comments) {
+    // Regla docente estricta: una entrega no debe conservar más de UN comentario
+    // perteneciente a la cuenta docente. El Bridge pudo regenerar una segunda
+    // retroalimentación con redacción diferente; eso sigue siendo un duplicado
+    // funcional aunque el texto no sea casi idéntico.
     const teacher = comments.filter((item) => item.teacherOwned);
-    const visited = new Set();
-    const groups = [];
-    for (let i = 0; i < teacher.length; i++) {
-      if (visited.has(i)) continue;
-      const group = [teacher[i]];
-      visited.add(i);
-      let expanded = true;
-      while (expanded) {
-        expanded = false;
-        for (let j = 0; j < teacher.length; j++) {
-          if (visited.has(j)) continue;
-          if (group.some((member) => commentsAreDuplicates(member, teacher[j]))) {
-            visited.add(j);
-            group.push(teacher[j]);
-            expanded = true;
-          }
-        }
-      }
-      if (group.length > 1) groups.push(group);
-    }
-    return groups;
+    return teacher.length > 1 ? [teacher] : [];
   }
 
   async function cleanupTeacherPrivateCommentDuplicates() {
