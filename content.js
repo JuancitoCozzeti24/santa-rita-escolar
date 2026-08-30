@@ -2,6 +2,9 @@
   if (window.__SIEROOM_CLASSROOM_BRIDGE_087__) return;
   window.__SIEROOM_CLASSROOM_BRIDGE_087__ = true;
 
+  const inflightSubmissionRequests = new Map();
+  const completedSubmissionRequests = new Map();
+
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const norm = (s) => String(s || "")
     .normalize("NFD")
@@ -1063,6 +1066,67 @@
     return { returned: true, alreadyReturned: false };
   }
 
+
+  async function prepareTeacherCommentGuard() {
+    const cleanup = window.__SIEROOM_CLEANUP_TEACHER_PRIVATE_COMMENT_DUPLICATES__;
+    const audit = window.__SIEROOM_AUDIT_TEACHER_PRIVATE_COMMENTS__;
+    if (typeof cleanup !== "function" || typeof audit !== "function") {
+      throw new Error(
+        "BLOQUEO ANTI-DUPLICADO: no está disponible el auditor de comentarios propios; no se publicará ningún comentario."
+      );
+    }
+
+    const cleanupResult = await cleanup();
+    if (!cleanupResult?.ok || !Array.isArray(cleanupResult.comments)) {
+      throw new Error(
+        cleanupResult?.error ||
+        "BLOQUEO ANTI-DUPLICADO: no pude auditar y limpiar comentarios privados existentes."
+      );
+    }
+
+    const teacherComments = cleanupResult.comments.filter((item) => item.teacherOwned);
+    return {
+      cleanup: cleanupResult,
+      teacherComments,
+      teacherCommentCount: teacherComments.length,
+    };
+  }
+
+  async function processSubmissionOnce(requestId, payload = {}) {
+    const key = String(requestId || "").trim();
+    if (!key) {
+      throw new Error("BLOQUEO ANTI-DUPLICADO: falta requestId estable para esta operación.");
+    }
+
+    if (completedSubmissionRequests.has(key)) {
+      return {
+        ...completedSubmissionRequests.get(key),
+        idempotentReplay: true,
+        requestId: key,
+      };
+    }
+
+    if (inflightSubmissionRequests.has(key)) {
+      const result = await inflightSubmissionRequests.get(key);
+      return { ...result, idempotentReplay: true, requestId: key };
+    }
+
+    const task = processSubmission(payload)
+      .then((result) => {
+        const finalResult = { ...result, requestId: key, idempotentReplay: false };
+        completedSubmissionRequests.set(key, finalResult);
+        while (completedSubmissionRequests.size > 100) {
+          const firstKey = completedSubmissionRequests.keys().next().value;
+          completedSubmissionRequests.delete(firstKey);
+        }
+        return finalResult;
+      })
+      .finally(() => inflightSubmissionRequests.delete(key));
+
+    inflightSubmissionRequests.set(key, task);
+    return await task;
+  }
+
   async function processSubmission(payload = {}) {
     const comment = String(payload.comment || "").trim();
     const grade = payload.grade;
@@ -1070,8 +1134,31 @@
 
     let commentResult = { ok: true, skipped: true, alreadyPresent: false };
     if (comment) {
-      commentResult = await postPrivateComment(comment);
-      if (!commentResult?.ok) throw new Error(commentResult?.error || "No se pudo publicar el comentario privado.");
+      const guard = await prepareTeacherCommentGuard();
+
+      // Regla estricta: si ya existe al menos UN comentario perteneciente a la
+      // cuenta docente, jamás publicamos otro. Antes de bloquear, el guard limpia
+      // únicamente duplicados claros y conserva el comentario más largo.
+      if (guard.teacherCommentCount > 0) {
+        commentResult = {
+          ok: true,
+          skipped: true,
+          alreadyPresent: true,
+          blockedByExistingTeacherComment: true,
+          existingTeacherCommentCount: guard.teacherCommentCount,
+          duplicateCleanup: {
+            duplicateGroups: Number(guard.cleanup?.duplicateGroups || 0),
+            deletedCount: Number(guard.cleanup?.deletedCount || 0),
+          },
+        };
+      } else {
+        commentResult = await postPrivateComment(comment);
+        if (!commentResult?.ok) throw new Error(commentResult?.error || "No se pudo publicar el comentario privado.");
+        commentResult.duplicateCleanup = {
+          duplicateGroups: Number(guard.cleanup?.duplicateGroups || 0),
+          deletedCount: Number(guard.cleanup?.deletedCount || 0),
+        };
+      }
       await sleep(500);
     }
 
@@ -1275,7 +1362,13 @@
     if (!msg) return;
 
     if (msg.type === "SIEROOM_PING") {
-      sendResponse({ ok: true, version: "0.8.7", build: SIEROOM_CONTENT_BUILD, url: location.href });
+      sendResponse({
+        ok: true,
+        version: "0.8.7",
+        build: SIEROOM_CONTENT_BUILD,
+        duplicateGuard: typeof window.__SIEROOM_CLEANUP_TEACHER_PRIVATE_COMMENT_DUPLICATES__ === "function",
+        url: location.href
+      });
       return;
     }
 
@@ -1301,7 +1394,7 @@
     }
 
     if (msg.type === "SIEROOM_PROCESS_SUBMISSION") {
-      processSubmission({
+      processSubmissionOnce(msg.requestId, {
         comment: msg.comment,
         grade: msg.grade,
         returnAfterComment: msg.returnAfterComment,
