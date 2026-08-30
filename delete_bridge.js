@@ -1,3 +1,4 @@
+const DEFAULT_TEACHER_EMAIL = "jbringas@santaritadecasia.edu.pe";
 (() => {
   if (window.__SIEROOM_DELETE_BRIDGE_087_V1__) return;
   window.__SIEROOM_DELETE_BRIDGE_087_V1__ = true;
@@ -24,7 +25,7 @@
     const data = await chrome.storage.local.get(["endpoint", "teacherEmail", "secret"]);
     return {
       endpoint: String(data.endpoint || "https://santa-rita-escolar-tcpb.onrender.com").replace(/\/$/, ""),
-      teacherEmail: String(data.teacherEmail || "").trim().toLowerCase(),
+      teacherEmail: String(data.teacherEmail || DEFAULT_TEACHER_EMAIL).trim().toLowerCase(),
       secret: String(data.secret || "")
     };
   }
