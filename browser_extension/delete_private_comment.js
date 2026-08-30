@@ -170,11 +170,17 @@
       const index = Number(domOrder);
       if (!Number.isInteger(index) || index < 0) throw new Error("domOrder inválido.");
       const row = rows.find((item) => item.domOrder === index);
-      if (!row) throw new Error(`No existe un comentario en la posición ${index}.`);
-      if (norm(row.text) !== wanted) {
-        throw new Error("El comentario de esa posición ya no coincide exactamente con el texto solicitado; no se borró nada.");
+      if (row && norm(row.text) === wanted) return row;
+
+      // Classroom puede reordenar el DOM entre la lectura y el borrado. Si la
+      // posición ya no coincide, no abortamos por índice: buscamos el texto
+      // exacto. Solo continuamos si existe UNA única coincidencia exacta.
+      const exactAfterReorder = rows.filter((item) => norm(item.text) === wanted);
+      if (exactAfterReorder.length === 1) return exactAfterReorder[0];
+      if (exactAfterReorder.length === 0) {
+        throw new Error("El comentario solicitado ya no está presente; no se borró nada.");
       }
-      return row;
+      throw new Error("El texto solicitado aparece más de una vez tras el reordenamiento; no se borró nada por ambigüedad.");
     }
 
     const exact = rows.filter((row) => norm(row.text) === wanted);
