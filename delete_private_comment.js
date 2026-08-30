@@ -156,10 +156,79 @@
     const chosen = [];
     for (const row of minimal) {
       const key = norm(row.text);
-      if (chosen.some((item) => norm(item.text) === key && item.host === row.host)) continue;
-      chosen.push({ ...row, domOrder: chosen.length });
+      const renderedDuplicate = chosen.find(
+        (item) => norm(item.text) === key && sameLogicalRenderedComment(item, row, container)
+      );
+      if (renderedDuplicate) {
+        renderedDuplicate.representationCount = Number(renderedDuplicate.representationCount || 1) + 1;
+        continue;
+      }
+      chosen.push({ ...row, domOrder: chosen.length, representationCount: 1 });
     }
     return chosen;
+  }
+
+  function stableCommentIds(host) {
+    const attrs = ["data-comment-id", "data-id", "data-item-id", "data-stream-item-id"];
+    const values = new Set();
+    const nodes = [host, ...[...(host?.querySelectorAll?.("[data-comment-id],[data-id],[data-item-id],[data-stream-item-id]") || [])].slice(0, 12)];
+    for (const node of nodes) {
+      for (const attr of attrs) {
+        const value = String(node?.getAttribute?.(attr) || "").trim();
+        if (value) values.add(`${attr}:${value}`);
+      }
+    }
+    return values;
+  }
+
+  function rectangleOverlapRatio(a, b) {
+    if (!a || !b || a.width <= 0 || a.height <= 0 || b.width <= 0 || b.height <= 0) return 0;
+    const left = Math.max(a.left, b.left);
+    const top = Math.max(a.top, b.top);
+    const right = Math.min(a.right, b.right);
+    const bottom = Math.min(a.bottom, b.bottom);
+    const width = Math.max(0, right - left);
+    const height = Math.max(0, bottom - top);
+    const intersection = width * height;
+    const smaller = Math.min(a.width * a.height, b.width * b.height);
+    return smaller > 0 ? intersection / smaller : 0;
+  }
+
+  function sameLogicalRenderedComment(a, b, container) {
+    if (!a?.host || !b?.host) return false;
+    if (a.host === b.host) return true;
+    if (a.host.contains?.(b.host) || b.host.contains?.(a.host)) return true;
+
+    const leftIds = stableCommentIds(a.host);
+    const rightIds = stableCommentIds(b.host);
+    if ([...leftIds].some((value) => rightIds.has(value))) return true;
+
+    // Dos representaciones del mismo comentario de Classroom suelen compartir
+    // exactamente el mismo botón "Más opciones", aunque estén envueltas por
+    // nodos distintos.
+    const leftMenu = findMenuButton(a.host, container);
+    const rightMenu = findMenuButton(b.host, container);
+    if (leftMenu && rightMenu && leftMenu === rightMenu) return true;
+
+    // Última señal segura: dos cajas visuales prácticamente superpuestas con
+    // el mismo texto. Dos comentarios reales aparecen en posiciones verticales
+    // distintas y no cumplen este criterio.
+    try {
+      const ar = a.host.getBoundingClientRect();
+      const br = b.host.getBoundingClientRect();
+      const overlap = rectangleOverlapRatio(ar, br);
+      const centerAX = ar.left + ar.width / 2;
+      const centerAY = ar.top + ar.height / 2;
+      const centerBX = br.left + br.width / 2;
+      const centerBY = br.top + br.height / 2;
+      if (
+        overlap >= 0.92 &&
+        Math.abs(centerAX - centerBX) <= 4 &&
+        Math.abs(centerAY - centerBY) <= 4
+      ) return true;
+    } catch (_) {}
+
+    return false;
   }
 
   function chooseTarget(rows, text, domOrder) {
@@ -364,6 +433,7 @@
         teacherOwned,
         authoredByTeacherName,
         deleteAvailable,
+        representationCount: Number(row.representationCount || 1),
       });
     }
     return {
