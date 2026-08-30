@@ -1,5 +1,5 @@
-const DEFAULT_TEACHER_EMAIL = "jbringas@santaritadecasia.edu.pe";
 (() => {
+  const DEFAULT_TEACHER_EMAIL = "jbringas@santaritadecasia.edu.pe";
   if (window.__SIEROOM_DELETE_BRIDGE_087_V1__) return;
   window.__SIEROOM_DELETE_BRIDGE_087_V1__ = true;
 
