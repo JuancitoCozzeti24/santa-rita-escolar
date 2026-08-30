@@ -2,11 +2,12 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
-from threading import RLock
+from threading import RLock, Thread
 from urllib.parse import urlsplit
 from uuid import uuid4
 import secrets as _secrets
 import os
+import time as _time
 
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -254,6 +255,14 @@ async def classroom_private_comment_delete_status(request: Request):
 async def classroom_private_comment_delete_next(request: Request):
     if not _delete_bridge_auth_ok(request):
         return JSONResponse({"ok": False, "error": "delete_bridge_unauthorized_or_incompatible"}, status_code=401)
+    bulk_bridge_ip = str(os.getenv("SIEROOM_BULK_BRIDGE_IP") or "").strip()
+    client_ip = str(getattr(getattr(request, "client", None), "host", "") or "")
+    if bulk_bridge_ip and client_ip and client_ip != bulk_bridge_ip:
+        return JSONResponse({
+            "ok": True,
+            "job": None,
+            "bulk_delete_client_filtered": True,
+        })
     job = _private_comment_delete_queue.next()
     return JSONResponse({"ok": True, "job": job.public() if job else None})
 
@@ -376,6 +385,183 @@ def classroom_delete_private_comment(
 
 
 
+
+
+# Limpieza temporal masiva de duplicados privados para 2.º A / C1 Áreas y Perímetros.
+_BULK_DEDUP_COURSE_ID = "794101973737"
+_BULK_DEDUP_WORK_ID = "874845898173"
+
+def _bulk_wait_read(job_id: str, timeout_seconds: int = 90):
+    deadline = _time.time() + timeout_seconds
+    while _time.time() < deadline:
+        job = bridge_queue.get(job_id)
+        if job and job.status in {"completed", "failed", "blocked"}:
+            return job
+        _time.sleep(0.5)
+    return bridge_queue.get(job_id)
+
+def _bulk_wait_delete(job_id: str, timeout_seconds: int = 90):
+    deadline = _time.time() + timeout_seconds
+    while _time.time() < deadline:
+        job = _private_comment_delete_queue.get(job_id)
+        if job and job.status in {"completed", "failed"}:
+            return job
+        _time.sleep(0.5)
+    return _private_comment_delete_queue.get(job_id)
+
+def _bulk_teacher_comments(result):
+    payload = result if isinstance(result, dict) else {}
+    comments = payload.get("comments")
+    if not isinstance(comments, list):
+        return []
+    out = []
+    for item in comments:
+        if not isinstance(item, dict):
+            continue
+        text = str(item.get("text") or "").strip()
+        if text and item.get("teacherOwned") is True:
+            out.append({
+                "text": text,
+                "norm": _delete_norm_text(text),
+                "length": len(text),
+            })
+    return out
+
+def _bulk_read_submission(sid: str, url: str):
+    read = bridge_queue.enqueue(
+        course_id=_BULK_DEDUP_COURSE_ID,
+        course_work_id=_BULK_DEDUP_WORK_ID,
+        submission_id=sid,
+        submission_url=url,
+        operation="read_private_comments",
+    )
+    return _bulk_wait_read(read.id)
+
+def _bulk_verify(sid: str, url: str, keeper_norm: str, target_norm: str):
+    last = None
+    for attempt in range(3):
+        job = _bulk_read_submission(sid, url)
+        if not job or job.status != "completed":
+            last = {"ok": False, "status": getattr(job, "status", None), "error": getattr(job, "error", None)}
+        else:
+            comments = _bulk_teacher_comments(job.bridge_result or {})
+            norms = [c["norm"] for c in comments]
+            last = {
+                "ok": norms.count(keeper_norm) == 1 and target_norm not in norms,
+                "teacher_count": len(comments),
+                "keeper_count": norms.count(keeper_norm),
+                "target_count": norms.count(target_norm),
+            }
+            if last["ok"]:
+                return last
+        if attempt < 2:
+            _time.sleep(2)
+    return last or {"ok": False}
+
+def _bulk_dedup_worker():
+    if not str(os.getenv("SIEROOM_BULK_DEDUP_TOKEN") or "").strip():
+        return
+    print("BULK DEDUP: inicio protegido 2A/C1.", flush=True)
+    cleaned_students = 0
+    deleted_comments = 0
+    skipped_ambiguous = 0
+    read_failures = 0
+    try:
+        students = classroom.list_students(_BULK_DEDUP_COURSE_ID)
+        submissions = classroom.list_submissions(_BULK_DEDUP_COURSE_ID, _BULK_DEDUP_WORK_ID)
+        by_user = {}
+        for sub in submissions:
+            uid = str(sub.get("userId") or "")
+            if uid:
+                by_user.setdefault(uid, []).append(sub)
+
+        for student in students:
+            name = str(student.get("name") or "").strip()
+            uid = str(student.get("userId") or "")
+            subs = by_user.get(uid, [])
+            if len(subs) != 1:
+                continue
+            sub = subs[0]
+            sid = str(sub.get("id") or "")
+            url = str(sub.get("alternateLink") or "")
+            if not sid or not url:
+                continue
+
+            read = _bulk_read_submission(sid, url)
+            if not read or read.status != "completed":
+                read_failures += 1
+                print(f"BULK DEDUP READ FAIL: {name} status={getattr(read,'status',None)}.", flush=True)
+                continue
+
+            comments = _bulk_teacher_comments(read.bridge_result or {})
+            if len(comments) <= 1:
+                continue
+
+            max_len = max(c["length"] for c in comments)
+            keepers = [c for c in comments if c["length"] == max_len]
+            if len(keepers) != 1:
+                skipped_ambiguous += 1
+                print(f"BULK DEDUP SKIP AMBIGUO: {name} empate_maximo={max_len} teacher={len(comments)}.", flush=True)
+                continue
+            keeper = keepers[0]
+
+            # Si dos comentarios reales tienen exactamente el mismo texto normalizado,
+            # no se intenta borrado automático porque el target sería ambiguo.
+            norm_counts = {}
+            for c in comments:
+                norm_counts[c["norm"]] = norm_counts.get(c["norm"], 0) + 1
+            targets = [c for c in comments if c is not keeper]
+            if any(norm_counts.get(c["norm"], 0) != 1 for c in targets):
+                skipped_ambiguous += 1
+                print(f"BULK DEDUP SKIP AMBIGUO: {name} texto_repetido_no_unico.", flush=True)
+                continue
+
+            print(
+                f"BULK DEDUP CANDIDATO: {name} teacher={len(comments)} conservar={keeper['length']} borrar={[c['length'] for c in targets]}.",
+                flush=True,
+            )
+
+            student_deleted = 0
+            for target in sorted(targets, key=lambda x: x["length"]):
+                dj, _ = _private_comment_delete_queue.enqueue(
+                    course_id=_BULK_DEDUP_COURSE_ID,
+                    course_work_id=_BULK_DEDUP_WORK_ID,
+                    submission_id=sid,
+                    submission_url=url,
+                    comment_text=target["text"],
+                    dom_order=None,
+                )
+                djob = _bulk_wait_delete(dj.id)
+                print(
+                    f"BULK DEDUP DELETE: {name} len={target['length']} status={getattr(djob,'status',None)} error={getattr(djob,'error',None)}.",
+                    flush=True,
+                )
+                if not djob or djob.status != "completed":
+                    print(f"BULK DEDUP STOP ESTUDIANTE: {name} borrado_no_confirmado.", flush=True)
+                    break
+
+                verification = _bulk_verify(sid, url, keeper["norm"], target["norm"])
+                print(f"BULK DEDUP VERIFY: {name} len={target['length']} {verification}.", flush=True)
+                if not verification.get("ok"):
+                    print(f"BULK DEDUP STOP ESTUDIANTE: {name} verificacion_ambigua.", flush=True)
+                    break
+
+                student_deleted += 1
+                deleted_comments += 1
+
+            if student_deleted:
+                cleaned_students += 1
+                print(f"BULK DEDUP OK: {name} eliminados={student_deleted}.", flush=True)
+
+        print(
+            f"BULK DEDUP FIN: estudiantes_limpiados={cleaned_students} comentarios_eliminados={deleted_comments} ambiguos={skipped_ambiguous} lecturas_fallidas={read_failures}.",
+            flush=True,
+        )
+    except Exception as exc:
+        print(f"BULK DEDUP ERROR FATAL: {type(exc).__name__}: {exc}", flush=True)
+
+if str(os.getenv("SIEROOM_BULK_DEDUP_TOKEN") or "").strip():
+    Thread(target=_bulk_dedup_worker, name="sieroom-bulk-dedup", daemon=True).start()
 
 install_attendance(mcp, sieweb, settings, classroom)
 setattr(mcp, "_sieroom_attendance_installed", True)
