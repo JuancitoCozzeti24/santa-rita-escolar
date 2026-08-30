@@ -2,11 +2,12 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
-from threading import RLock
+from threading import RLock, Thread
 from urllib.parse import urlsplit
 from uuid import uuid4
 import secrets as _secrets
 import os
+import time as _time
 
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -640,9 +641,163 @@ def classroom_delete_private_comment(
     }
 
 
+def _dedup_test_autorun_worker() -> None:
+    if not str(os.getenv("SIEROOM_DEDUP_TEST_TOKEN") or "").strip():
+        return
+    try:
+        print(f"DEDUP TEST: iniciando prueba exclusiva para {_DEDUP_TEST_STUDENT_NAME}.", flush=True)
+
+        students = classroom.list_students(_DEDUP_TEST_COURSE_ID)
+        matches = [
+            row for row in students
+            if _dedup_norm(row.get("name")) == _dedup_norm(_DEDUP_TEST_STUDENT_NAME)
+        ]
+        if len(matches) != 1:
+            print(f"DEDUP TEST ERROR: student_resolution_failed match_count={len(matches)}", flush=True)
+            return
+
+        user_id = str(matches[0].get("userId") or "")
+        submissions = classroom.list_submissions(
+            _DEDUP_TEST_COURSE_ID, _DEDUP_TEST_COURSE_WORK_ID
+        )
+        matched_submissions = [
+            row for row in submissions if str(row.get("userId") or "") == user_id
+        ]
+        if len(matched_submissions) != 1:
+            print(f"DEDUP TEST ERROR: submission_resolution_failed match_count={len(matched_submissions)}", flush=True)
+            return
+
+        sub = matched_submissions[0]
+        submission_id = str(sub.get("id") or "")
+        submission_url = str(sub.get("alternateLink") or "")
+        if not submission_id or not submission_url:
+            print("DEDUP TEST ERROR: submission_missing_id_or_url", flush=True)
+            return
+
+        read_job = bridge_queue.enqueue(
+            course_id=_DEDUP_TEST_COURSE_ID,
+            course_work_id=_DEDUP_TEST_COURSE_WORK_ID,
+            submission_id=submission_id,
+            submission_url=submission_url,
+            operation="read_private_comments",
+        )
+        print(
+            f"DEDUP TEST: Luis resuelto submission_id={submission_id}; lectura encolada job={read_job.id}.",
+            flush=True,
+        )
+
+        while True:
+            current = bridge_queue.get(read_job.id)
+            if current is None:
+                print("DEDUP TEST ERROR: read_job_missing", flush=True)
+                return
+            if current.status in {"completed", "failed", "cancelled"}:
+                break
+            _time.sleep(1.0)
+
+        if current.status != "completed":
+            print(f"DEDUP TEST ERROR: lectura status={current.status} error={current.error}", flush=True)
+            return
+
+        comments = _dedup_structured_comments(current.bridge_result or {})
+        pair = _dedup_pick_one(comments)
+        print(
+            f"DEDUP TEST: lectura completada; comentarios_estructurados={len(comments)}.",
+            flush=True,
+        )
+        if pair is None:
+            print(
+                "DEDUP TEST RESULTADO: no se encontró duplicado claro con distinta longitud; no se borró nada.",
+                flush=True,
+            )
+            return
+
+        keeper, target = pair
+        keep_len = int(keeper["characterCount"])
+        delete_len = int(target["characterCount"])
+        print(
+            f"DEDUP TEST: duplicado confirmado; conservar={keep_len} caracteres, borrar={delete_len} caracteres.",
+            flush=True,
+        )
+
+        delete_job, reused = _private_comment_delete_queue.enqueue(
+            course_id=_DEDUP_TEST_COURSE_ID,
+            course_work_id=_DEDUP_TEST_COURSE_WORK_ID,
+            submission_id=submission_id,
+            submission_url=submission_url,
+            comment_text=str(target["text"]),
+            dom_order=int(target["domOrder"]),
+        )
+        print(
+            f"DEDUP TEST: borrado encolado job={delete_job.id} domOrder={target['domOrder']} reused={reused}.",
+            flush=True,
+        )
+
+        while True:
+            dj = _private_comment_delete_queue.get(delete_job.id)
+            if dj is None:
+                print("DEDUP TEST ERROR: delete_job_missing", flush=True)
+                return
+            if dj.status in {"completed", "failed"}:
+                break
+            _time.sleep(1.0)
+
+        if dj.status != "completed":
+            print(f"DEDUP TEST ERROR: borrado status={dj.status} error={dj.error}", flush=True)
+            return
+
+        result = dj.result or {}
+        print(
+            "DEDUP TEST: borrado confirmado "
+            f"before={result.get('before_matching_count')} after={result.get('after_matching_count')}.",
+            flush=True,
+        )
+
+        verify_job = bridge_queue.enqueue(
+            course_id=_DEDUP_TEST_COURSE_ID,
+            course_work_id=_DEDUP_TEST_COURSE_WORK_ID,
+            submission_id=submission_id,
+            submission_url=submission_url,
+            operation="read_private_comments",
+        )
+        print(f"DEDUP TEST: lectura de verificación encolada job={verify_job.id}.", flush=True)
+
+        while True:
+            vj = bridge_queue.get(verify_job.id)
+            if vj is None:
+                print("DEDUP TEST ERROR: verify_job_missing", flush=True)
+                return
+            if vj.status in {"completed", "failed", "cancelled"}:
+                break
+            _time.sleep(1.0)
+
+        if vj.status != "completed":
+            print(f"DEDUP TEST ERROR: verificación status={vj.status} error={vj.error}", flush=True)
+            return
+
+        after_comments = _dedup_structured_comments(vj.bridge_result or {})
+        still_duplicate = _dedup_pick_one(after_comments) is not None
+        if still_duplicate:
+            print(
+                f"DEDUP TEST RESULTADO: borrado ejecutado pero aún se detecta duplicado; comentarios_estructurados={len(after_comments)}.",
+                flush=True,
+            )
+        else:
+            print(
+                f"DEDUP TEST RESULTADO: VERIFIED_CLEAN estudiante={_DEDUP_TEST_STUDENT_NAME} "
+                f"conservado={keep_len} eliminado={delete_len} comentarios_estructurados_despues={len(after_comments)}.",
+                flush=True,
+            )
+    except Exception as exc:
+        print(f"DEDUP TEST ERROR EXCEPTION: {type(exc).__name__}: {exc}", flush=True)
+
+
 install_attendance(mcp, sieweb, settings, classroom)
 setattr(mcp, "_sieroom_attendance_installed", True)
 print("SieRoom Asistencia: rutas /asesoria restauradas.", flush=True)
+
+if str(os.getenv("SIEROOM_DEDUP_TEST_TOKEN") or "").strip():
+    Thread(target=_dedup_test_autorun_worker, name="sieroom-dedup-test", daemon=True).start()
 
 
 if __name__ == "__main__":
