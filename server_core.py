@@ -110,6 +110,7 @@ def _classroom_target_matches(actual_url: Any, expected_url: Any) -> bool:
 
 HF4_GRADE_CAPABILITY = "grade_target_guard_v1"
 HF4_CONTENT_BUILD = "0.8.7-HF4-GRADE-TARGET"
+HF4_CONTENT_BUILDS = {HF4_CONTENT_BUILD, "0.8.7-HF4-GRADE-TARGET-DEDUP-R4"}
 LEGACY_READ_METHOD = "dom-v0.8.7-read"
 HF4_READ_METHOD = "dom-v0.8.7-read-hf4"
 
@@ -277,7 +278,7 @@ async def classroom_bridge_http_complete(request: Request):
         result_current_student_id = str(result.get("current_student_id") or "")
         hf4_read_verified = (
             method == HF4_READ_METHOD
-            and result.get("content_build") == HF4_CONTENT_BUILD
+            and result.get("content_build") in HF4_CONTENT_BUILDS
             and bool(expected_student_id)
             and result_current_student_id == expected_student_id
         )
@@ -331,7 +332,7 @@ async def classroom_bridge_http_complete(request: Request):
             expected_student_id = _classroom_student_id(job.submission_url)
             result_target_student_id = str(result.get("target_student_id") or "")
             result_current_student_id = str(result.get("current_student_id") or "")
-            if result.get("content_build") != HF4_CONTENT_BUILD:
+            if result.get("content_build") not in HF4_CONTENT_BUILDS:
                 validation_errors.append("hf4_grade_target_build_no_verificado")
             if not expected_student_id:
                 validation_errors.append("student_id_objetivo_ausente")
@@ -2502,7 +2503,7 @@ def workflow_private_comment_grades_to_sieweb(p: dict[str, Any]) -> str:
             read_method == LEGACY_READ_METHOD
             or (
                 read_method == HF4_READ_METHOD
-                and result.get("content_build") == HF4_CONTENT_BUILD
+                and result.get("content_build") in HF4_CONTENT_BUILDS
                 and bool(expected_student_id)
                 and str(result.get("current_student_id") or "") == expected_student_id
             )
