@@ -419,7 +419,17 @@ def _bulk_teacher_comments(result):
         if not isinstance(item, dict):
             continue
         text = str(item.get("text") or "").strip()
-        if text and item.get("teacherOwned") is True:
+        markers = item.get("markers")
+        # La lectura HF4 no devuelve teacherOwned. Para detectar candidatos
+        # usamos únicamente la plantilla estructurada del docente; el módulo
+        # destructivo R5 vuelve a comprobar autoría y menú de borrado antes de
+        # eliminar, por lo que un candidato incorrecto queda bloqueado.
+        if (
+            text
+            and item.get("structuredFeedback") is True
+            and isinstance(markers, list)
+            and len(markers) >= 2
+        ):
             out.append({
                 "text": text,
                 "norm": _delete_norm_text(text),
@@ -427,20 +437,27 @@ def _bulk_teacher_comments(result):
             })
     return out
 
-def _bulk_read_submission(sid: str, url: str):
-    read = bridge_queue.enqueue(
-        course_id=_BULK_DEDUP_COURSE_ID,
-        course_work_id=_BULK_DEDUP_WORK_ID,
-        submission_id=sid,
-        submission_url=url,
-        operation="read_private_comments",
-    )
-    return _bulk_wait_read(read.id)
+def _bulk_read_submission(sid: str, url: str, attempts: int = 2):
+    last = None
+    for attempt in range(max(1, attempts)):
+        read = bridge_queue.enqueue(
+            course_id=_BULK_DEDUP_COURSE_ID,
+            course_work_id=_BULK_DEDUP_WORK_ID,
+            submission_id=sid,
+            submission_url=url,
+            operation="read_private_comments",
+        )
+        last = _bulk_wait_read(read.id)
+        if last and last.status == "completed":
+            return last
+        if attempt + 1 < attempts:
+            _time.sleep(2)
+    return last
 
 def _bulk_verify(sid: str, url: str, keeper_norm: str, target_norm: str):
     last = None
     for attempt in range(3):
-        job = _bulk_read_submission(sid, url)
+        job = _bulk_read_submission(sid, url, attempts=2)
         if not job or job.status != "completed":
             last = {"ok": False, "status": getattr(job, "status", None), "error": getattr(job, "error", None)}
         else:
@@ -487,10 +504,13 @@ def _bulk_dedup_worker():
             if not sid or not url:
                 continue
 
-            read = _bulk_read_submission(sid, url)
+            read = _bulk_read_submission(sid, url, attempts=2)
             if not read or read.status != "completed":
                 read_failures += 1
-                print(f"BULK DEDUP READ FAIL: {name} status={getattr(read,'status',None)}.", flush=True)
+                print(
+                    f"BULK DEDUP READ FAIL: {name} status={getattr(read,'status',None)} error={getattr(read,'error',None)}.",
+                    flush=True,
+                )
                 continue
 
             comments = _bulk_teacher_comments(read.bridge_result or {})
