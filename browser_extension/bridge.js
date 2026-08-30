@@ -273,7 +273,10 @@ async function ensureContentScript(tabId, generation = resetGeneration) {
     catch (_) { return null; }
   };
   const compatible = (pong) => Boolean(
-    pong?.ok && pong?.version === expectedVersion && pong?.build === SIEROOM_CONTENT_BUILD
+    pong?.ok &&
+    pong?.version === expectedVersion &&
+    pong?.build === SIEROOM_CONTENT_BUILD &&
+    pong?.duplicateGuard === true
   );
 
   let pong = await ping();
@@ -290,7 +293,7 @@ async function ensureContentScript(tabId, generation = resetGeneration) {
   try {
     await chrome.scripting.executeScript({
       target: { tabId },
-      files: ["content.js"]
+      files: ["content.js", "delete_private_comment.js"]
     });
     await sleep(400);
     pong = await ping();
@@ -396,6 +399,7 @@ async function processJob(job, generation) {
       type: "SIEROOM_READ_PRIVATE_COMMENTS"
     } : {
       type: "SIEROOM_PROCESS_SUBMISSION",
+      requestId: job.id,
       comment: job.comment,
       grade: job.grade,
       returnAfterComment: Boolean(job.return_after_comment),
