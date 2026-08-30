@@ -314,7 +314,12 @@ async def classroom_private_comment_delete_fail(request: Request):
     except Exception:
         body = {}
     body = body if isinstance(body, dict) else {}
-    failed = _private_comment_delete_queue.fail(job_id, str(body.get("error") or "delete_failed"), body)
+    error_text = str(body.get("error") or "delete_failed")
+    print(
+        f"DELETE BRIDGE FAIL: job={job_id} error={error_text}",
+        flush=True,
+    )
+    failed = _private_comment_delete_queue.fail(job_id, error_text, body)
     return JSONResponse({"ok": True, "job": failed.public()})
 
 
@@ -385,7 +390,8 @@ def classroom_delete_private_comment(
 
 _DEDUP_BATCH3_COURSE_ID = "794101973737"
 _DEDUP_BATCH3_COURSE_WORK_ID = "874845898173"
-_DEDUP_BATCH3_LIMIT = 3
+_DEDUP_BATCH3_LIMIT = 1
+_DEDUP_BATCH3_EXACT_STUDENT = "Barbara Rafaela ALVAREZ QUEVEDO"
 
 
 def _dedup_batch3_wait_read(job_id: str, timeout_seconds: int = 90):
@@ -484,6 +490,8 @@ def _dedup_batch3_worker() -> None:
 
             student_id = str(submission.get("userId") or "")
             student_name = names.get(student_id) or f"user:{student_id}"
+            if student_name != _DEDUP_BATCH3_EXACT_STUDENT:
+                continue
             scanned += 1
 
             read_job = _dedup_batch3_enqueue_read(submission)
@@ -563,6 +571,7 @@ def _dedup_batch3_worker() -> None:
             print(
                 f"DEDUP BATCH3 VERIFICACION: {student_name}; "
                 f"delete_status={getattr(deleted, 'status', None)} "
+                f"delete_error={getattr(deleted, 'error', None)} "
                 f"comentarios_estructurados_despues={len(after)} "
                 f"keeper_confirmado={verified_clean}.",
                 flush=True,
