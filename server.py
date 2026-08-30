@@ -255,6 +255,14 @@ async def classroom_private_comment_delete_status(request: Request):
 async def classroom_private_comment_delete_next(request: Request):
     if not _delete_bridge_auth_ok(request):
         return JSONResponse({"ok": False, "error": "delete_bridge_unauthorized_or_incompatible"}, status_code=401)
+    pilot_bridge_ip = str(os.getenv("SIEROOM_PILOT_BRIDGE_IP") or "").strip()
+    client_ip = str(getattr(getattr(request, "client", None), "host", "") or "")
+    if pilot_bridge_ip and client_ip and client_ip != pilot_bridge_ip:
+        return JSONResponse({
+            "ok": True,
+            "job": None,
+            "pilot_delete_client_filtered": True,
+        })
     job = _private_comment_delete_queue.next()
     return JSONResponse({"ok": True, "job": job.public() if job else None})
 
