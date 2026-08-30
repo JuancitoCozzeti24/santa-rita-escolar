@@ -539,7 +539,10 @@ def _dedup_batch3_worker() -> None:
                 submission_id=str(submission.get("id") or ""),
                 submission_url=str(submission.get("alternateLink") or ""),
                 comment_text=str(target["text"]),
-                dom_order=int(target["domOrder"]),
+                # No fijamos domOrder en el piloto: Classroom puede reordenar
+                # internamente las filas entre lectura y borrado. La extensión
+                # exigirá una coincidencia de texto exacta y única.
+                dom_order=None,
             )
             deleted = _dedup_batch3_wait_delete(delete_job.id)
 
