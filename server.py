@@ -391,7 +391,7 @@ def classroom_delete_private_comment(
 _BULK_DEDUP_COURSE_ID = "794101973737"
 _BULK_DEDUP_WORK_ID = "874845898173"
 
-def _bulk_wait_read(job_id: str, timeout_seconds: int = 90):
+def _bulk_wait_read(job_id: str, timeout_seconds: int = 105):
     deadline = _time.time() + timeout_seconds
     while _time.time() < deadline:
         job = bridge_queue.get(job_id)
