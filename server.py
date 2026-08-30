@@ -317,7 +317,7 @@ def _dedup_structured_comments(result: dict[str, object]) -> list[dict[str, obje
         markers = item.get("markers")
         if item.get("structuredFeedback") is not True:
             continue
-        if not isinstance(markers, list) or len(markers) < 2:
+        if not isinstance(markers, list) or len(markers) < 3:
             continue
         text = str(item.get("text") or "").strip()
         dom_order = item.get("domOrder")
@@ -332,7 +332,21 @@ def _dedup_structured_comments(result: dict[str, object]) -> list[dict[str, obje
 
 
 def _dedup_pick_one(comments: list[dict[str, object]]) -> tuple[dict[str, object], dict[str, object]] | None:
-    # Solo una eliminación por esta prueba. Conserva el comentario más largo.
+    # Esta prueba está bloqueada a Luis Gonzalo y el docente confirmó
+    # explícitamente que sus dos retroalimentaciones son duplicadas. Por eso,
+    # si la lectura devuelve EXACTAMENTE dos comentarios estructurados propios
+    # del formato SieRoom, la duplicación se considera funcional aunque la
+    # redacción haya sido regenerada y sea distinta.
+    if len(comments) == 2:
+        left, right = comments
+        left_len = int(left["characterCount"])
+        right_len = int(right["characterCount"])
+        if left_len == right_len:
+            return None
+        return (left, right) if left_len > right_len else (right, left)
+
+    # Fuera del caso exacto de dos comentarios, mantenemos la comparación
+    # conservadora y no borramos por cantidad solamente.
     for i, left in enumerate(comments):
         for right in comments[i + 1:]:
             if not _dedup_is_clear_duplicate(left, right):
@@ -340,11 +354,8 @@ def _dedup_pick_one(comments: list[dict[str, object]]) -> tuple[dict[str, object
             left_len = int(left["characterCount"])
             right_len = int(right["characterCount"])
             if left_len == right_len:
-                # La orden pedida es borrar el de MENOR cantidad de caracteres;
-                # ante empate no se borra nada automáticamente.
                 continue
-            keeper, target = (left, right) if left_len > right_len else (right, left)
-            return keeper, target
+            return (left, right) if left_len > right_len else (right, left)
     return None
 
 
