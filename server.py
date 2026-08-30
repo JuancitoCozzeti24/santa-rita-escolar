@@ -713,6 +713,92 @@ def _retry2_worker():
 if str(os.getenv("SIEROOM_DEDUP_RETRY2_TOKEN") or "").strip():
     Thread(target=_retry2_worker, name="sieroom-dedup-retry2", daemon=True).start()
 
+
+# Auditoría temporal de solo lectura: localiza hasta dos candidatos reales con
+# múltiples comentarios docentes, sin borrar ni modificar Classroom.
+_AUDIT_SKIP = {
+    "barbara rafaela alvarez quevedo",
+    "luis gonzalo vargas guerrero",
+}
+
+def _dedup_audit_worker():
+    if not str(os.getenv("SIEROOM_DEDUP_AUDIT_TOKEN") or "").strip():
+        return
+    print("DEDUP AUDIT: inicio solo lectura.", flush=True)
+    found = 0
+    try:
+        students = classroom.list_students(_PILOT2_COURSE_ID)
+        submissions = classroom.list_submissions(_PILOT2_COURSE_ID, _PILOT2_WORK_ID)
+        by_user = {}
+        for sub in submissions:
+            uid = str(sub.get("userId") or "")
+            if uid:
+                by_user.setdefault(uid, []).append(sub)
+
+        for student in students:
+            if found >= 2:
+                break
+            name = str(student.get("name") or "").strip()
+            folded = name.casefold()
+            if (
+                not name
+                or folded in _AUDIT_SKIP
+                or folded == "carlos"
+                or folded.startswith("carlos ")
+            ):
+                continue
+            uid = str(student.get("userId") or "")
+            subs = by_user.get(uid, [])
+            if len(subs) != 1:
+                continue
+            sub = subs[0]
+            sid = str(sub.get("id") or "")
+            url = str(sub.get("alternateLink") or "")
+            if not sid or not url:
+                continue
+
+            read = bridge_queue.enqueue(
+                course_id=_PILOT2_COURSE_ID,
+                course_work_id=_PILOT2_WORK_ID,
+                submission_id=sid,
+                submission_url=url,
+                operation="read_private_comments",
+            )
+            job = _pilot2_wait_read(read.id)
+            if not job or job.status != "completed":
+                print(f"DEDUP AUDIT READ FAIL: {name} status={getattr(job,'status',None)}.", flush=True)
+                continue
+
+            payload = job.bridge_result or {}
+            comments = payload.get("comments") if isinstance(payload, dict) else None
+            if not isinstance(comments, list):
+                continue
+            teacher = [
+                item for item in comments
+                if isinstance(item, dict)
+                and item.get("teacherOwned") is True
+                and str(item.get("text") or "").strip()
+            ]
+            structured = [
+                item for item in teacher
+                if item.get("structuredFeedback") is True
+            ]
+            if len(teacher) > 1:
+                lengths = [len(str(item.get("text") or "").strip()) for item in teacher]
+                slengths = [len(str(item.get("text") or "").strip()) for item in structured]
+                print(
+                    f"DEDUP AUDIT CANDIDATO {found+1}: {name}; teacher={len(teacher)} lengths={lengths}; structured={len(structured)} slengths={slengths}.",
+                    flush=True,
+                )
+                found += 1
+
+        print(f"DEDUP AUDIT FIN: candidatos={found}.", flush=True)
+    except Exception as exc:
+        print(f"DEDUP AUDIT ERROR: {type(exc).__name__}: {exc}", flush=True)
+
+if str(os.getenv("SIEROOM_DEDUP_AUDIT_TOKEN") or "").strip():
+    Thread(target=_dedup_audit_worker, name="sieroom-dedup-audit", daemon=True).start()
+
 install_attendance(mcp, sieweb, settings, classroom)
 setattr(mcp, "_sieroom_attendance_installed", True)
 print("SieRoom Asistencia: rutas /asesoria restauradas.", flush=True)
