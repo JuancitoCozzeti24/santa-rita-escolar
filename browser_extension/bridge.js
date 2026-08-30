@@ -2,7 +2,7 @@ const DEFAULT_TEACHER_EMAIL = "jbringas@santaritadecasia.edu.pe";
 const statusEl = document.getElementById("status");
 const logEl = document.getElementById("log");
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const SIEROOM_CONTENT_BUILD = "0.8.7-HF4-GRADE-TARGET-DEDUP-R4";
+const SIEROOM_CONTENT_BUILD = "0.8.7-HF4-GRADE-TARGET-DEDUP-R4-DEDUP-R4";
 let classroomTabId = null;
 let busy = false;
 let resetGeneration = 0;
