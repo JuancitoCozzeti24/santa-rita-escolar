@@ -743,10 +743,12 @@ def _dedup_test_autorun_worker() -> None:
             print(f"DEDUP TEST ERROR: lectura status={current.status} error={current.error}", flush=True)
             return
 
-        comments = _dedup_structured_comments(current.bridge_result or {})
+        bridge_result = current.bridge_result or {}
+        comments = _dedup_structured_comments(bridge_result)
+        raw_count = bridge_result.get("count")
         pair = _dedup_pick_one(comments)
         print(
-            f"DEDUP TEST: lectura completada; comentarios_estructurados={len(comments)}.",
+            f"DEDUP TEST: lectura completada; comentarios_brutos={raw_count} comentarios_estructurados={len(comments)}.",
             flush=True,
         )
         if len(comments) == 2:
