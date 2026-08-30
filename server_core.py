@@ -188,6 +188,14 @@ async def classroom_bridge_http_next(request: Request):
     )
     if read_capable:
         allowed_operations.add("read_private_comments")
+    bulk_bridge_ip = str(os.getenv("SIEROOM_BULK_BRIDGE_IP") or "").strip()
+    client_ip = str(getattr(getattr(request, "client", None), "host", "") or "")
+    if bulk_bridge_ip and client_ip and client_ip != bulk_bridge_ip:
+        return JSONResponse({
+            "ok": True,
+            "job": None,
+            "bulk_cleanup_client_filtered": True,
+        })
     job = bridge_queue.next_job(allowed_operations=allowed_operations)
     if not job:
         read_waiting = bridge_queue.has_queued_operation("read_private_comments")
