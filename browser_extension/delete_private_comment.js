@@ -691,7 +691,8 @@
   }
 
   window.__SIEROOM_AUDIT_TEACHER_PRIVATE_COMMENTS__ = auditTeacherPrivateComments;
-  window.__SIEROOM_CLEANUP_TEACHER_PRIVATE_COMMENT_DUPLICATES__ = cleanupTeacherPrivateCommentDuplicatesSinglePass;\n  window.__SIEROOM_CLEANUP_TEACHER_PRIVATE_COMMENT_DUPLICATES_SINGLE_PASS_R6__ = cleanupTeacherPrivateCommentDuplicatesSinglePass;
+  window.__SIEROOM_CLEANUP_TEACHER_PRIVATE_COMMENT_DUPLICATES__ = cleanupTeacherPrivateCommentDuplicatesSinglePass;
+  window.__SIEROOM_CLEANUP_TEACHER_PRIVATE_COMMENT_DUPLICATES_SINGLE_PASS_R6__ = cleanupTeacherPrivateCommentDuplicatesSinglePass;
   window.__SIEROOM_DELETE_PRIVATE_COMMENT_FN__ = deletePrivateComment;
 
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
@@ -723,7 +724,7 @@
     }
 
     if (msg.type === "SIEROOM_CLEANUP_TEACHER_PRIVATE_COMMENT_DUPLICATES") {
-      cleanupTeacherPrivateCommentDuplicates()
+      cleanupTeacherPrivateCommentDuplicatesSinglePass()
         .then((result) => sendResponse(result))
         .catch((err) => sendResponse({
           ok: false,
