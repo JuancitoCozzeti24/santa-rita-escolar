@@ -417,19 +417,26 @@ def _transfer_2b_cuadrilateros_worker():
         if len(work_matches) != 1:
             page_matches=[]
             for row in works:
-                title_canon=sieweb._canon_text(row.get("title"))
+                combined=sieweb._canon_text(
+                    str(row.get("title") or "") + " " + str(row.get("description") or "")
+                )
                 if (
-                    "cuadrilateros" in title_canon
-                    and "382" in title_canon
-                    and "383" in title_canon
-                    and "404" in title_canon
+                    "cuadrilateros" in combined
+                    and "382" in combined
+                    and "383" in combined
+                    and "404" in combined
                 ):
                     page_matches.append(row)
             broad_candidates=[]
             for row in works:
                 title_canon=sieweb._canon_text(row.get("title"))
                 if any(tok in title_canon for tok in ("cuadrilateros","382","383","404")):
-                    broad_candidates.append({"id":row.get("id"),"title":row.get("title"),"state":row.get("state")})
+                    broad_candidates.append({
+                        "id":row.get("id"),
+                        "title":row.get("title"),
+                        "description":row.get("description"),
+                        "state":row.get("state"),
+                    })
             print(f"TRANSFER 2B CUAD TITLE FALLBACK: exact={len(work_matches)} page_matches={page_matches} broad={broad_candidates}", flush=True)
             work_matches=page_matches
         if len(work_matches) != 1:
