@@ -1,6 +1,6 @@
 (() => {
-  if (window.__SIEROOM_CLASSROOM_DELETE_R6_SINGLE_PASS__) return;
-  window.__SIEROOM_CLASSROOM_DELETE_R6_SINGLE_PASS__ = true;
+  if (window.__SIEROOM_CLASSROOM_DELETE_R62_SINGLE_PASS__) return;
+  window.__SIEROOM_CLASSROOM_DELETE_R62_SINGLE_PASS__ = true;
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const norm = (s) => String(s || "")
@@ -115,6 +115,41 @@
       "nota cuantitativa", "calificacion cuantitativa",
       "nota cualitativa", "calificacion cualitativa", "tu calificacion es",
     ].filter((marker) => t.includes(marker));
+  }
+
+  function hasFullTeacherFeedbackStructure(text) {
+    const raw = clean(text);
+    const t = norm(raw);
+    const goodMarkers = ["lo que hizo bien", "lo que hiciste bien"];
+    const improveMarkers = ["lo que debe mejorar", "lo que debes mejorar", "lo que debes corregir"];
+    const suggestionMarkers = ["sugerencias"];
+
+    const hasGood = goodMarkers.some((marker) => t.includes(marker));
+    const hasImprove = improveMarkers.some((marker) => t.includes(marker));
+    const hasSuggestions = suggestionMarkers.some((marker) => t.includes(marker));
+    if (!hasGood || !hasImprove || !hasSuggestions) return false;
+
+    const allMarkers = [...goodMarkers, ...improveMarkers, ...suggestionMarkers];
+    const positions = allMarkers
+      .map((marker) => t.indexOf(marker))
+      .filter((position) => position >= 0);
+    const firstMarker = positions.length ? Math.min(...positions) : -1;
+    if (firstMarker <= 0) return false;
+
+    // El comentario estándar empieza por el nombre de pila (normalmente "Nombre,")
+    // y puede tener una frase introductoria antes de los tres apartados.
+    const lead = t.slice(0, firstMarker).trim();
+    const firstLine = raw.split(/\n+/).map((line) => line.trim()).find(Boolean) || "";
+    const plausibleFirstLine =
+      firstLine.length >= 2 &&
+      firstLine.length <= 120 &&
+      /[A-Za-zÁÉÍÓÚÜÑáéíóúüñ]/.test(firstLine);
+    const plausibleLead =
+      lead.length >= 2 &&
+      lead.length <= 320 &&
+      /[a-z]/.test(lead);
+
+    return plausibleFirstLine || plausibleLead;
   }
 
   function isUiText(text) {
@@ -540,27 +575,27 @@
 
   async function deleteResolvedRowSinglePass(target, section) {
     const targetText = clean(target?.text);
-    if (!targetText || !target?.host) throw new Error("R6: comentario objetivo inválido.");
+    if (!targetText || !target?.host) throw new Error("R6.2: comentario objetivo inválido.");
     if (!target.host.isConnected) {
-      throw new Error("R6: el comentario cambió antes del clic; se detiene en este alumno.");
+      throw new Error("R6.2: el comentario cambió antes del clic; se detiene en este alumno.");
     }
 
     const rowsBefore = commentRows(section.container, section.label, section.composer);
     const beforeMatchingCount = rowsBefore.filter((row) => norm(row.text) === norm(targetText)).length;
-    if (beforeMatchingCount !== 1) {
-      throw new Error("R6: el comentario a borrar dejó de ser único; se detiene en este alumno.");
+    if (beforeMatchingCount < 1) {
+      throw new Error("R6.2: el comentario a borrar ya no está en la vista; se detiene en este alumno.");
     }
 
     const menu = findMenuButton(target.host, section.container);
     if (!menu) {
-      throw new Error("R6: no apareció un menú de borrado seguro para el comentario; se detiene en este alumno.");
+      throw new Error("R6.2: no apareció un menú de borrado seguro para el comentario; se detiene en este alumno.");
     }
 
     target.host.scrollIntoView({ block: "nearest", inline: "nearest" });
     menu.click();
     const deleteItem = await waitDeleteMenuItem(menu);
     if (!deleteItem) {
-      throw new Error("R6: Classroom no ofreció Eliminar/Borrar; se detiene en este alumno.");
+      throw new Error("R6.2: Classroom no ofreció Eliminar/Borrar; se detiene en este alumno.");
     }
 
     deleteItem.click();
@@ -574,41 +609,66 @@
       const liveSection = await waitPrivateSection(2200);
       const rowsNow = commentRows(liveSection.container, liveSection.label, liveSection.composer);
       const afterMatchingCount = rowsNow.filter((row) => norm(row.text) === norm(targetText)).length;
-      if (afterMatchingCount === 0) {
+      if (afterMatchingCount === beforeMatchingCount - 1) {
         return {
           ok: true,
           deleted: true,
           characterCount: targetText.length,
-          verification: "same_student_same_view_disappearance",
+          beforeMatchingCount,
+          afterMatchingCount,
+          verification: "same_student_same_view_count_decreased_by_one",
         };
       }
     }
-    throw new Error("R6: se pulsó borrar, pero el comentario no desapareció en la misma vista; se detiene en este alumno.");
+    throw new Error("R6.2: se pulsó borrar, pero no se confirmó que desapareciera exactamente un comentario en la misma vista; se detiene en este alumno.");
   }
 
   async function cleanupTeacherPrivateCommentDuplicatesSinglePass() {
-    // UNA sola resolución del alumno: delimitar panel -> detectar -> borrar si
-    // corresponde -> terminar. Nunca se devuelve al servidor una lectura para que
-    // luego otra cola decida qué borrar.
+    // R6.2: resolver UN alumno completo antes de avanzar.
+    // Solo interesan retroalimentaciones con la estructura completa indicada por el docente.
     const section = await waitPrivateSection();
-    await sleep(220);
-    const rows = commentRows(section.container, section.label, section.composer);
-    const owned = [];
+    await sleep(120);
 
-    for (const row of rows) {
+    const rows = commentRows(section.container, section.label, section.composer);
+    const structured = rows
+      .filter((row) => hasFullTeacherFeedbackStructure(row.text))
+      .map((row) => ({
+        ...row,
+        characterCount: clean(row.text).length,
+      }));
+
+    // FAST PATH: con cero o una retroalimentación estructurada es imposible
+    // que exista el duplicado que buscamos. No abrimos menús ni hacemos sondeos.
+    if (structured.length <= 1) {
+      return {
+        ok: true,
+        resolved: true,
+        operation: "cleanup_teacher_private_comment_duplicates_single_pass",
+        duplicateDetected: false,
+        initialStructuredFeedbackCount: structured.length,
+        initialTeacherCommentCount: structured.length,
+        deletedCount: 0,
+        decision: structured.length === 0 ? "no_full_feedback_comment" : "single_full_feedback_comment",
+        method: "dom-v0.8.12-duplicate-cleanup-single-pass-r6.2",
+        url: location.href,
+      };
+    }
+
+    // Solo cuando hay 2+ comentarios con la estructura completa verificamos
+    // que sean del docente antes de plantear cualquier borrado.
+    const owned = [];
+    for (const row of structured) {
       const authoredByTeacherName = rowLooksAuthoredByActiveTeacher(row);
-      const structuredFeedback = row.markers.length >= 2;
       const deleteAvailable = authoredByTeacherName
         ? true
-        : (structuredFeedback ? await rowOffersDelete(row, section.container) : false);
-      const teacherOwned = Boolean(authoredByTeacherName || (structuredFeedback && deleteAvailable));
+        : await rowOffersDelete(row, section.container);
+      const teacherOwned = Boolean(authoredByTeacherName || deleteAvailable);
       if (teacherOwned) {
         owned.push({
           ...row,
-          characterCount: clean(row.text).length,
           authoredByTeacherName,
-          structuredFeedback,
           deleteAvailable,
+          teacherOwned: true,
         });
       }
     }
@@ -619,54 +679,82 @@
         resolved: true,
         operation: "cleanup_teacher_private_comment_duplicates_single_pass",
         duplicateDetected: false,
+        initialStructuredFeedbackCount: structured.length,
         initialTeacherCommentCount: owned.length,
         deletedCount: 0,
-        decision: owned.length === 0 ? "no_teacher_comment" : "single_teacher_comment",
-        method: "dom-v0.8.11-duplicate-cleanup-single-pass-r6",
+        decision: owned.length === 0
+          ? "structured_comments_not_teacher_owned"
+          : "single_teacher_full_feedback_comment",
+        method: "dom-v0.8.12-duplicate-cleanup-single-pass-r6.2",
         url: location.href,
       };
     }
 
     const maxLength = Math.max(...owned.map((row) => row.characterCount));
-    const keepers = owned.filter((row) => row.characterCount === maxLength);
-    if (keepers.length !== 1) {
-      throw new Error(
-        "R6 PAUSA: hay varios comentarios docentes empatados como los más largos; " +
-        "no se puede elegir cuál conservar sin ambigüedad."
-      );
+    const maxRows = owned.filter((row) => row.characterCount === maxLength);
+
+    let keeper;
+    let tieMode = "none";
+    if (maxRows.length === 1) {
+      keeper = maxRows[0];
+    } else {
+      const normalizedMaxTexts = new Set(maxRows.map((row) => norm(row.text)));
+      if (normalizedMaxTexts.size === 1) {
+        // Dos o más comentarios idénticos: conservar cualquiera (el primero en DOM)
+        // y borrar las demás copias idénticas.
+        keeper = [...maxRows].sort((a, b) => a.domOrder - b.domOrder)[0];
+        tieMode = "identical_max_text";
+      } else {
+        // La regla del usuario decide por más caracteres. Si son diferentes y
+        // empatan exactamente en longitud, no existe un criterio seguro adicional.
+        throw new Error(
+          "R6.2 PAUSA: hay dos retroalimentaciones diferentes con exactamente la misma cantidad de caracteres; " +
+          "no se borró ninguna porque la regla de conservar la más larga no permite desempatar."
+        );
+      }
     }
 
-    const keeper = keepers[0];
     const targets = owned
       .filter((row) => row !== keeper)
       .sort((a, b) => b.domOrder - a.domOrder);
 
-    const normalizedTargets = new Set();
-    for (const target of targets) {
-      const key = norm(target.text);
-      if (!key || normalizedTargets.has(key)) {
-        throw new Error("R6 PAUSA: hay comentarios objetivo idénticos y no se borrará por ambigüedad.");
-      }
-      normalizedTargets.add(key);
-    }
-
     const deleted = [];
     for (const originalTarget of targets) {
-      // Tras un borrado Classroom puede reconstruir nodos. Reubicamos SOLO el
-      // objetivo siguiente dentro de la misma vista, sin reabrir ni reauditar al alumno.
       const liveSection = await waitPrivateSection();
-      const liveRows = commentRows(liveSection.container, liveSection.label, liveSection.composer);
-      const exact = liveRows.filter((row) => norm(row.text) === norm(originalTarget.text));
-      if (exact.length !== 1) {
+      const liveRows = commentRows(
+        liveSection.container,
+        liveSection.label,
+        liveSection.composer
+      ).filter((row) => hasFullTeacherFeedbackStructure(row.text));
+
+      const exact = liveRows.filter(
+        (row) => norm(row.text) === norm(originalTarget.text)
+      );
+      if (!exact.length) {
         throw new Error(
-          "R6 PAUSA: el siguiente comentario a borrar cambió o dejó de ser único; " +
+          "R6.2 PAUSA: el comentario planificado para borrar ya no aparece en la vista; " +
           "se detiene en este alumno."
         );
       }
-      const result = await deleteResolvedRowSinglePass(exact[0], liveSection);
+
+      // Si hay varias copias con texto idéntico, cualquiera de ellas puede borrarse.
+      // Elegimos la última representación lógica visible y dejamos al menos una
+      // cuando ese mismo texto es el del comentario keeper.
+      if (
+        norm(originalTarget.text) === norm(keeper.text) &&
+        exact.length <= 1
+      ) {
+        throw new Error(
+          "R6.2 PAUSA: solo queda una copia del comentario que debe conservarse; no se borró."
+        );
+      }
+
+      const liveTarget = exact[exact.length - 1];
+      const result = await deleteResolvedRowSinglePass(liveTarget, liveSection);
       deleted.push({
         characterCount: originalTarget.characterCount,
         domOrder: originalTarget.domOrder,
+        identicalToKeeper: norm(originalTarget.text) === norm(keeper.text),
         result,
       });
     }
@@ -676,12 +764,16 @@
       resolved: true,
       operation: "cleanup_teacher_private_comment_duplicates_single_pass",
       duplicateDetected: true,
+      initialStructuredFeedbackCount: structured.length,
       initialTeacherCommentCount: owned.length,
       keeperCharacterCount: keeper.characterCount,
+      keeperTieMode: tieMode,
       deletedCount: deleted.length,
       deleted,
-      decision: "kept_longest_deleted_shorter",
-      method: "dom-v0.8.11-duplicate-cleanup-single-pass-r6",
+      decision: tieMode === "identical_max_text"
+        ? "kept_one_identical_deleted_other_copies"
+        : "kept_longest_deleted_other_structured_feedback",
+      method: "dom-v0.8.12-duplicate-cleanup-single-pass-r6.2",
       url: location.href,
     };
   }
@@ -776,6 +868,19 @@
         .catch((err) => sendResponse({
           ok: false,
           operation: "audit_teacher_private_comments",
+          error: String(err?.message || err),
+          url: location.href,
+        }));
+      return true;
+    }
+
+    if (msg.type === "SIEROOM_CLEANUP_TEACHER_PRIVATE_COMMENT_DUPLICATES_SINGLE_PASS_R62") {
+      cleanupTeacherPrivateCommentDuplicatesSinglePass()
+        .then((result) => sendResponse(result))
+        .catch((err) => sendResponse({
+          ok: false,
+          resolved: false,
+          operation: "cleanup_teacher_private_comment_duplicates_single_pass",
           error: String(err?.message || err),
           url: location.href,
         }));
