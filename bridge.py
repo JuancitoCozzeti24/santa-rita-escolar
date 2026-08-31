@@ -83,7 +83,7 @@ class ClassroomBridgeQueue:
         return_after_comment: bool = False,
     ) -> BridgeJob:
         operation = str(operation or "post_private_comment").strip().lower()
-        if operation not in {"post_private_comment", "read_private_comments"}:
+        if operation not in {"post_private_comment", "read_private_comments", "cleanup_private_comment_duplicates"}:
             raise ValueError(f"Operación de Bridge no soportada: {operation}")
         comment = str(comment or "").strip()
         if (
