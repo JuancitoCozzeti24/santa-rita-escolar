@@ -290,17 +290,96 @@
       .filter((el) => exact.has(norm(el.innerText || el.textContent || el.getAttribute("aria-label") || "")));
   }
 
-  async function waitDeleteMenuItem(timeoutMs = 6000) {
+  function visibleMenuRoots() {
+    return [...document.querySelectorAll('[role="menu"],[role="listbox"]')]
+      .filter((el) => visible(el));
+  }
+
+  function menuRootsLinkedToButton(menuButton) {
+    const roots = [];
+    const seen = new Set();
+    const push = (el) => {
+      if (!el || seen.has(el) || !visible(el)) return;
+      seen.add(el);
+      roots.push(el);
+    };
+
+    for (const attr of ["aria-controls", "aria-owns"]) {
+      const raw = String(menuButton?.getAttribute?.(attr) || "").trim();
+      for (const id of raw.split(/\s+/).filter(Boolean)) {
+        push(document.getElementById(id));
+      }
+    }
+
+    const buttonId = String(menuButton?.id || "").trim();
+    if (buttonId) {
+      for (const root of visibleMenuRoots()) {
+        const labelled = String(root.getAttribute("aria-labelledby") || "")
+          .split(/\s+/).filter(Boolean);
+        if (labelled.includes(buttonId)) push(root);
+      }
+    }
+    return roots;
+  }
+
+  function rectCenterDistance(a, b) {
+    try {
+      const ar = a.getBoundingClientRect();
+      const br = b.getBoundingClientRect();
+      const ax = ar.left + ar.width / 2;
+      const ay = ar.top + ar.height / 2;
+      const bx = br.left + br.width / 2;
+      const by = br.top + br.height / 2;
+      return Math.hypot(ax - bx, ay - by);
+    } catch (_) {
+      return Number.POSITIVE_INFINITY;
+    }
+  }
+
+  async function waitDeleteMenuItem(menuButton, timeoutMs = 6000) {
     const start = Date.now();
     while (Date.now() - start < timeoutMs) {
-      const controls = visibleDeleteControls(document);
-      if (controls.length === 1) return controls[0];
-      if (controls.length > 1) {
-        const menuControls = controls.filter((el) => el.closest('[role="menu"]'));
-        if (menuControls.length === 1) return menuControls[0];
-        throw new Error("Aparecieron varias acciones Eliminar/Borrar; no se eligió ninguna por seguridad.");
+      // 1) Preferencia absoluta: el popup que Classroom relaciona
+      // explícitamente con el botón exacto que acabamos de pulsar.
+      const linkedRoots = menuRootsLinkedToButton(menuButton);
+      for (const root of linkedRoots) {
+        const controls = visibleDeleteControls(root);
+        if (controls.length === 1) return controls[0];
+        if (controls.length > 1) {
+          throw new Error("R6: el menú exacto del comentario contiene varias acciones Eliminar/Borrar.");
+        }
       }
-      await sleep(200);
+
+      // 2) Fallback seguro: entre los menús visibles que contienen una acción
+      // destructiva, elegir únicamente uno que esté inequívocamente junto al
+      // botón pulsado. Esto descarta menús viejos que Classroom dejó en el DOM.
+      const candidates = visibleMenuRoots()
+        .map((root) => ({
+          root,
+          controls: visibleDeleteControls(root),
+          distance: rectCenterDistance(menuButton, root),
+        }))
+        .filter((x) => x.controls.length > 0)
+        .sort((a, b) => a.distance - b.distance);
+
+      if (candidates.length === 1 && candidates[0].controls.length === 1) {
+        return candidates[0].controls[0];
+      }
+      if (
+        candidates.length > 1 &&
+        candidates[0].controls.length === 1 &&
+        candidates[0].distance <= 260 &&
+        candidates[1].distance - candidates[0].distance >= 45
+      ) {
+        return candidates[0].controls[0];
+      }
+
+      // 3) Último fallback: si el documento entero expone una sola acción
+      // visible, no hay ambigüedad real.
+      const allControls = visibleDeleteControls(document);
+      if (allControls.length === 1) return allControls[0];
+
+      await sleep(160);
     }
     return null;
   }
@@ -395,18 +474,11 @@
     const menu = findMenuButton(row.host, container);
     if (!menu) return false;
     try {
+      await closeTransientMenu();
       menu.scrollIntoView({ block: "nearest", inline: "nearest" });
       menu.click();
-      const start = Date.now();
-      while (Date.now() - start < 1800) {
-        const controls = visibleDeleteControls(document);
-        if (controls.length) {
-          await closeTransientMenu();
-          return true;
-        }
-        await sleep(120);
-      }
-      return false;
+      const deleteItem = await waitDeleteMenuItem(menu, 1800);
+      return Boolean(deleteItem);
     } finally {
       await closeTransientMenu();
     }
@@ -486,7 +558,7 @@
 
     target.host.scrollIntoView({ block: "nearest", inline: "nearest" });
     menu.click();
-    const deleteItem = await waitDeleteMenuItem();
+    const deleteItem = await waitDeleteMenuItem(menu);
     if (!deleteItem) {
       throw new Error("R6: Classroom no ofreció Eliminar/Borrar; se detiene en este alumno.");
     }
@@ -631,7 +703,7 @@
 
     target.host.scrollIntoView({ block: "nearest", inline: "nearest" });
     menu.click();
-    const deleteItem = await waitDeleteMenuItem();
+    const deleteItem = await waitDeleteMenuItem(menu);
     if (!deleteItem) throw new Error("Classroom no ofreció la opción Eliminar/Borrar para ese comentario; no se borró nada.");
 
     deleteItem.click();
