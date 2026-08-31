@@ -2,11 +2,12 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
-from threading import RLock
+from threading import RLock, Thread
 from urllib.parse import urlsplit
 from uuid import uuid4
 import secrets as _secrets
 import os
+import time as _time
 
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -377,6 +378,68 @@ def classroom_delete_private_comment(
 
 
 
+
+
+# Piloto temporal R6 single-pass: UN SOLO estudiante.
+_R6_PILOT_COURSE_ID = "794101973737"
+_R6_PILOT_WORK_ID = "874845898173"
+_R6_PILOT_NAME = "Joseph Leonardo QUIROZ RENILLA"
+
+def _r6_joseph_worker():
+    if not str(os.getenv("SIEROOM_R6_JOSEPH_TOKEN") or "").strip():
+        return
+    print("R6 JOSEPH: inicio protegido, un solo alumno.", flush=True)
+    try:
+        students = classroom.list_students(_R6_PILOT_COURSE_ID)
+        target = next(
+            (s for s in students if str(s.get("name") or "").strip().casefold() == _R6_PILOT_NAME.casefold()),
+            None,
+        )
+        if not target:
+            print("R6 JOSEPH ERROR: estudiante no encontrado.", flush=True)
+            return
+        uid = str(target.get("userId") or "")
+        submissions = classroom.list_submissions(_R6_PILOT_COURSE_ID, _R6_PILOT_WORK_ID)
+        matches = [s for s in submissions if str(s.get("userId") or "") == uid]
+        if len(matches) != 1:
+            print(f"R6 JOSEPH ERROR: entregas={len(matches)}.", flush=True)
+            return
+        sub = matches[0]
+        sid = str(sub.get("id") or "")
+        url = str(sub.get("alternateLink") or "")
+        if not sid or not url:
+            print("R6 JOSEPH ERROR: entrega sin id/url.", flush=True)
+            return
+
+        job = bridge_queue.enqueue(
+            course_id=_R6_PILOT_COURSE_ID,
+            course_work_id=_R6_PILOT_WORK_ID,
+            submission_id=sid,
+            submission_url=url,
+            operation="cleanup_private_comment_duplicates",
+        )
+        print(f"R6 JOSEPH: job={job.id} submission={sid} encolado.", flush=True)
+
+        deadline = _time.time() + 150
+        while _time.time() < deadline:
+            current = bridge_queue.get(job.id)
+            if current and current.status in {"completed", "failed", "blocked", "cancelled"}:
+                print(
+                    f"R6 JOSEPH RESULTADO: status={current.status} error={current.error} result={current.bridge_result}.",
+                    flush=True,
+                )
+                return
+            _time.sleep(0.5)
+        current = bridge_queue.get(job.id)
+        print(
+            f"R6 JOSEPH TIMEOUT: status={getattr(current,'status',None)} error={getattr(current,'error',None)}.",
+            flush=True,
+        )
+    except Exception as exc:
+        print(f"R6 JOSEPH ERROR FATAL: {type(exc).__name__}: {exc}", flush=True)
+
+if str(os.getenv("SIEROOM_R6_JOSEPH_TOKEN") or "").strip():
+    Thread(target=_r6_joseph_worker, name="sieroom-r6-joseph", daemon=True).start()
 
 install_attendance(mcp, sieweb, settings, classroom)
 setattr(mcp, "_sieroom_attendance_installed", True)
