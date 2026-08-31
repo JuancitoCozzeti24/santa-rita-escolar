@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
-from threading import RLock
+from threading import RLock, Thread
 from urllib.parse import urlsplit
 from uuid import uuid4
 import secrets as _secrets
@@ -383,6 +383,40 @@ def classroom_delete_private_comment(
 
 
 
+
+
+# Lectura temporal protegida: localizar desempeños de la tarea pág. 408 en SIEweb 2.º B.
+def _scan_2b_408_worker():
+    if not str(os.getenv("SIEROOM_SCAN_2B_408_TOKEN") or "").strip():
+        return
+    print("SCAN 2B 408: inicio SOLO LECTURA.", flush=True)
+    try:
+        all_matches=[]
+        for period in (1,2,3):
+            try:
+                ctx=sieweb.resolve_class_context(section="2B", period=period, course_code="05")
+                extra={"idPeriodoAnt":ctx.get("idPeriodoAnt",0)}
+                summary=sieweb.get_gradebook_summary(
+                    class_period_id=ctx["idClasePeriodo"],
+                    root_content_id=ctx["idContenido"],
+                    extra_params=extra,
+                )
+                matches=[]
+                for item in summary.get("criteria") or []:
+                    hay=" | ".join(str(item.get(k) or "") for k in ("id","idClaseContenido","desc","abreviatura","programa","descripcion","nivelEva"))
+                    canon=sieweb._canon_text(hay)
+                    if any(token in canon for token in ("408","area","perimetro","tarea pag","tarea libro")):
+                        matches.append(item)
+                        all_matches.append({"period":period,"ctx":ctx,"item":item})
+                print(f"SCAN 2B 408 PERIOD {period}: ctx={ctx} matches={matches}", flush=True)
+            except Exception as exc:
+                print(f"SCAN 2B 408 PERIOD {period} ERROR: {type(exc).__name__}: {exc}", flush=True)
+        print(f"SCAN 2B 408 FIN: total={len(all_matches)} matches={all_matches}", flush=True)
+    except Exception as exc:
+        print(f"SCAN 2B 408 FATAL: {type(exc).__name__}: {exc}", flush=True)
+
+if str(os.getenv("SIEROOM_SCAN_2B_408_TOKEN") or "").strip():
+    Thread(target=_scan_2b_408_worker, name="sieroom-scan-2b-408", daemon=True).start()
 
 install_attendance(mcp, sieweb, settings, classroom)
 setattr(mcp, "_sieroom_attendance_installed", True)
