@@ -111,7 +111,7 @@ def _classroom_target_matches(actual_url: Any, expected_url: Any) -> bool:
 
 HF4_GRADE_CAPABILITY = "grade_target_guard_v1"
 HF4_CONTENT_BUILD = "0.8.7-HF4-GRADE-TARGET"
-HF4_CONTENT_BUILDS = {HF4_CONTENT_BUILD, "0.8.7-HF4-GRADE-TARGET-DEDUP-R4", "0.8.7-HF4-GRADE-TARGET-DEDUP-R4-DEDUP-R4", "0.8.7-HF4-GRADE-TARGET-DEDUP-R5", "0.8.7-HF4-GRADE-TARGET-DEDUP-SINGLE-PASS-R6"}
+HF4_CONTENT_BUILDS = {HF4_CONTENT_BUILD, "0.8.7-HF4-GRADE-TARGET-DEDUP-R4", "0.8.7-HF4-GRADE-TARGET-DEDUP-R4-DEDUP-R4", "0.8.7-HF4-GRADE-TARGET-DEDUP-R5", "0.8.7-HF4-GRADE-TARGET-DEDUP-SINGLE-PASS-R6", "0.8.7-HF4-GRADE-TARGET-DEDUP-SINGLE-PASS-R6.1"}
 LEGACY_READ_METHOD = "dom-v0.8.7-read"
 HF4_READ_METHOD = "dom-v0.8.7-read-hf4"
 
@@ -162,6 +162,7 @@ async def classroom_bridge_http_next(request: Request):
         return _bridge_unauthorized()
     raw_capabilities = str(request.headers.get("X-SieRoom-Bridge-Capabilities") or "")
     bridge_version = str(request.headers.get("X-SieRoom-Bridge-Version") or "").strip()
+    bridge_build = str(request.headers.get("X-SieRoom-Bridge-Build") or "").strip()
     capabilities = {
         item.strip().lower()
         for item in raw_capabilities.split(",")
@@ -190,8 +191,10 @@ async def classroom_bridge_http_next(request: Request):
         allowed_operations.add("read_private_comments")
 
     cleanup_capability = "cleanup_private_comment_duplicates_single_pass_r6"
+    cleanup_required_build = "0.8.7-HF4-GRADE-TARGET-DEDUP-SINGLE-PASS-R6.1"
     cleanup_capable = (
         version_compatible
+        and bridge_build == cleanup_required_build
         and cleanup_capability in capabilities
         and "teacher_account_guard" in capabilities
         and "target_submission_guard" in capabilities
@@ -224,6 +227,9 @@ async def classroom_bridge_http_next(request: Request):
             "required_cleanup_capability": (
                 cleanup_capability if cleanup_waiting and not cleanup_capable else None
             ),
+            "required_cleanup_build": (
+                cleanup_required_build if cleanup_waiting and not cleanup_capable else None
+            ),
         })
     return JSONResponse({"ok": True, "job": job.public()})
 
@@ -252,7 +258,7 @@ async def classroom_bridge_http_complete(request: Request):
             and result.get("operation") == "cleanup_teacher_private_comment_duplicates_single_pass"
             and result.get("method") == "dom-v0.8.11-duplicate-cleanup-single-pass-r6"
             and result.get("teacher_account_verified") is True
-            and result.get("content_build") == "0.8.7-HF4-GRADE-TARGET-DEDUP-SINGLE-PASS-R6"
+            and result.get("content_build") == "0.8.7-HF4-GRADE-TARGET-DEDUP-SINGLE-PASS-R6.1"
             and target_verified
             and isinstance(initial_count, int)
             and not isinstance(initial_count, bool)
