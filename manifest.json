@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "SieRoom Classroom Bridge",
   "version": "0.8.7",
-  "description": "SieRoom R6: limpieza de comentarios duplicados alumno por alumno en una sola pasada, más lectura, calificación y devolución seguras.",
+  "description": "SieRoom R6.2: limpieza de comentarios duplicados alumno por alumno en una sola pasada, más lectura, calificación y devolución seguras.",
   "permissions": [
     "storage",
     "tabs",
@@ -28,5 +28,5 @@
     "default_title": "SieRoom Classroom Bridge",
     "default_popup": "popup.html"
   },
-  "version_name": "0.8.7-HF4-GRADE-TARGET-DEDUP-SINGLE-PASS-R6.1"
+  "version_name": "0.8.7-HF4-GRADE-TARGET-DEDUP-SINGLE-PASS-R6.2"
 }
