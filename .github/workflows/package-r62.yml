@@ -1,0 +1,38 @@
+name: Package SieRoom R6.2
+
+on:
+  push:
+    branches:
+      - sieroom-dedup-single-pass-r62
+    paths:
+      - ".github/workflows/package-r62.yml"
+      - "browser_extension/**"
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout R6.2
+        uses: actions/checkout@v4
+
+      - name: Verify R6.2
+        run: |
+          grep -q "DEDUP-SINGLE-PASS-R6.2" browser_extension/manifest.json
+          grep -q "DEDUP-SINGLE-PASS-R6.2" browser_extension/bridge.js
+          grep -q "SIEROOM_CLEANUP_TEACHER_PRIVATE_COMMENT_DUPLICATES_SINGLE_PASS_R62" browser_extension/bridge.js
+
+      - name: Stage extension with browser_extension folder
+        run: |
+          mkdir -p artifact_root
+          cp -a browser_extension artifact_root/
+
+      - name: Upload R6.2 package
+        uses: actions/upload-artifact@v4
+        with:
+          name: SieRoom_Classroom_Bridge_R6.2
+          path: artifact_root/
+          if-no-files-found: error
+          retention-days: 1
