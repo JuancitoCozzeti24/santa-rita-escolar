@@ -410,7 +410,7 @@ def _scan_2b_106107_worker():
         if len(wm)!=1:
             print(f"SCAN 2B 106107 STOP: tarea no única count={len(wm)} matches={wm}", flush=True); return
         work=wm[0]; work_id=str(work["id"])
-        print(f"SCAN 2B 106107 WORK: course={course_id} work={work_id} title={work.get('title')!r}", flush=True)
+        print(f"SCAN 2B 106107 WORK: course={course_id} work={work_id} title={work.get('title')!r} description={work.get('description')!r}", flush=True)
 
         roster=classroom.list_students(course_id)
         names={str(x.get("userId") or x.get("id") or ""):x.get("name") for x in roster}
