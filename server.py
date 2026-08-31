@@ -433,7 +433,7 @@ def _scan_paf408_worker():
                 for item in summary.get("criteria") or []:
                     hay = " | ".join(str(item.get(k) or "") for k in ("id","idClaseContenido","desc","abreviatura","programa","descripcion","nivelEva"))
                     canon = sieweb._canon_text(hay)
-                    if "paf 408" in canon or "tarea paf 408" in canon:
+                    if any(token in canon for token in ("408", "tarea", "pag 408", "pagina 408", "libro")):
                         candidates.append(item)
                         matches.append({"period": period, "ctx": ctx, "item": item})
                 print(
