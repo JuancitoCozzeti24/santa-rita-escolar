@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
-from threading import RLock, Thread
+from threading import RLock
 from urllib.parse import urlsplit
 from uuid import uuid4
 import secrets as _secrets
@@ -385,124 +385,6 @@ def classroom_delete_private_comment(
 
 
 
-
-# Lectura temporal: identificar qué tareas Classroom originaron dos desempeños de 2.º A.
-def _match_2a_perf_worker():
-    if not str(os.getenv("SIEROOM_MATCH_2A_PERF_TOKEN") or "").strip():
-        return
-    print("MATCH 2A PERF: inicio SOLO LECTURA.", flush=True)
-    try:
-        course_id="794101973737"
-        ctx=sieweb.resolve_class_context(section="2A", period=2, course_code="05")
-        extra={"idPeriodoAnt":ctx.get("idPeriodoAnt",0)}
-        summary=sieweb.get_gradebook_summary(
-            class_period_id=ctx["idClasePeriodo"],
-            root_content_id=ctx["idContenido"],
-            extra_params=extra,
-        )
-
-        targets=[]
-        for item in summary.get("criteria") or []:
-            text=sieweb._canon_text(" | ".join(str(item.get(k) or "") for k in ("desc","abreviatura","descripcion")))
-            if (
-                "clasifica y representa cuadrados rectangulos rombos romboides y trapecios" in text
-                or "aplica formulas y procedimientos para calcular areas y perimetros de figuras planas" in text
-                or sieweb._canon_text(item.get("abreviatura"))=="areas perim"
-                or sieweb._canon_text(item.get("abreviatura"))=="calc area perim"
-            ):
-                targets.append(item)
-        print(f"MATCH 2A PERF TARGETS: {targets}", flush=True)
-
-        students=classroom.list_students(course_id)
-        uid_to_code={}
-        code_to_name={}
-        for st in students:
-            uid=str(st.get("userId") or st.get("id") or "")
-            email=str(st.get("email") or "")
-            code=email.split("@",1)[0].strip() if "@" in email else ""
-            if uid and code:
-                uid_to_code[uid]=code
-                code_to_name[code]=st.get("name")
-
-        def grade_level(raw):
-            try:
-                n=float(raw)
-            except Exception:
-                return None
-            if n>=15: return "A"
-            if n>=11: return "B"
-            if n>=0: return "C"
-            return None
-
-        target_vectors={}
-        for target in targets:
-            hid=int(target["id"])
-            vec={}
-            for sw in summary.get("students") or []:
-                code=str(sw.get("alucod") or "").strip()
-                note=(sw.get("notas") or {}).get(str(hid)) or (sw.get("notas") or {}).get(hid)
-                if not isinstance(note,dict): continue
-                vals=sieweb._grade_field_values(note)
-                raw=None
-                for v in vals.values():
-                    if str(v or "").strip():
-                        raw=str(v).strip().upper(); break
-                if raw in {"A","B","C"}:
-                    vec[code]=raw
-            target_vectors[hid]=vec
-            print(f"MATCH 2A PERF VECTOR id={hid} abrev={target.get('abreviatura')} count={len(vec)} vec={vec}", flush=True)
-
-        works=classroom.list_coursework(course_id)
-        comparisons=[]
-        for work in works:
-            wid=str(work.get("id") or "")
-            title=str(work.get("title") or "")
-            try:
-                subs=classroom.list_submissions(course_id,wid)
-            except Exception:
-                continue
-            vec={}
-            for sub in subs:
-                raw=sub.get("assignedGrade")
-                if raw is None: continue
-                code=uid_to_code.get(str(sub.get("userId") or ""),"")
-                lvl=grade_level(raw)
-                if code and lvl: vec[code]=lvl
-            if not vec: continue
-
-            for target in targets:
-                hid=int(target["id"])
-                tv=target_vectors.get(hid,{})
-                common=set(tv)&set(vec)
-                exact=sum(1 for code in common if tv.get(code)==vec.get(code))
-                mismatch=sum(1 for code in common if tv.get(code)!=vec.get(code))
-                missing_target=len(set(vec)-set(tv))
-                missing_work=len(set(tv)-set(vec))
-                comparisons.append({
-                    "target_id":hid,
-                    "target_abrev":target.get("abreviatura"),
-                    "work_id":wid,
-                    "title":title,
-                    "common":len(common),
-                    "exact":exact,
-                    "mismatch":mismatch,
-                    "missing_target":missing_target,
-                    "missing_work":missing_work,
-                    "work_grade_count":len(vec),
-                    "target_grade_count":len(tv),
-                })
-
-        comparisons.sort(key=lambda x:(x["target_id"], x["mismatch"], -x["exact"], abs(x["missing_target"])+abs(x["missing_work"])))
-        for target in targets:
-            hid=int(target["id"])
-            top=[x for x in comparisons if x["target_id"]==hid][:12]
-            print(f"MATCH 2A PERF TOP id={hid} abrev={target.get('abreviatura')}: {top}", flush=True)
-        print("MATCH 2A PERF FIN.", flush=True)
-    except Exception as exc:
-        print(f"MATCH 2A PERF ERROR: {type(exc).__name__}: {exc}", flush=True)
-
-if str(os.getenv("SIEROOM_MATCH_2A_PERF_TOKEN") or "").strip():
-    Thread(target=_match_2a_perf_worker, name="sieroom-match-2a-perf", daemon=True).start()
 
 install_attendance(mcp, sieweb, settings, classroom)
 setattr(mcp, "_sieroom_attendance_installed", True)
