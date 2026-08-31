@@ -381,7 +381,7 @@
         const controls = visibleDeleteControls(root);
         if (controls.length === 1) return controls[0];
         if (controls.length > 1) {
-          throw new Error("R6: el menú exacto del comentario contiene varias acciones Eliminar/Borrar.");
+          throw new Error("R6.2: el menú exacto del comentario contiene varias acciones Eliminar/Borrar.");
         }
       }
 
@@ -591,6 +591,7 @@
       throw new Error("R6.2: no apareció un menú de borrado seguro para el comentario; se detiene en este alumno.");
     }
 
+    await closeTransientMenu();
     target.host.scrollIntoView({ block: "nearest", inline: "nearest" });
     menu.click();
     const deleteItem = await waitDeleteMenuItem(menu);
