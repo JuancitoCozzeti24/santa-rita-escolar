@@ -2,7 +2,7 @@ const DEFAULT_TEACHER_EMAIL = "jbringas@santaritadecasia.edu.pe";
 const statusEl = document.getElementById("status");
 const logEl = document.getElementById("log");
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const SIEROOM_CONTENT_BUILD = "0.8.7-HF4-GRADE-TARGET-DEDUP-SINGLE-PASS-R6.1";
+const SIEROOM_CONTENT_BUILD = "0.8.7-HF4-GRADE-TARGET-DEDUP-SINGLE-PASS-R6.2";
 let classroomTabId = null;
 let busy = false;
 let resetGeneration = 0;
@@ -145,7 +145,7 @@ async function bridgeFetch(path, options = {}) {
   headers.set("X-SieRoom-Bridge-Build", SIEROOM_CONTENT_BUILD);
   headers.set(
     "X-SieRoom-Bridge-Capabilities",
-    "post_private_comment,read_private_comments,verified_private_comment_read_v4,student_scoped_private_comment_read,browser_grade_return,teacher_account_guard,target_submission_guard,grade_target_guard_v1,cleanup_private_comment_duplicates_single_pass_r6"
+    "post_private_comment,read_private_comments,verified_private_comment_read_v4,student_scoped_private_comment_read,browser_grade_return,teacher_account_guard,target_submission_guard,grade_target_guard_v1,cleanup_private_comment_duplicates_single_pass_r62"
   );
   if (options.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
   const r = await fetch(`${c.endpoint}${path}`, { ...options, headers, cache: "no-store" });
@@ -386,7 +386,7 @@ async function processJob(job, generation) {
     log(`Cuenta docente confirmada: ${c.teacherEmail}.`);
 
     log(`Trabajo ${job.id}: Classroom activo; esperando panel lateral…`);
-    await sleep(1700);
+    await sleep(job.operation === "cleanup_private_comment_duplicates" ? 300 : 1700);
     assertGeneration(generation);
 
     const isRead = job.operation === "read_private_comments";
@@ -411,7 +411,7 @@ async function processJob(job, generation) {
     const contentPayload = isRead ? {
       type: "SIEROOM_READ_PRIVATE_COMMENTS"
     } : isCleanup ? {
-      type: "SIEROOM_CLEANUP_TEACHER_PRIVATE_COMMENT_DUPLICATES_SINGLE_PASS_R6",
+      type: "SIEROOM_CLEANUP_TEACHER_PRIVATE_COMMENT_DUPLICATES_SINGLE_PASS_R62",
       requestId: job.id,
       expectedSubmissionUrl: forcedUrl
     } : {
@@ -449,7 +449,7 @@ async function processJob(job, generation) {
       if (
         result.operation !== "cleanup_teacher_private_comment_duplicates_single_pass" ||
         result.resolved !== true ||
-        result.method !== "dom-v0.8.11-duplicate-cleanup-single-pass-r6"
+        result.method !== "dom-v0.8.12-duplicate-cleanup-single-pass-r6.2"
       ) {
         throw new Error("R6 PAUSA: el alumno no quedó resuelto por el limpiador single-pass.");
       }
