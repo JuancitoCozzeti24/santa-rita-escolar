@@ -171,6 +171,7 @@ async def classroom_bridge_http_next(request: Request):
     version_compatible = bridge_version == "0.8.7"
     post_capable = (
         version_compatible
+        and bridge_build == "0.8.7-HF4-GRADE-TARGET-DEDUP-SINGLE-PASS-R6.2"
         and "post_private_comment" in capabilities
         and "teacher_account_guard" in capabilities
         and "target_submission_guard" in capabilities
@@ -182,6 +183,7 @@ async def classroom_bridge_http_next(request: Request):
     verified_read_capability = "verified_private_comment_read_v4"
     read_capable = (
         version_compatible
+        and bridge_build == "0.8.7-HF4-GRADE-TARGET-DEDUP-SINGLE-PASS-R6.2"
         and
         "read_private_comments" in capabilities
         and verified_read_capability in capabilities
