@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import secrets
 import unicodedata
@@ -110,7 +111,7 @@ def _classroom_target_matches(actual_url: Any, expected_url: Any) -> bool:
 
 HF4_GRADE_CAPABILITY = "grade_target_guard_v1"
 HF4_CONTENT_BUILD = "0.8.7-HF4-GRADE-TARGET"
-HF4_CONTENT_BUILDS = {HF4_CONTENT_BUILD, "0.8.7-HF4-GRADE-TARGET-DEDUP-R4"}
+HF4_CONTENT_BUILDS = {HF4_CONTENT_BUILD, "0.8.7-HF4-GRADE-TARGET-DEDUP-R4", "0.8.7-HF4-GRADE-TARGET-DEDUP-R4-DEDUP-R4", "0.8.7-HF4-GRADE-TARGET-DEDUP-R5", "0.8.7-HF4-GRADE-TARGET-DEDUP-SINGLE-PASS-R6"}
 LEGACY_READ_METHOD = "dom-v0.8.7-read"
 HF4_READ_METHOD = "dom-v0.8.7-read-hf4"
 
@@ -187,10 +188,22 @@ async def classroom_bridge_http_next(request: Request):
     )
     if read_capable:
         allowed_operations.add("read_private_comments")
+
+    cleanup_capability = "cleanup_private_comment_duplicates_single_pass_r6"
+    cleanup_capable = (
+        version_compatible
+        and cleanup_capability in capabilities
+        and "teacher_account_guard" in capabilities
+        and "target_submission_guard" in capabilities
+    )
+    if cleanup_capable:
+        allowed_operations.add("cleanup_private_comment_duplicates")
+
     job = bridge_queue.next_job(allowed_operations=allowed_operations)
     if not job:
         read_waiting = bridge_queue.has_queued_operation("read_private_comments")
         post_waiting = bridge_queue.has_queued_operation("post_private_comment")
+        cleanup_waiting = bridge_queue.has_queued_operation("cleanup_private_comment_duplicates")
         return JSONResponse({
             "ok": True,
             "job": None,
@@ -206,6 +219,10 @@ async def classroom_bridge_http_next(request: Request):
             "post_waiting_for_compatible_bridge": bool(post_waiting and not post_capable),
             "required_post_capability": (
                 HF4_GRADE_CAPABILITY if post_waiting and not post_capable else None
+            ),
+            "cleanup_waiting_for_r6_bridge": bool(cleanup_waiting and not cleanup_capable),
+            "required_cleanup_capability": (
+                cleanup_capability if cleanup_waiting and not cleanup_capable else None
             ),
         })
     return JSONResponse({"ok": True, "job": job.public()})
@@ -223,6 +240,51 @@ async def classroom_bridge_http_complete(request: Request):
         body = await request.json()
     except Exception:
         body = {}
+    if job.operation == "cleanup_private_comment_duplicates":
+        result = body if isinstance(body, dict) else {}
+        target_verified = _classroom_target_matches(result.get("url"), job.submission_url)
+        initial_count = result.get("initialTeacherCommentCount")
+        deleted_count = result.get("deletedCount")
+        duplicate_detected = result.get("duplicateDetected")
+        valid_cleanup = (
+            result.get("ok") is True
+            and result.get("resolved") is True
+            and result.get("operation") == "cleanup_teacher_private_comment_duplicates_single_pass"
+            and result.get("method") == "dom-v0.8.11-duplicate-cleanup-single-pass-r6"
+            and result.get("teacher_account_verified") is True
+            and result.get("content_build") == "0.8.7-HF4-GRADE-TARGET-DEDUP-SINGLE-PASS-R6"
+            and target_verified
+            and isinstance(initial_count, int)
+            and not isinstance(initial_count, bool)
+            and initial_count >= 0
+            and isinstance(deleted_count, int)
+            and not isinstance(deleted_count, bool)
+            and deleted_count >= 0
+            and isinstance(duplicate_detected, bool)
+            and (
+                (not duplicate_detected and deleted_count == 0 and initial_count <= 1)
+                or
+                (duplicate_detected and initial_count >= 2 and deleted_count >= 1)
+            )
+        )
+        if not valid_cleanup:
+            failed = bridge_queue.mark_failed(
+                job_id,
+                str(result.get("error") or "r6_single_pass_cleanup_result_invalid"),
+                bridge_result=result,
+            )
+            return JSONResponse({"ok": False, "job": failed.public()}, status_code=409)
+        done = bridge_queue.mark_completed(
+            job_id,
+            bridge_result=result,
+            classroom_result={
+                "mode": "local_browser_single_pass_r6",
+                "duplicates_detected": duplicate_detected,
+                "deleted_count": deleted_count,
+            },
+        )
+        return JSONResponse({"ok": True, "job": done.public()})
+
     if job.operation == "read_private_comments":
         result = body if isinstance(body, dict) else {}
         comments = result.get("comments")
@@ -403,7 +465,11 @@ async def classroom_bridge_http_fail(request: Request):
     default_error = (
         "El puente no pudo leer los comentarios privados."
         if job.operation == "read_private_comments"
-        else "El puente no pudo publicar el comentario privado."
+        else (
+            "R6 no pudo resolver los duplicados del alumno actual."
+            if job.operation == "cleanup_private_comment_duplicates"
+            else "El puente no pudo publicar el comentario privado."
+        )
     )
     error = str((body or {}).get("error") or default_error)
     failed = bridge_queue.mark_failed(job_id, error, bridge_result=body if isinstance(body, dict) else {})
@@ -709,6 +775,7 @@ def classroom_capabilities() -> str:
             ],
             "private_feedback_bridge": [
                 "read one/all existing private comments through the local browser",
+                "R6 single-pass duplicate cleanup: resolve each student before moving to the next",
                 "queue private native comment", "browser posts in Classroom UI",
                 "optional final grade", "optional return after comment",
             ],
@@ -744,7 +811,7 @@ def classroom_private_feedback(
     payload_json: str = "{}",
     confirmed: bool = False,
 ) -> str:
-    """Comentarios privados nativos mediante SieRoom Classroom Bridge. action: status|read|read_all|queue|queue_batch|job|list|reset|retry|cancel. read/read_all recuperan comentarios existentes desde la interfaz autenticada. reset desatasca trabajos claimed y conserva los pendientes. queue puede además aplicar grade y devolver DESPUÉS de que el navegador confirme que publicó el comentario. No guarda cookies/tokens de Google en Render."""
+    """Comentarios privados nativos mediante SieRoom Classroom Bridge. action: status|read|read_all|dedup|dedup_all|queue|queue_batch|job|list|reset|retry|cancel. read/read_all recuperan comentarios existentes desde la interfaz autenticada. reset desatasca trabajos claimed y conserva los pendientes. queue puede además aplicar grade y devolver DESPUÉS de que el navegador confirme que publicó el comentario. No guarda cookies/tokens de Google en Render."""
     action = action.strip().lower()
     p = _json_obj(payload_json, {})
     if action == "status":
@@ -858,6 +925,90 @@ def classroom_private_feedback(
             "jobs": jobs,
             "reused_active_jobs": reused,
         })
+    if action in {"dedup", "dedup_all"}:
+        if not settings.classroom_bridge_secret:
+            return _ok({
+                "error": "CLASSROOM_BRIDGE_SECRET no está configurado en Render.",
+                "bridge_configured": False,
+            })
+
+        prepared: list[tuple[str, str, str, str]] = []
+        if action == "dedup":
+            if not submission_id:
+                raise ValueError("dedup requiere submission_id.")
+            sub = classroom.get_submission(course_id, course_work_id, submission_id)
+            url = str(sub.get("alternateLink") or "")
+            if not url:
+                raise ClassroomError("La entrega no tiene alternateLink; no se encoló nada.")
+            prepared.append((str(course_id), str(course_work_id), str(submission_id), url))
+        else:
+            if not course_id or not course_work_id:
+                raise ValueError("dedup_all requiere course_id y course_work_id.")
+            submissions = classroom.list_submissions(course_id, course_work_id)
+            for sub in submissions:
+                sid = str(sub.get("id") or "")
+                url = str(sub.get("alternateLink") or "")
+                if not sid or not url:
+                    raise ClassroomError(
+                        "Una entrega no tiene identificador/alternateLink; por seguridad no se encoló el barrido."
+                    )
+                prepared.append((str(course_id), str(course_work_id), sid, url))
+            if not prepared:
+                raise ClassroomError("La tarea no devolvió entregas para limpiar.")
+
+        preview = {
+            "action": "dedup_single_pass" if action == "dedup" else "dedup_all_single_pass",
+            "destructive": True,
+            "count": len(prepared),
+            "course_id": str(course_id),
+            "course_work_id": str(course_work_id),
+            "sequence_per_student": [
+                "open_exact_submission",
+                "read_private_comments_once_in_current_view",
+                "decide_duplicate_now",
+                "delete_shorter_now_if_needed",
+                "confirm_disappearance_in_same_view",
+                "only_then_move_to_next_student",
+            ],
+            "pause_rule": "si no puede leer o decidir con seguridad, se detiene y NO pasa al siguiente alumno",
+            "no_grade_change": True,
+            "no_return_submission": True,
+            "no_new_comment": True,
+        }
+        if not confirmed:
+            return _ok({"requires_confirmation": True, "preview": preview})
+
+        jobs = []
+        reused = []
+        for cid, cwid, sid, url in prepared:
+            active = bridge_queue.matching(
+                course_id=cid,
+                course_work_id=cwid,
+                submission_id=sid,
+                operation="cleanup_private_comment_duplicates",
+                statuses={"queued", "claimed"},
+            )
+            if active:
+                reused.append(active[0].public())
+                continue
+            jobs.append(bridge_queue.enqueue(
+                course_id=cid,
+                course_work_id=cwid,
+                submission_id=sid,
+                submission_url=url,
+                operation="cleanup_private_comment_duplicates",
+            ).public())
+
+        return _ok({
+            "queued": True,
+            "operation": "cleanup_private_comment_duplicates",
+            "single_pass_r6": True,
+            "count": len(jobs),
+            "reused_active_count": len(reused),
+            "jobs": jobs,
+            "reused_active_jobs": reused,
+        })
+
     if action == "queue":
         if not settings.classroom_bridge_secret:
             return _ok({
