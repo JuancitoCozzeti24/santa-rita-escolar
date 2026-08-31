@@ -529,7 +529,7 @@
     return norm(parts.join(" "));
   }
 
-  const SIEROOM_CONTENT_BUILD = "0.8.7-HF4-GRADE-TARGET-DEDUP-SINGLE-PASS-R6.1";
+  const SIEROOM_CONTENT_BUILD = "0.8.7-HF4-GRADE-TARGET-DEDUP-SINGLE-PASS-R6.2";
 
   function gradeTargetLog(event, detail = {}) {
     try { console.info(`[SieRoom HF4] ${event}`, detail); } catch (_) {}
