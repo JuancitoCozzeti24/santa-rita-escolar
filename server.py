@@ -2,11 +2,14 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
-from threading import RLock
+from threading import RLock, Thread
 from urllib.parse import urlsplit
 from uuid import uuid4
 import secrets as _secrets
 import os
+import re as _re
+import unicodedata as _unicodedata
+import time as _time
 
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -380,6 +383,194 @@ def classroom_delete_private_comment(
 
 
 
+
+
+# Temporal: 2.º A — tarea de libro págs. 106–107, solo estudiantes SIN evidencia.
+# Escribe comentario privado, 0 puntos y devuelve la entrega mediante Bridge R6.2.
+_NO_EVIDENCE_2A_COURSE_ID = "794101973737"
+_NO_EVIDENCE_2A_EXPECTED_TITLE = "TAREA DE LIBRO: Págs. 106–107 – Regla de tres simple."
+
+def _no_evidence_norm(value):
+    text = _unicodedata.normalize("NFD", str(value or ""))
+    text = "".join(ch for ch in text if _unicodedata.category(ch) != "Mn").lower()
+    text = text.replace("–", "-").replace("—", "-")
+    text = _re.sub(r"[^a-z0-9]+", " ", text)
+    return " ".join(text.split())
+
+def _submission_has_evidence(sub):
+    assignment = sub.get("assignmentSubmission") or {}
+    attachments = assignment.get("attachments") or []
+    if isinstance(attachments, list) and len(attachments) > 0:
+        return True
+    short_answer = sub.get("shortAnswerSubmission") or {}
+    if str(short_answer.get("answer") or "").strip():
+        return True
+    multiple = sub.get("multipleChoiceSubmission") or {}
+    if str(multiple.get("answer") or "").strip():
+        return True
+    return False
+
+def _first_name(display_name):
+    parts = [p for p in str(display_name or "").strip().split() if p]
+    return parts[0] if parts else "Estudiante"
+
+def _no_evidence_comment(first_name):
+    return (
+        f"{first_name},\n\n"
+        "He revisado la tarea «TAREA DE LIBRO: Págs. 106–107 – Regla de tres simple» y, "
+        "hasta este momento, no he encontrado evidencia de que hayas cumplido con la actividad solicitada, "
+        "pese al plazo que se brindó para su entrega.\n\n"
+        "Por este motivo, tu calificación actual será C con 0 puntos. Sin embargo, quiero darte una última "
+        "oportunidad para que puedas regularizarla: podrás entregar la tarea mañana, 31 de agosto, hasta las "
+        "11:00 p. m. Te animo a aprovechar este plazo con responsabilidad y organización; cumplir a tiempo "
+        "también forma parte de tu proceso de aprendizaje y te ayudará a fortalecer hábitos importantes para "
+        "tu formación.\n\n"
+        "Después de ese horario ya no habrá una nueva prórroga y se mantendrán la C y los 0 puntos. "
+        "Confío en que podrás aprovechar esta última oportunidad y demostrar tu compromiso con tu aprendizaje."
+    )
+
+def _no_evidence_2a_worker():
+    if not str(os.getenv("SIEROOM_NO_EVIDENCE_2A_TOKEN") or "").strip():
+        return
+    print("NO EVIDENCE 2A: inicio protegido.", flush=True)
+    try:
+        works = classroom.list_coursework(_NO_EVIDENCE_2A_COURSE_ID)
+        expected = _no_evidence_norm(_NO_EVIDENCE_2A_EXPECTED_TITLE)
+        exact = [w for w in works if _no_evidence_norm(w.get("title")) == expected]
+        if len(exact) != 1:
+            candidates = [
+                {"id": w.get("id"), "title": w.get("title")}
+                for w in works
+                if "106" in str(w.get("title") or "") or "regla de tres" in _no_evidence_norm(w.get("title"))
+            ]
+            print(
+                f"NO EVIDENCE 2A STOP: coincidencias exactas={len(exact)}. candidatos={candidates}",
+                flush=True,
+            )
+            return
+
+        work = exact[0]
+        work_id = str(work.get("id") or "")
+        print(
+            f"NO EVIDENCE 2A TAREA: id={work_id} title={work.get('title')!r} maxPoints={work.get('maxPoints')}",
+            flush=True,
+        )
+
+        students = classroom.list_students(_NO_EVIDENCE_2A_COURSE_ID)
+        names = {str(s.get("userId") or ""): str(s.get("name") or "").strip() for s in students}
+        subs = classroom.list_submissions(_NO_EVIDENCE_2A_COURSE_ID, work_id)
+
+        targets = []
+        evidence_count = 0
+        for sub in subs:
+            sid = str(sub.get("id") or "")
+            uid = str(sub.get("userId") or "")
+            url = str(sub.get("alternateLink") or "")
+            name = names.get(uid) or uid or "Estudiante"
+            if not sid or not uid or not url:
+                print(f"NO EVIDENCE 2A STOP: entrega incompleta para {name}; no se encola nada.", flush=True)
+                return
+            if _submission_has_evidence(sub):
+                evidence_count += 1
+                continue
+            targets.append({
+                "name": name,
+                "submission_id": sid,
+                "url": url,
+                "state": sub.get("state"),
+                "assignedGrade": sub.get("assignedGrade"),
+                "draftGrade": sub.get("draftGrade"),
+            })
+
+        targets.sort(key=lambda x: x["name"].casefold())
+        print(
+            f"NO EVIDENCE 2A DETECCION: total={len(subs)} con_evidencia={evidence_count} sin_evidencia={len(targets)}.",
+            flush=True,
+        )
+        print(
+            "NO EVIDENCE 2A OBJETIVOS: " + " | ".join(
+                f"{row['name']}[{row['state']},assigned={row['assignedGrade']},draft={row['draftGrade']}]"
+                for row in targets
+            ),
+            flush=True,
+        )
+
+        jobs = []
+        for row in targets:
+            active = bridge_queue.matching(
+                course_id=_NO_EVIDENCE_2A_COURSE_ID,
+                course_work_id=work_id,
+                submission_id=row["submission_id"],
+                operation="post_private_comment",
+                statuses={"queued", "claimed"},
+            )
+            if active:
+                jobs.append((row["name"], active[0]))
+                print(f"NO EVIDENCE 2A REUSE: {row['name']} job={active[0].id}", flush=True)
+                continue
+
+            job = bridge_queue.enqueue(
+                course_id=_NO_EVIDENCE_2A_COURSE_ID,
+                course_work_id=work_id,
+                submission_id=row["submission_id"],
+                submission_url=row["url"],
+                comment=_no_evidence_comment(_first_name(row["name"])),
+                grade=0,
+                return_after_comment=True,
+            )
+            jobs.append((row["name"], job))
+            print(f"NO EVIDENCE 2A QUEUED: {row['name']} job={job.id}", flush=True)
+
+        if not jobs:
+            print("NO EVIDENCE 2A FIN: no había estudiantes sin evidencia.", flush=True)
+            return
+
+        terminal = {"completed", "failed", "blocked", "cancelled"}
+        seen = set()
+        started = _time.time()
+        while _time.time() - started < 720:
+            completed = 0
+            failed = 0
+            pending = 0
+            for name, job in jobs:
+                cur = bridge_queue.get(job.id)
+                if not cur:
+                    continue
+                if cur.status == "completed":
+                    completed += 1
+                elif cur.status in {"failed", "blocked", "cancelled"}:
+                    failed += 1
+                else:
+                    pending += 1
+
+                if cur.status in terminal and job.id not in seen:
+                    seen.add(job.id)
+                    result = cur.bridge_result if isinstance(cur.bridge_result, dict) else {}
+                    comment_info = result.get("comment") if isinstance(result.get("comment"), dict) else {}
+                    print(
+                        f"NO EVIDENCE 2A RESULT {name}: status={cur.status} "
+                        f"comment_already={comment_info.get('alreadyPresent')} "
+                        f"comment_blocked_existing={comment_info.get('blockedByExistingTeacherComment')} "
+                        f"grade={result.get('browser_grade')} returned={result.get('browser_returned')} "
+                        f"error={cur.error}",
+                        flush=True,
+                    )
+
+            if completed + failed == len(jobs):
+                print(
+                    f"NO EVIDENCE 2A FIN: completed={completed} failed={failed} total={len(jobs)} "
+                    f"segundos={_time.time()-started:.1f}.",
+                    flush=True,
+                )
+                return
+            _time.sleep(0.5)
+
+        print("NO EVIDENCE 2A TIMEOUT: el monitor terminó a los 12 min; no se crean nuevos jobs.", flush=True)
+    except Exception as exc:
+        print(f"NO EVIDENCE 2A ERROR FATAL: {type(exc).__name__}: {exc}", flush=True)
+
+if str(os.getenv("SIEROOM_NO_EVIDENCE_2A_TOKEN") or "").strip():
+    Thread(target=_no_evidence_2a_worker, name="sieroom-no-evidence-2a", daemon=True).start()
 
 install_attendance(mcp, sieweb, settings, classroom)
 setattr(mcp, "_sieroom_attendance_installed", True)
