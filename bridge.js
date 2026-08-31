@@ -2,11 +2,12 @@ const DEFAULT_TEACHER_EMAIL = "jbringas@santaritadecasia.edu.pe";
 const statusEl = document.getElementById("status");
 const logEl = document.getElementById("log");
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const SIEROOM_CONTENT_BUILD = "0.8.7-HF4-GRADE-TARGET-DEDUP-R5";
+const SIEROOM_CONTENT_BUILD = "0.8.7-HF4-GRADE-TARGET-DEDUP-SINGLE-PASS-R6";
 let classroomTabId = null;
 let busy = false;
 let resetGeneration = 0;
 let lastJobStartedAt = 0;
+let hardPauseReason = "";
 
 class BridgeResetError extends Error {}
 
@@ -143,7 +144,7 @@ async function bridgeFetch(path, options = {}) {
   headers.set("X-SieRoom-Bridge-Version", chrome.runtime.getManifest().version);
   headers.set(
     "X-SieRoom-Bridge-Capabilities",
-    "post_private_comment,read_private_comments,verified_private_comment_read_v4,student_scoped_private_comment_read,browser_grade_return,teacher_account_guard,target_submission_guard,grade_target_guard_v1"
+    "post_private_comment,read_private_comments,verified_private_comment_read_v4,student_scoped_private_comment_read,browser_grade_return,teacher_account_guard,target_submission_guard,grade_target_guard_v1,cleanup_private_comment_duplicates_single_pass_r6"
   );
   if (options.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
   const r = await fetch(`${c.endpoint}${path}`, { ...options, headers, cache: "no-store" });
@@ -388,6 +389,7 @@ async function processJob(job, generation) {
     assertGeneration(generation);
 
     const isRead = job.operation === "read_private_comments";
+    const isCleanup = job.operation === "cleanup_private_comment_duplicates";
     // HF4 conserva comentario + calificación + devolución en la MISMA sesión,
     // pero la caja de nota queda acotada al student_id exacto de submission_url.
     await assertTabTarget(tab.id, forcedUrl, generation);
@@ -395,9 +397,22 @@ async function processJob(job, generation) {
     if (!isRead && !targetStudentId) {
       throw new Error("PAUSA DE SEGURIDAD HF4: submission_url no contiene student_id.");
     }
-    if (!isRead) log(`target_student_id=${targetStudentId}`);
+    if (!isRead) log(`target_student_id=${targetStudentId || "desconocido"}`);
+    if (isCleanup) {
+      // Asegura que el helper R6 esté presente en ESTA misma vista del alumno.
+      await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        files: ["delete_private_comment.js"]
+      });
+      await sleep(160);
+    }
+
     const contentPayload = isRead ? {
       type: "SIEROOM_READ_PRIVATE_COMMENTS"
+    } : isCleanup ? {
+      type: "SIEROOM_CLEANUP_TEACHER_PRIVATE_COMMENT_DUPLICATES_SINGLE_PASS_R6",
+      requestId: job.id,
+      expectedSubmissionUrl: forcedUrl
     } : {
       type: "SIEROOM_PROCESS_SUBMISSION",
       requestId: job.id,
@@ -427,6 +442,37 @@ async function processJob(job, generation) {
       throw new Error(result?.error || (isRead
         ? "Classroom no devolvió los comentarios privados."
         : "Classroom no confirmó el procesamiento de la entrega."));
+    }
+
+    if (isCleanup) {
+      if (
+        result.operation !== "cleanup_teacher_private_comment_duplicates_single_pass" ||
+        result.resolved !== true ||
+        result.method !== "dom-v0.8.11-duplicate-cleanup-single-pass-r6"
+      ) {
+        throw new Error("R6 PAUSA: el alumno no quedó resuelto por el limpiador single-pass.");
+      }
+
+      await complete(job, {
+        ...result,
+        teacher_account_verified: true,
+        content_build: SIEROOM_CONTENT_BUILD,
+      });
+      assertGeneration(generation);
+
+      if (result.duplicateDetected) {
+        log(
+          `R6 RESUELTO: duplicado detectado; conservado ${result.keeperCharacterCount} caracteres · ` +
+          `eliminados ${result.deletedCount}. No se reabrió al alumno.`
+        );
+      } else {
+        log(`R6 RESUELTO: sin duplicado (${result.decision}); pasando al siguiente alumno.`);
+      }
+      return {
+        cleanupCompleted: true,
+        duplicateDetected: Boolean(result.duplicateDetected),
+        deletedCount: Number(result.deletedCount || 0),
+      };
     }
 
     if (!isRead) {
@@ -514,6 +560,15 @@ async function processJob(job, generation) {
     const message = String(e?.message || e);
     log(`ERROR ${job.id}: ${message}`);
     try { await fail(job, message); } catch (_) {}
+
+    if (job.operation === "cleanup_private_comment_duplicates") {
+      hardPauseReason =
+        `R6 PAUSA EN ESTE ALUMNO: ${message} No se procesará al siguiente estudiante.`;
+      statusEl.textContent = hardPauseReason;
+      statusEl.className = "bad";
+      log(hardPauseReason);
+      return { pausedForCleanup: true, failed: true };
+    }
     return { failed: true };
   } finally {
     lastJobStartedAt = 0;
@@ -525,6 +580,7 @@ async function processJob(job, generation) {
 }
 
 async function resetQueue({ retryFailed = false, fromButton = true } = {}) {
+  hardPauseReason = "";
   resetGeneration += 1;
   const myGeneration = resetGeneration;
   busy = false;
@@ -561,7 +617,7 @@ async function drainQueue(generation, maxJobs = 50) {
     const job = nxt.data?.job;
     if (!job) break;
     const result = await processJob(job, generation);
-    if (result?.pausedForAccount) break;
+    if (result?.pausedForAccount || result?.pausedForCleanup) break;
     assertGeneration(generation);
     processed += 1;
     // Pequeñísima pausa para que la UI y Chrome respiren, sin meter 3 s por trabajo.
@@ -577,6 +633,13 @@ async function poll(force = false) {
     if (force) log("Ya existe un trabajo en curso; no se inició un segundo proceso.");
     return;
   }
+  if (hardPauseReason) {
+    statusEl.textContent = hardPauseReason;
+    statusEl.className = "bad";
+    if (force) log("R6 permanece detenido en el alumno con error; no se saltará al siguiente.");
+    return;
+  }
+
   busy = true;
   const generation = resetGeneration;
   try {
