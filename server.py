@@ -2,12 +2,11 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
-from threading import RLock, Thread
+from threading import RLock
 from urllib.parse import urlsplit
 from uuid import uuid4
 import secrets as _secrets
 import os
-import time as _time
 
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -381,147 +380,6 @@ def classroom_delete_private_comment(
 
 
 
-
-# Controlador temporal R6.2: encola TODO 2.º A/C1 de una vez.
-# El Bridge R6.2 drena la cola continuamente; este worker solo vigila y corta si falla/se atasca.
-_R62_BATCH_COURSE_ID = "794101973737"
-_R62_BATCH_WORK_ID = "874845898173"
-
-def _r62_batch_2a_worker():
-    token = str(os.getenv("SIEROOM_R62_BATCH_2A_TOKEN") or "").strip()
-    if not token:
-        return
-    print("R6.2 BATCH 2A: preparando lote completo.", flush=True)
-    try:
-        students = classroom.list_students(_R62_BATCH_COURSE_ID)
-        submissions = classroom.list_submissions(_R62_BATCH_COURSE_ID, _R62_BATCH_WORK_ID)
-        names = {str(s.get("userId") or ""): str(s.get("name") or "").strip() for s in students}
-
-        prepared = []
-        for sub in submissions:
-            sid = str(sub.get("id") or "")
-            uid = str(sub.get("userId") or "")
-            url = str(sub.get("alternateLink") or "")
-            if not sid or not uid or not url:
-                print("R6.2 BATCH 2A STOP: entrega sin id/userId/url; no se encoló el lote.", flush=True)
-                return
-            prepared.append((names.get(uid) or uid, sid, url))
-        prepared.sort(key=lambda row: row[0].casefold())
-
-        if not prepared:
-            print("R6.2 BATCH 2A STOP: no hay entregas.", flush=True)
-            return
-
-        jobs = []
-        for name, sid, url in prepared:
-            active = bridge_queue.matching(
-                course_id=_R62_BATCH_COURSE_ID,
-                course_work_id=_R62_BATCH_WORK_ID,
-                submission_id=sid,
-                operation="cleanup_private_comment_duplicates",
-                statuses={"queued", "claimed"},
-            )
-            if active:
-                jobs.append((name, active[0]))
-                continue
-            job = bridge_queue.enqueue(
-                course_id=_R62_BATCH_COURSE_ID,
-                course_work_id=_R62_BATCH_WORK_ID,
-                submission_id=sid,
-                submission_url=url,
-                operation="cleanup_private_comment_duplicates",
-            )
-            jobs.append((name, job))
-
-        print(f"R6.2 BATCH 2A ENQUEUED: {len(jobs)} alumnos listos; drenaje continuo.", flush=True)
-
-        terminal = {"completed", "failed", "blocked", "cancelled"}
-        seen_terminal = set()
-        last_progress = _time.time()
-        started = _time.time()
-
-        def cancel_remaining(reason):
-            cancelled = 0
-            for _name, job in jobs:
-                cur = bridge_queue.get(job.id)
-                if cur and cur.status == "queued":
-                    try:
-                        bridge_queue.cancel(job.id)
-                        cancelled += 1
-                    except Exception:
-                        pass
-            print(f"R6.2 BATCH 2A CANCEL RESTO: {cancelled} en cola cancelados. motivo={reason}", flush=True)
-
-        while True:
-            completed = 0
-            failed = []
-            claimed = 0
-            queued = 0
-
-            for name, job in jobs:
-                cur = bridge_queue.get(job.id)
-                if not cur:
-                    continue
-                if cur.status == "completed":
-                    completed += 1
-                elif cur.status in {"failed", "blocked", "cancelled"}:
-                    failed.append((name, cur))
-                elif cur.status == "claimed":
-                    claimed += 1
-                elif cur.status == "queued":
-                    queued += 1
-
-                if cur.status in terminal and job.id not in seen_terminal:
-                    seen_terminal.add(job.id)
-                    last_progress = _time.time()
-                    result = cur.bridge_result if isinstance(cur.bridge_result, dict) else {}
-                    print(
-                        f"R6.2 BATCH RESULT {name}: status={cur.status} "
-                        f"duplicate={result.get('duplicateDetected')} deleted={result.get('deletedCount')} "
-                        f"decision={result.get('decision')} error={cur.error}",
-                        flush=True,
-                    )
-
-            if failed:
-                name, bad = failed[0]
-                cancel_remaining(f"fallo en {name}: {bad.error}")
-                print(
-                    f"R6.2 BATCH 2A STOP FAIL: {name} status={bad.status} error={bad.error}. "
-                    f"completados={completed}/{len(jobs)}.",
-                    flush=True,
-                )
-                return
-
-            if completed == len(jobs):
-                print(
-                    f"R6.2 BATCH 2A FIN: completados={completed}/{len(jobs)} "
-                    f"total_segundos={_time.time()-started:.1f}.",
-                    flush=True,
-                )
-                return
-
-            # Después de comenzar a procesar, 35 s sin ningún alumno terminado es anormal.
-            if (claimed > 0 or completed > 0) and _time.time() - last_progress > 35:
-                cancel_remaining("sin progreso durante 35 s")
-                print(
-                    f"R6.2 BATCH 2A STOP SLOW: sin progreso 35 s; "
-                    f"completed={completed} claimed={claimed} queued={queued}.",
-                    flush=True,
-                )
-                return
-
-            # Si ni siquiera empieza en 55 s, tampoco dejamos el lote esperando indefinidamente.
-            if completed == 0 and claimed == 0 and _time.time() - started > 55:
-                cancel_remaining("Bridge no reclamó el primer alumno en 55 s")
-                print("R6.2 BATCH 2A STOP START: Bridge no inició a tiempo.", flush=True)
-                return
-
-            _time.sleep(0.4)
-    except Exception as exc:
-        print(f"R6.2 BATCH 2A ERROR FATAL: {type(exc).__name__}: {exc}", flush=True)
-
-if str(os.getenv("SIEROOM_R62_BATCH_2A_TOKEN") or "").strip():
-    Thread(target=_r62_batch_2a_worker, name="sieroom-r62-batch-2a", daemon=True).start()
 
 install_attendance(mcp, sieweb, settings, classroom)
 setattr(mcp, "_sieroom_attendance_installed", True)
