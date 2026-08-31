@@ -1,0 +1,30 @@
+name: Package SieRoom R6.1
+
+on:
+  push:
+    branches:
+      - sieroom-dedup-single-pass-r6
+    paths:
+      - ".github/workflows/package-r6.yml"
+      - "browser_extension/**"
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout R6.1
+        uses: actions/checkout@v4
+      - name: Verify R6.1 manifest
+        run: |
+          grep -q "DEDUP-SINGLE-PASS-R6.1" browser_extension/manifest.json
+          grep -q "DEDUP-SINGLE-PASS-R6.1" browser_extension/bridge.js
+      - name: Upload extension package
+        uses: actions/upload-artifact@v4
+        with:
+          name: SieRoom_Classroom_Bridge_R6.1
+          path: browser_extension/
+          if-no-files-found: error
+          retention-days: 1
