@@ -558,7 +558,7 @@
 
     target.host.scrollIntoView({ block: "nearest", inline: "nearest" });
     menu.click();
-    const deleteItem = await waitDeleteMenuItem();
+    const deleteItem = await waitDeleteMenuItem(menu);
     if (!deleteItem) {
       throw new Error("R6: Classroom no ofreció Eliminar/Borrar; se detiene en este alumno.");
     }
@@ -703,7 +703,7 @@
 
     target.host.scrollIntoView({ block: "nearest", inline: "nearest" });
     menu.click();
-    const deleteItem = await waitDeleteMenuItem();
+    const deleteItem = await waitDeleteMenuItem(menu);
     if (!deleteItem) throw new Error("Classroom no ofreció la opción Eliminar/Borrar para ese comentario; no se borró nada.");
 
     deleteItem.click();
