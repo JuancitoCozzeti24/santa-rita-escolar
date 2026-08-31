@@ -394,7 +394,7 @@ async function processJob(job, generation) {
     // pero la caja de nota queda acotada al student_id exacto de submission_url.
     await assertTabTarget(tab.id, forcedUrl, generation);
     const targetStudentId = studentIdFromClassroomUrl(forcedUrl);
-    if (!isRead && !isCleanup && !targetStudentId) {
+    if (!isRead && !targetStudentId) {
       throw new Error("PAUSA DE SEGURIDAD HF4: submission_url no contiene student_id.");
     }
     if (!isRead) log(`target_student_id=${targetStudentId || "desconocido"}`);
