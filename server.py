@@ -557,7 +557,11 @@ def _transfer_2b_cuadrilateros_worker():
             if not code:
                 skipped.append({"name":uid_to_name.get(uid),"userId":uid,"reason":"student_code_not_resolved"})
                 continue
-            qualitative=_classroom_grade_to_sieweb_level(raw, {"A":15,"B":11})
+            n=float(raw)
+            if n < 0 or n > 20:
+                skipped.append({"name":uid_to_name.get(uid),"userId":uid,"reason":"grade_out_of_range","grade":raw})
+                continue
+            qualitative="A" if n >= 15 else ("B" if n >= 11 else "C")
             grade_map[code]=qualitative
             details.append({"name":uid_to_name.get(uid),"code":code,"numeric":raw,"qualitative":qualitative})
 
