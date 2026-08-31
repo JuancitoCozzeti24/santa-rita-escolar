@@ -111,7 +111,7 @@ def _classroom_target_matches(actual_url: Any, expected_url: Any) -> bool:
 
 HF4_GRADE_CAPABILITY = "grade_target_guard_v1"
 HF4_CONTENT_BUILD = "0.8.7-HF4-GRADE-TARGET"
-HF4_CONTENT_BUILDS = {HF4_CONTENT_BUILD, "0.8.7-HF4-GRADE-TARGET-DEDUP-R4", "0.8.7-HF4-GRADE-TARGET-DEDUP-R4-DEDUP-R4", "0.8.7-HF4-GRADE-TARGET-DEDUP-R5", "0.8.7-HF4-GRADE-TARGET-DEDUP-SINGLE-PASS-R6", "0.8.7-HF4-GRADE-TARGET-DEDUP-SINGLE-PASS-R6.1"}
+HF4_CONTENT_BUILDS = {HF4_CONTENT_BUILD, "0.8.7-HF4-GRADE-TARGET-DEDUP-R4", "0.8.7-HF4-GRADE-TARGET-DEDUP-R4-DEDUP-R4", "0.8.7-HF4-GRADE-TARGET-DEDUP-R5", "0.8.7-HF4-GRADE-TARGET-DEDUP-SINGLE-PASS-R6", "0.8.7-HF4-GRADE-TARGET-DEDUP-SINGLE-PASS-R6.1", "0.8.7-HF4-GRADE-TARGET-DEDUP-SINGLE-PASS-R6.2"}
 LEGACY_READ_METHOD = "dom-v0.8.7-read"
 HF4_READ_METHOD = "dom-v0.8.7-read-hf4"
 
@@ -190,8 +190,8 @@ async def classroom_bridge_http_next(request: Request):
     if read_capable:
         allowed_operations.add("read_private_comments")
 
-    cleanup_capability = "cleanup_private_comment_duplicates_single_pass_r6"
-    cleanup_required_build = "0.8.7-HF4-GRADE-TARGET-DEDUP-SINGLE-PASS-R6.1"
+    cleanup_capability = "cleanup_private_comment_duplicates_single_pass_r62"
+    cleanup_required_build = "0.8.7-HF4-GRADE-TARGET-DEDUP-SINGLE-PASS-R6.2"
     cleanup_capable = (
         version_compatible
         and bridge_build == cleanup_required_build
@@ -256,9 +256,9 @@ async def classroom_bridge_http_complete(request: Request):
             result.get("ok") is True
             and result.get("resolved") is True
             and result.get("operation") == "cleanup_teacher_private_comment_duplicates_single_pass"
-            and result.get("method") == "dom-v0.8.11-duplicate-cleanup-single-pass-r6"
+            and result.get("method") == "dom-v0.8.12-duplicate-cleanup-single-pass-r6.2"
             and result.get("teacher_account_verified") is True
-            and result.get("content_build") == "0.8.7-HF4-GRADE-TARGET-DEDUP-SINGLE-PASS-R6.1"
+            and result.get("content_build") == "0.8.7-HF4-GRADE-TARGET-DEDUP-SINGLE-PASS-R6.2"
             and target_verified
             and isinstance(initial_count, int)
             and not isinstance(initial_count, bool)
