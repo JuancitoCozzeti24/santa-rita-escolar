@@ -425,7 +425,12 @@ def _transfer_2b_cuadrilateros_worker():
                     and "404" in title_canon
                 ):
                     page_matches.append(row)
-            print(f"TRANSFER 2B CUAD TITLE FALLBACK: exact={len(work_matches)} page_matches={page_matches}", flush=True)
+            broad_candidates=[]
+            for row in works:
+                title_canon=sieweb._canon_text(row.get("title"))
+                if any(tok in title_canon for tok in ("cuadrilateros","382","383","404")):
+                    broad_candidates.append({"id":row.get("id"),"title":row.get("title"),"state":row.get("state")})
+            print(f"TRANSFER 2B CUAD TITLE FALLBACK: exact={len(work_matches)} page_matches={page_matches} broad={broad_candidates}", flush=True)
             work_matches=page_matches
         if len(work_matches) != 1:
             print(f"TRANSFER 2B CUAD STOP: tarea Classroom no resuelta de forma única coincidencias={len(work_matches)} matches={work_matches}", flush=True)
