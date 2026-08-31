@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
-from threading import RLock
+from threading import RLock, Thread
 from urllib.parse import urlsplit
 from uuid import uuid4
 import secrets as _secrets
@@ -386,6 +386,70 @@ def classroom_delete_private_comment(
 
 
 
+
+
+# Lectura temporal: 2.º B - TAREA DE LIBRO págs. 106-107 Regla de tres simple.
+def _scan_2b_106107_worker():
+    if not str(os.getenv("SIEROOM_SCAN_2B_106107_TOKEN") or "").strip():
+        return
+    print("SCAN 2B 106107: inicio SOLO LECTURA.", flush=True)
+    try:
+        courses=classroom.list_courses(active_only=True)
+        wanted=sieweb._canon_text("MATE 2DO - B")
+        cm=[x for x in courses if sieweb._canon_text(x.get("name"))==wanted]
+        if len(cm)!=1:
+            print(f"SCAN 2B 106107 STOP: curso coincidencias={len(cm)} matches={cm}", flush=True); return
+        course_id=str(cm[0]["id"])
+        works=classroom.list_coursework(course_id)
+        wanted_title=sieweb._canon_text("TAREA DE LIBRO: Págs. 106–107 – Regla de tres simple")
+        wm=[x for x in works if sieweb._canon_text(x.get("title"))==wanted_title]
+        if len(wm)!=1:
+            broad=[x for x in works if "106" in sieweb._canon_text(x.get("title")) and "107" in sieweb._canon_text(x.get("title")) and "regla de tres" in sieweb._canon_text(x.get("title"))]
+            print(f"SCAN 2B 106107 TITLE: exact={len(wm)} broad={broad}", flush=True)
+            wm=broad
+        if len(wm)!=1:
+            print(f"SCAN 2B 106107 STOP: tarea no única count={len(wm)} matches={wm}", flush=True); return
+        work=wm[0]; work_id=str(work["id"])
+        print(f"SCAN 2B 106107 WORK: course={course_id} work={work_id} title={work.get('title')!r}", flush=True)
+
+        roster=classroom.list_students(course_id)
+        names={str(x.get("userId") or x.get("id") or ""):x.get("name") for x in roster}
+        subs=classroom.list_submissions(course_id,work_id)
+        out=[]
+        for sub in subs:
+            uid=str(sub.get("userId") or "")
+            asg=sub.get("assignmentSubmission") or {}
+            atts=asg.get("attachments") or []
+            compact=[]
+            for a in atts:
+                if not isinstance(a,dict): continue
+                d=a.get("driveFile") or {}
+                l=a.get("link") or {}
+                compact.append({
+                    "drive_id":d.get("id"),
+                    "title":d.get("title"),
+                    "alternateLink":d.get("alternateLink"),
+                    "thumbnailUrl":d.get("thumbnailUrl"),
+                    "link_url":l.get("url"),
+                    "link_title":l.get("title"),
+                })
+            out.append({
+                "name":names.get(uid),
+                "userId":uid,
+                "submission_id":sub.get("id"),
+                "state":sub.get("state"),
+                "assignedGrade":sub.get("assignedGrade"),
+                "attachments":compact,
+                "attachment_count":len(compact),
+                "alternateLink":sub.get("alternateLink"),
+            })
+        print("SCAN 2B 106107 SUBMISSIONS: "+repr(out), flush=True)
+        print("SCAN 2B 106107 FIN.", flush=True)
+    except Exception as exc:
+        print(f"SCAN 2B 106107 ERROR: {type(exc).__name__}: {exc}", flush=True)
+
+if str(os.getenv("SIEROOM_SCAN_2B_106107_TOKEN") or "").strip():
+    Thread(target=_scan_2b_106107_worker, name="sieroom-scan-2b-106107", daemon=True).start()
 
 install_attendance(mcp, sieweb, settings, classroom)
 setattr(mcp, "_sieroom_attendance_installed", True)
