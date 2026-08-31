@@ -1,6 +1,6 @@
 (() => {
-  if (window.__SIEROOM_CLASSROOM_DELETE_087_V1__) return;
-  window.__SIEROOM_CLASSROOM_DELETE_087_V1__ = true;
+  if (window.__SIEROOM_CLASSROOM_DELETE_R6_SINGLE_PASS__) return;
+  window.__SIEROOM_CLASSROOM_DELETE_R6_SINGLE_PASS__ = true;
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const norm = (s) => String(s || "")
@@ -466,43 +466,150 @@
     return teacher.length > 1 ? [teacher] : [];
   }
 
-  async function cleanupTeacherPrivateCommentDuplicates() {
-    const before = await auditTeacherPrivateComments();
-    const groups = duplicateTeacherGroups(before.comments);
-    const deleted = [];
+  async function deleteResolvedRowSinglePass(target, section) {
+    const targetText = clean(target?.text);
+    if (!targetText || !target?.host) throw new Error("R6: comentario objetivo inválido.");
+    if (!target.host.isConnected) {
+      throw new Error("R6: el comentario cambió antes del clic; se detiene en este alumno.");
+    }
 
-    for (const group of groups) {
-      const sorted = [...group].sort((a, b) => {
-        if (b.characterCount !== a.characterCount) return b.characterCount - a.characterCount;
-        return a.domOrder - b.domOrder;
-      });
-      const keeper = sorted[0];
-      const targets = sorted.slice(1).sort((a, b) => b.domOrder - a.domOrder);
+    const rowsBefore = commentRows(section.container, section.label, section.composer);
+    const beforeMatchingCount = rowsBefore.filter((row) => norm(row.text) === norm(targetText)).length;
+    if (beforeMatchingCount !== 1) {
+      throw new Error("R6: el comentario a borrar dejó de ser único; se detiene en este alumno.");
+    }
 
-      for (const target of targets) {
-        const result = await deletePrivateComment(target.text, target.domOrder);
-        deleted.push({
-          text: target.text,
-          domOrder: target.domOrder,
-          characterCount: target.characterCount,
-          keptDomOrder: keeper.domOrder,
-          keptCharacterCount: keeper.characterCount,
-          exactDuplicate: norm(target.text) === norm(keeper.text),
-          result,
+    const menu = findMenuButton(target.host, section.container);
+    if (!menu) {
+      throw new Error("R6: no apareció un menú de borrado seguro para el comentario; se detiene en este alumno.");
+    }
+
+    target.host.scrollIntoView({ block: "nearest", inline: "nearest" });
+    menu.click();
+    const deleteItem = await waitDeleteMenuItem();
+    if (!deleteItem) {
+      throw new Error("R6: Classroom no ofreció Eliminar/Borrar; se detiene en este alumno.");
+    }
+
+    deleteItem.click();
+    await confirmDeleteDialogIfNeeded();
+
+    // Verificación LOCAL, en la misma pantalla. No reabre al alumno ni crea una
+    // segunda operación de lectura en el servidor.
+    const started = Date.now();
+    while (Date.now() - started < 10000) {
+      await sleep(350);
+      const liveSection = await waitPrivateSection(2200);
+      const rowsNow = commentRows(liveSection.container, liveSection.label, liveSection.composer);
+      const afterMatchingCount = rowsNow.filter((row) => norm(row.text) === norm(targetText)).length;
+      if (afterMatchingCount === 0) {
+        return {
+          ok: true,
+          deleted: true,
+          characterCount: targetText.length,
+          verification: "same_student_same_view_disappearance",
+        };
+      }
+    }
+    throw new Error("R6: se pulsó borrar, pero el comentario no desapareció en la misma vista; se detiene en este alumno.");
+  }
+
+  async function cleanupTeacherPrivateCommentDuplicatesSinglePass() {
+    // UNA sola resolución del alumno: delimitar panel -> detectar -> borrar si
+    // corresponde -> terminar. Nunca se devuelve al servidor una lectura para que
+    // luego otra cola decida qué borrar.
+    const section = await waitPrivateSection();
+    await sleep(220);
+    const rows = commentRows(section.container, section.label, section.composer);
+    const owned = [];
+
+    for (const row of rows) {
+      const authoredByTeacherName = rowLooksAuthoredByActiveTeacher(row);
+      const structuredFeedback = row.markers.length >= 2;
+      const deleteAvailable = authoredByTeacherName
+        ? true
+        : (structuredFeedback ? await rowOffersDelete(row, section.container) : false);
+      const teacherOwned = Boolean(authoredByTeacherName || (structuredFeedback && deleteAvailable));
+      if (teacherOwned) {
+        owned.push({
+          ...row,
+          characterCount: clean(row.text).length,
+          authoredByTeacherName,
+          structuredFeedback,
+          deleteAvailable,
         });
       }
     }
 
-    const after = deleted.length ? await auditTeacherPrivateComments() : before;
+    if (owned.length <= 1) {
+      return {
+        ok: true,
+        resolved: true,
+        operation: "cleanup_teacher_private_comment_duplicates_single_pass",
+        duplicateDetected: false,
+        initialTeacherCommentCount: owned.length,
+        deletedCount: 0,
+        decision: owned.length === 0 ? "no_teacher_comment" : "single_teacher_comment",
+        method: "dom-v0.8.11-duplicate-cleanup-single-pass-r6",
+        url: location.href,
+      };
+    }
+
+    const maxLength = Math.max(...owned.map((row) => row.characterCount));
+    const keepers = owned.filter((row) => row.characterCount === maxLength);
+    if (keepers.length !== 1) {
+      throw new Error(
+        "R6 PAUSA: hay varios comentarios docentes empatados como los más largos; " +
+        "no se puede elegir cuál conservar sin ambigüedad."
+      );
+    }
+
+    const keeper = keepers[0];
+    const targets = owned
+      .filter((row) => row !== keeper)
+      .sort((a, b) => b.domOrder - a.domOrder);
+
+    const normalizedTargets = new Set();
+    for (const target of targets) {
+      const key = norm(target.text);
+      if (!key || normalizedTargets.has(key)) {
+        throw new Error("R6 PAUSA: hay comentarios objetivo idénticos y no se borrará por ambigüedad.");
+      }
+      normalizedTargets.add(key);
+    }
+
+    const deleted = [];
+    for (const originalTarget of targets) {
+      // Tras un borrado Classroom puede reconstruir nodos. Reubicamos SOLO el
+      // objetivo siguiente dentro de la misma vista, sin reabrir ni reauditar al alumno.
+      const liveSection = await waitPrivateSection();
+      const liveRows = commentRows(liveSection.container, liveSection.label, liveSection.composer);
+      const exact = liveRows.filter((row) => norm(row.text) === norm(originalTarget.text));
+      if (exact.length !== 1) {
+        throw new Error(
+          "R6 PAUSA: el siguiente comentario a borrar cambió o dejó de ser único; " +
+          "se detiene en este alumno."
+        );
+      }
+      const result = await deleteResolvedRowSinglePass(exact[0], liveSection);
+      deleted.push({
+        characterCount: originalTarget.characterCount,
+        domOrder: originalTarget.domOrder,
+        result,
+      });
+    }
+
     return {
       ok: true,
-      operation: "cleanup_teacher_private_comment_duplicates",
-      duplicateGroups: groups.length,
+      resolved: true,
+      operation: "cleanup_teacher_private_comment_duplicates_single_pass",
+      duplicateDetected: true,
+      initialTeacherCommentCount: owned.length,
+      keeperCharacterCount: keeper.characterCount,
       deletedCount: deleted.length,
       deleted,
-      comments: after.comments,
-      teacherCommentCount: after.teacherCommentCount,
-      method: "dom-v0.8.11-duplicate-cleanup-v1",
+      decision: "kept_longest_deleted_shorter",
+      method: "dom-v0.8.11-duplicate-cleanup-single-pass-r6",
       url: location.href,
     };
   }
@@ -584,7 +691,8 @@
   }
 
   window.__SIEROOM_AUDIT_TEACHER_PRIVATE_COMMENTS__ = auditTeacherPrivateComments;
-  window.__SIEROOM_CLEANUP_TEACHER_PRIVATE_COMMENT_DUPLICATES__ = cleanupTeacherPrivateCommentDuplicates;
+  window.__SIEROOM_CLEANUP_TEACHER_PRIVATE_COMMENT_DUPLICATES__ = cleanupTeacherPrivateCommentDuplicatesSinglePass;
+  window.__SIEROOM_CLEANUP_TEACHER_PRIVATE_COMMENT_DUPLICATES_SINGLE_PASS_R6__ = cleanupTeacherPrivateCommentDuplicatesSinglePass;
   window.__SIEROOM_DELETE_PRIVATE_COMMENT_FN__ = deletePrivateComment;
 
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
@@ -602,8 +710,21 @@
       return true;
     }
 
+    if (msg.type === "SIEROOM_CLEANUP_TEACHER_PRIVATE_COMMENT_DUPLICATES_SINGLE_PASS_R6") {
+      cleanupTeacherPrivateCommentDuplicatesSinglePass()
+        .then((result) => sendResponse(result))
+        .catch((err) => sendResponse({
+          ok: false,
+          resolved: false,
+          operation: "cleanup_teacher_private_comment_duplicates_single_pass",
+          error: String(err?.message || err),
+          url: location.href,
+        }));
+      return true;
+    }
+
     if (msg.type === "SIEROOM_CLEANUP_TEACHER_PRIVATE_COMMENT_DUPLICATES") {
-      cleanupTeacherPrivateCommentDuplicates()
+      cleanupTeacherPrivateCommentDuplicatesSinglePass()
         .then((result) => sendResponse(result))
         .catch((err) => sendResponse({
           ok: false,
