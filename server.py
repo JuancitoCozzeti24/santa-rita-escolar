@@ -6,6 +6,7 @@ from threading import RLock
 from urllib.parse import urlsplit
 from uuid import uuid4
 import secrets as _secrets
+import os
 
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -237,7 +238,6 @@ class _PrivateCommentDeleteQueue:
 
 _private_comment_delete_queue = _PrivateCommentDeleteQueue()
 
-
 @mcp.custom_route("/bridge/v1/delete/status", methods=["GET"])
 async def classroom_private_comment_delete_status(request: Request):
     if not _delete_bridge_auth_ok(request):
@@ -375,10 +375,12 @@ def classroom_delete_private_comment(
     }
 
 
+
+
+
 install_attendance(mcp, sieweb, settings, classroom)
 setattr(mcp, "_sieroom_attendance_installed", True)
 print("SieRoom Asistencia: rutas /asesoria restauradas.", flush=True)
-
 
 if __name__ == "__main__":
     mcp.run(transport="streamable-http")
