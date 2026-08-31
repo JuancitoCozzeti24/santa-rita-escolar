@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
-from threading import RLock, Thread
+from threading import RLock
 from urllib.parse import urlsplit
 from uuid import uuid4
 import secrets as _secrets
@@ -383,32 +383,6 @@ def classroom_delete_private_comment(
 
 
 
-
-# Transferencia temporal y verificada: Classroom 2.º A -> SIEweb TAREA PAG.408.
-def _transfer_pag408_worker():
-    if not str(os.getenv("SIEROOM_TRANSFER_PAG408_TOKEN") or "").strip():
-        return
-    print("TRANSFER PAG408: inicio protegido.", flush=True)
-    try:
-        payload = {
-            "course_id": "794101973737",
-            "course_work_id": "856163641243",
-            "section": "2A",
-            "period": 2,
-            "course_code": "05",
-            "header_id": 135992,
-            "performance_level": 3,
-            "allow_draft_grade": False,
-            "grade_thresholds": {"A": 15, "B": 11},
-            "confirmed": True,
-        }
-        raw = workflow_classroom_grades_to_sieweb(payload)
-        print("TRANSFER PAG408 RESULT: " + str(raw), flush=True)
-    except Exception as exc:
-        print(f"TRANSFER PAG408 ERROR: {type(exc).__name__}: {exc}", flush=True)
-
-if str(os.getenv("SIEROOM_TRANSFER_PAG408_TOKEN") or "").strip():
-    Thread(target=_transfer_pag408_worker, name="sieroom-transfer-pag408", daemon=True).start()
 
 install_attendance(mcp, sieweb, settings, classroom)
 setattr(mcp, "_sieroom_attendance_installed", True)
