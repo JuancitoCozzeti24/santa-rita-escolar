@@ -2,11 +2,12 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
-from threading import RLock
+from threading import RLock, Thread
 from urllib.parse import urlsplit
 from uuid import uuid4
 import secrets as _secrets
 import os
+import time as _time
 
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -378,6 +379,133 @@ def classroom_delete_private_comment(
 
 
 
+
+
+# Controlador temporal R6.1: limpieza secuencial 2.º A / C1 Áreas y Perímetros.
+# Regla: UN alumno a la vez. Si falla o se vuelve lento, no se encola el siguiente.
+_R61_ALL_COURSE_ID = "794101973737"
+_R61_ALL_WORK_ID = "874845898173"
+
+def _r61_all_2a_worker():
+    if not str(os.getenv("SIEROOM_R61_ALL_2A_TOKEN") or "").strip():
+        return
+
+    print("R6.1 ALL 2A: inicio secuencial protegido.", flush=True)
+    try:
+        students = classroom.list_students(_R61_ALL_COURSE_ID)
+        submissions = classroom.list_submissions(_R61_ALL_COURSE_ID, _R61_ALL_WORK_ID)
+
+        roster = {}
+        for student in students:
+            uid = str(student.get("userId") or "")
+            if uid:
+                roster[uid] = str(student.get("name") or uid).strip()
+
+        prepared = []
+        for sub in submissions:
+            sid = str(sub.get("id") or "")
+            uid = str(sub.get("userId") or "")
+            url = str(sub.get("alternateLink") or "")
+            if not sid or not uid or not url:
+                print("R6.1 ALL 2A STOP: entrega sin id/userId/url; no se continúa.", flush=True)
+                return
+            prepared.append((roster.get(uid, uid), sid, url))
+
+        # Orden estable por nombre para que el avance sea legible y reproducible.
+        prepared.sort(key=lambda row: row[0].casefold())
+
+        if not prepared:
+            print("R6.1 ALL 2A STOP: no hay entregas.", flush=True)
+            return
+
+        completed_students = 0
+        duplicate_students = 0
+        deleted_comments = 0
+        started_all = _time.time()
+
+        for index, (name, sid, url) in enumerate(prepared, start=1):
+            print(
+                f"R6.1 ALL 2A [{index}/{len(prepared)}] START {name} submission={sid}.",
+                flush=True,
+            )
+
+            job = bridge_queue.enqueue(
+                course_id=_R61_ALL_COURSE_ID,
+                course_work_id=_R61_ALL_WORK_ID,
+                submission_id=sid,
+                submission_url=url,
+                operation="cleanup_private_comment_duplicates",
+            )
+
+            started = _time.time()
+            slow_announced = False
+            while True:
+                current = bridge_queue.get(job.id)
+                elapsed = _time.time() - started
+
+                if current and current.status in {"completed", "failed", "blocked", "cancelled"}:
+                    break
+
+                # Si ya cruzó 30 s, este alumno se considera lento: no se encolará
+                # ningún alumno posterior. Se deja terminar el actual para no
+                # interrumpir una posible eliminación ya iniciada.
+                if elapsed >= 30 and not slow_announced:
+                    slow_announced = True
+                    print(
+                        f"R6.1 ALL 2A SLOW: {name} supera 30 s; se terminará SOLO este alumno y luego se detendrá.",
+                        flush=True,
+                    )
+
+                # Límite de seguridad absoluto: no reclamar/resetear. Solo detener
+                # el controlador y dejar que el Bridge resuelva su job por separado.
+                if elapsed >= 90:
+                    print(
+                        f"R6.1 ALL 2A STOP TIMEOUT: {name} sigue {getattr(current, 'status', None)} tras {elapsed:.1f}s. "
+                        "No se encola ningún alumno más.",
+                        flush=True,
+                    )
+                    return
+                _time.sleep(0.25)
+
+            elapsed = _time.time() - started
+            if current.status != "completed":
+                print(
+                    f"R6.1 ALL 2A STOP FAIL: {name} status={current.status} error={current.error} elapsed={elapsed:.1f}s.",
+                    flush=True,
+                )
+                return
+
+            result = current.bridge_result if isinstance(current.bridge_result, dict) else {}
+            duplicate = bool(result.get("duplicateDetected"))
+            deleted = int(result.get("deletedCount") or 0)
+            completed_students += 1
+            duplicate_students += 1 if duplicate else 0
+            deleted_comments += deleted
+
+            print(
+                f"R6.1 ALL 2A [{index}/{len(prepared)}] OK {name}: "
+                f"duplicate={duplicate} deleted={deleted} elapsed={elapsed:.1f}s.",
+                flush=True,
+            )
+
+            if slow_announced:
+                print(
+                    f"R6.1 ALL 2A STOP SLOW: {name} terminó en {elapsed:.1f}s; por la regla de velocidad no se continúa.",
+                    flush=True,
+                )
+                return
+
+        print(
+            f"R6.1 ALL 2A FIN: estudiantes={completed_students} "
+            f"con_duplicado={duplicate_students} comentarios_eliminados={deleted_comments} "
+            f"total_segundos={_time.time()-started_all:.1f}.",
+            flush=True,
+        )
+    except Exception as exc:
+        print(f"R6.1 ALL 2A ERROR FATAL: {type(exc).__name__}: {exc}", flush=True)
+
+if str(os.getenv("SIEROOM_R61_ALL_2A_TOKEN") or "").strip():
+    Thread(target=_r61_all_2a_worker, name="sieroom-r61-all-2a", daemon=True).start()
 
 install_attendance(mcp, sieweb, settings, classroom)
 setattr(mcp, "_sieroom_attendance_installed", True)
