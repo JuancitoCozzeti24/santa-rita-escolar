@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
-from threading import RLock
+from threading import RLock, Thread
 from urllib.parse import urlsplit
 from uuid import uuid4
 import secrets as _secrets
@@ -381,6 +381,74 @@ def classroom_delete_private_comment(
 
 
 
+
+
+# Lectura temporal protegida: localizar "tarea PAF 408" en SIEweb 2.º A.
+def _scan_paf408_worker():
+    if not str(os.getenv("SIEROOM_SCAN_PAF408_TOKEN") or "").strip():
+        return
+    print("SCAN PAF408: inicio SOLO LECTURA.", flush=True)
+    try:
+        course_id = "794101973737"
+        work_title = "TAREA DE LIBRO: Págs. 106–107 – Regla de tres simple"
+        works = classroom.list_coursework(course_id)
+        exact = [w for w in works if sieweb._canon_text(w.get("title")) == sieweb._canon_text(work_title)]
+        if len(exact) != 1:
+            print(f"SCAN PAF408 STOP: tarea Classroom exacta coincidencias={len(exact)}.", flush=True)
+            return
+        work = exact[0]
+        work_id = str(work.get("id") or "")
+        print(f"SCAN PAF408 CLASSROOM: work_id={work_id} title={work.get('title')!r}.", flush=True)
+
+        roster = classroom.list_students(course_id)
+        uid_to_student = {str(x.get("userId") or x.get("id") or ""): x for x in roster}
+        subs = classroom.list_submissions(course_id, work_id)
+        rows = []
+        for sub in subs:
+            uid = str(sub.get("userId") or "")
+            stu = uid_to_student.get(uid) or {}
+            email = str(stu.get("email") or "")
+            code = email.split("@", 1)[0] if "@" in email else ""
+            rows.append({
+                "name": stu.get("name"),
+                "userId": uid,
+                "code": code,
+                "assignedGrade": sub.get("assignedGrade"),
+                "draftGrade": sub.get("draftGrade"),
+                "state": sub.get("state"),
+            })
+        print("SCAN PAF408 CLASSROOM GRADES: " + repr(rows), flush=True)
+
+        matches = []
+        for period in (1,2,3,4):
+            try:
+                ctx = sieweb.resolve_class_context(section="2A", period=period, course_code="05")
+                extra = {"idPeriodoAnt": ctx.get("idPeriodoAnt", 0)}
+                summary = sieweb.get_gradebook_summary(
+                    class_period_id=ctx["idClasePeriodo"],
+                    root_content_id=ctx["idContenido"],
+                    extra_params=extra,
+                )
+                candidates = []
+                for item in summary.get("criteria") or []:
+                    hay = " | ".join(str(item.get(k) or "") for k in ("id","idClaseContenido","desc","abreviatura","programa","descripcion","nivelEva"))
+                    canon = sieweb._canon_text(hay)
+                    if "paf 408" in canon or "tarea paf 408" in canon:
+                        candidates.append(item)
+                        matches.append({"period": period, "ctx": ctx, "item": item})
+                print(
+                    f"SCAN PAF408 PERIOD {period}: ctx={ctx} candidates={candidates}",
+                    flush=True,
+                )
+            except Exception as exc:
+                print(f"SCAN PAF408 PERIOD {period} ERROR: {type(exc).__name__}: {exc}", flush=True)
+
+        print(f"SCAN PAF408 FIN: total_matches={len(matches)} matches={matches}", flush=True)
+    except Exception as exc:
+        print(f"SCAN PAF408 FATAL: {type(exc).__name__}: {exc}", flush=True)
+
+if str(os.getenv("SIEROOM_SCAN_PAF408_TOKEN") or "").strip():
+    Thread(target=_scan_paf408_worker, name="sieroom-scan-paf408", daemon=True).start()
 
 install_attendance(mcp, sieweb, settings, classroom)
 setattr(mcp, "_sieroom_attendance_installed", True)
