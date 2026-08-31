@@ -400,7 +400,7 @@ async function processJob(job, generation) {
     }
     if (!isRead) log(`target_student_id=${targetStudentId || "desconocido"}`);
     if (isCleanup) {
-      // Asegura que el helper R6 esté presente en ESTA misma vista del alumno.
+      // Asegura que el helper R6.2 esté presente en ESTA misma vista del alumno.
       await chrome.scripting.executeScript({
         target: { tabId: tab.id },
         files: ["delete_private_comment.js"]
@@ -451,7 +451,7 @@ async function processJob(job, generation) {
         result.resolved !== true ||
         result.method !== "dom-v0.8.12-duplicate-cleanup-single-pass-r6.2"
       ) {
-        throw new Error("R6 PAUSA: el alumno no quedó resuelto por el limpiador single-pass.");
+        throw new Error("R6.2 PAUSA: el alumno no quedó resuelto por el limpiador single-pass.");
       }
 
       await complete(job, {
@@ -463,11 +463,11 @@ async function processJob(job, generation) {
 
       if (result.duplicateDetected) {
         log(
-          `R6 RESUELTO: duplicado detectado; conservado ${result.keeperCharacterCount} caracteres · ` +
+          `R6.2 RESUELTO: duplicado detectado; conservado ${result.keeperCharacterCount} caracteres · ` +
           `eliminados ${result.deletedCount}. No se reabrió al alumno.`
         );
       } else {
-        log(`R6 RESUELTO: sin duplicado (${result.decision}); pasando al siguiente alumno.`);
+        log(`R6.2 RESUELTO: sin duplicado (${result.decision}); pasando al siguiente alumno.`);
       }
       return {
         cleanupCompleted: true,
@@ -564,7 +564,7 @@ async function processJob(job, generation) {
 
     if (job.operation === "cleanup_private_comment_duplicates") {
       hardPauseReason =
-        `R6 PAUSA EN ESTE ALUMNO: ${message} No se procesará al siguiente estudiante.`;
+        `R6.2 PAUSA EN ESTE ALUMNO: ${message} No se procesará al siguiente estudiante.`;
       statusEl.textContent = hardPauseReason;
       statusEl.className = "bad";
       log(hardPauseReason);
@@ -637,7 +637,7 @@ async function poll(force = false) {
   if (hardPauseReason) {
     statusEl.textContent = hardPauseReason;
     statusEl.className = "bad";
-    if (force) log("R6 permanece detenido en el alumno con error; no se saltará al siguiente.");
+    if (force) log("R6.2 permanece detenido en el alumno con error; no se saltará al siguiente.");
     return;
   }
 
