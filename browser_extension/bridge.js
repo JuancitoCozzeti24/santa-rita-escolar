@@ -2,7 +2,7 @@ const DEFAULT_TEACHER_EMAIL = "jbringas@santaritadecasia.edu.pe";
 const statusEl = document.getElementById("status");
 const logEl = document.getElementById("log");
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const SIEROOM_CONTENT_BUILD = "0.8.7-HF4-GRADE-TARGET-DEDUP-SINGLE-PASS-R6";
+const SIEROOM_CONTENT_BUILD = "0.8.7-HF4-GRADE-TARGET-DEDUP-SINGLE-PASS-R6.1";
 let classroomTabId = null;
 let busy = false;
 let resetGeneration = 0;
@@ -142,6 +142,7 @@ async function bridgeFetch(path, options = {}) {
   const headers = new Headers(options.headers || {});
   headers.set("X-SieRoom-Bridge-Secret", c.secret);
   headers.set("X-SieRoom-Bridge-Version", chrome.runtime.getManifest().version);
+  headers.set("X-SieRoom-Bridge-Build", SIEROOM_CONTENT_BUILD);
   headers.set(
     "X-SieRoom-Bridge-Capabilities",
     "post_private_comment,read_private_comments,verified_private_comment_read_v4,student_scoped_private_comment_read,browser_grade_return,teacher_account_guard,target_submission_guard,grade_target_guard_v1,cleanup_private_comment_duplicates_single_pass_r6"
