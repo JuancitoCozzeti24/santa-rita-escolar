@@ -4,6 +4,17 @@ import functools
 import sys
 
 
+def _patch_bridge_policy() -> None:
+    """Instala el contrato comentario -> nota -> devolución del Bridge."""
+    try:
+        from bridge_policy_hotfix import install as install_bridge_policy
+
+        install_bridge_policy()
+        print("SieRoom Bridge: contrato triple R6.2 activo.", flush=True)
+    except Exception as exc:
+        print(f"SieRoom Bridge: no se pudo instalar contrato triple R6.2: {exc}", flush=True)
+
+
 def _patch_fastmcp_run() -> None:
     """Reactiva las rutas de asistencia sin modificar el servidor principal.
 
@@ -41,4 +52,5 @@ def _patch_fastmcp_run() -> None:
     FastMCP.run = run_with_attendance
 
 
+_patch_bridge_policy()
 _patch_fastmcp_run()
