@@ -16,12 +16,7 @@ def _patch_bridge_policy() -> None:
 
 
 def _patch_fastmcp_run() -> None:
-    """Reactiva las rutas de asistencia sin modificar el servidor principal.
-
-    Python importa sitecustomize automáticamente al iniciar. Se envuelve FastMCP.run
-    para instalar el módulo de asistencia justo antes de levantar el servidor, cuando
-    server.py ya creó mcp, sieweb, settings y classroom.
-    """
+    """Instala extensiones auxiliares justo antes de levantar FastMCP."""
     try:
         from mcp.server.fastmcp import FastMCP
     except Exception:
@@ -33,10 +28,20 @@ def _patch_fastmcp_run() -> None:
 
     @functools.wraps(original_run)
     def run_with_attendance(self, *args, **kwargs):
-        if not getattr(self, "_sieroom_attendance_installed", False):
-            main = sys.modules.get("__main__")
-            namespace = vars(main) if main is not None else {}
-            if namespace.get("mcp") is self:
+        main = sys.modules.get("__main__")
+        namespace = vars(main) if main is not None else {}
+
+        if namespace.get("mcp") is self:
+            if not getattr(self, "_sieroom_bridge_download_installed", False):
+                try:
+                    from bridge_download import install as install_bridge_download
+
+                    install_bridge_download(self)
+                    print("SieRoom Bridge: descarga ZIP R6.2 habilitada.", flush=True)
+                except Exception as exc:
+                    print(f"SieRoom Bridge: no se pudo habilitar descarga ZIP: {exc}", flush=True)
+
+            if not getattr(self, "_sieroom_attendance_installed", False):
                 sieweb = namespace.get("sieweb")
                 settings = namespace.get("settings")
                 classroom = namespace.get("classroom")
@@ -46,6 +51,7 @@ def _patch_fastmcp_run() -> None:
                     install_attendance(self, sieweb, settings, classroom)
                     setattr(self, "_sieroom_attendance_installed", True)
                     print("SieRoom Asistencia: rutas /asesoria restauradas.", flush=True)
+
         return original_run(self, *args, **kwargs)
 
     setattr(run_with_attendance, "_sieroom_attendance_bootstrap", True)
