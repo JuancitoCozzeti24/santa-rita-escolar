@@ -1,10 +1,40 @@
 from __future__ import annotations
 
+import functools
 import os
 from dataclasses import dataclass
 from dotenv import load_dotenv
 
 load_dotenv()
+
+
+def _install_bridge_download_bootstrap() -> None:
+    """Registra la ruta ZIP en FastMCP antes de que server_core cree `mcp`."""
+    try:
+        from mcp.server.fastmcp import FastMCP
+    except Exception:
+        return
+
+    original_init = FastMCP.__init__
+    if getattr(original_init, "_sieroom_bridge_download_bootstrap", False):
+        return
+
+    @functools.wraps(original_init)
+    def init_with_bridge_download(self, *args, **kwargs):
+        original_init(self, *args, **kwargs)
+        try:
+            from bridge_download import install as install_bridge_download
+
+            install_bridge_download(self)
+            print("SieRoom Bridge: descarga ZIP R6.2 habilitada.", flush=True)
+        except Exception as exc:
+            print(f"SieRoom Bridge: error habilitando descarga ZIP: {exc}", flush=True)
+
+    setattr(init_with_bridge_download, "_sieroom_bridge_download_bootstrap", True)
+    FastMCP.__init__ = init_with_bridge_download
+
+
+_install_bridge_download_bootstrap()
 
 
 def _int(name: str, default: int) -> int:
