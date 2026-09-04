@@ -12,13 +12,15 @@
   </style>
 </head>
 <body>
-  <h2>SieRoom Classroom Bridge 0.8.7 · HF4 – GRADE TARGET · REV2</h2>
+  <h2>SieRoom Classroom Bridge 0.8.7 · R6.2 · TRIPLE CONTRACT</h2>
   <p>Deja esta pestaña abierta mientras SieRoom lee, publica o elimina comentarios privados y procesa calificaciones y devoluciones en Classroom.</p><p><strong>Seguridad de cuenta:</strong> el puente solo trabaja cuando la cuenta de Classroom coincide con el correo docente configurado en la extensión.</p>
+  <p><strong>Contrato de calificación:</strong> toda nota cuantitativa debe ejecutarse como comentario privado → nota → devolución. Si falta el comentario, el trabajo se detiene sin modificar Classroom.</p>
   <p id="status">Iniciando…</p>
   <button id="pollNow">Procesar cola ahora</button>
   <button id="resetQueue" class="danger">RESET / REINTENTAR TODO</button>
   <pre id="log"></pre>
   <script src="bridge.js"></script>
+  <script src="bridge_hardening.js"></script>
   <script src="delete_bridge.js"></script>
 </body>
 </html>
