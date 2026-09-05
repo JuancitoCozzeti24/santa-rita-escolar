@@ -18,12 +18,31 @@ Tu calificación es 0 - (C). Debido a que el sistema de registro ya se encuentra
 
 
 def enqueue_once(classroom: Any, bridge_queue: Any) -> dict[str, Any]:
-    # Solo estudiantes de 5.º B que siguen con nota 0 Y no tienen evidencia adjunta.
-    # Se mantiene 0/C, se publica retroalimentación formativa y se devuelve la entrega.
+    """Encola únicamente alumnos sin evidencia cuyo 0 ya está asignado en Classroom.
+
+    Estas entregas están en estado CREATED: el alumno nunca entregó trabajo, por lo
+    que Classroom no ofrece botón Devolver/Enviar. El 0 ya figura tanto como
+    draftGrade como assignedGrade. En consecuencia el Bridge solo publica el
+    comentario formativo y deja intacta la calificación final 0/C; no intenta
+    volver a escribir la nota ni devolver una entrega inexistente.
+    """
     from one_shot_zero_grade_inspect import inspect_zeroes
 
     payload = inspect_zeroes(classroom)
-    rows = [r for r in payload.get("rows", []) if not (r.get("attachments") or [])]
+    rows = []
+    for row in payload.get("rows", []):
+        if row.get("attachments") or []:
+            continue
+        if str(row.get("state") or "").upper() != "CREATED":
+            continue
+        try:
+            draft = float(row.get("draftGrade"))
+            assigned = float(row.get("assignedGrade"))
+        except (TypeError, ValueError):
+            continue
+        if draft != 0.0 or assigned != 0.0:
+            continue
+        rows.append(row)
 
     queued = []
     for row in rows:
@@ -42,8 +61,8 @@ def enqueue_once(classroom: Any, bridge_queue: Any) -> dict[str, Any]:
                 operation="post_private_comment",
             )
             if str(getattr(j, "comment", "") or "").strip() == COMMENT
-            and getattr(j, "grade", None) == 0.0
-            and getattr(j, "return_after_comment", False)
+            and getattr(j, "grade", None) is None
+            and not getattr(j, "return_after_comment", False)
             and getattr(j, "status", "") not in {"failed", "cancelled"}
         ]
         if prior:
@@ -59,22 +78,22 @@ def enqueue_once(classroom: Any, bridge_queue: Any) -> dict[str, Any]:
             submission_id=submission_id,
             submission_url=submission_url,
             comment=COMMENT,
-            grade=0,
-            return_after_comment=True,
+            grade=None,
+            return_after_comment=False,
             operation="post_private_comment",
         )
         queued.append({"student_name": row.get("student_name"), "job_id": job.id, "guard_job_id": job.guard_job_id})
         print(
-            f"ZERO_EVIDENCE_ENQUEUED: {row.get('student_name')} grade=0 job={job.id} guard={job.guard_job_id}",
+            f"ZERO_EVIDENCE_COMMENT_ONLY_ENQUEUED: {row.get('student_name')} assignedGrade=0 state=CREATED job={job.id} guard={job.guard_job_id}",
             flush=True,
         )
 
-    print(f"ZERO_EVIDENCE_READY: {len(queued)} trabajo(s) encolado(s).", flush=True)
+    print(f"ZERO_EVIDENCE_COMMENT_ONLY_READY: {len(queued)} trabajo(s) encolado(s).", flush=True)
     return {
         "queued": bool(queued),
         "job_id": queued[0]["job_id"] if queued else None,
         "course_name": "MATE 5TO - B",
-        "student_name": f"ZERO_EVIDENCE:{len(queued)}",
+        "student_name": f"ZERO_EVIDENCE_COMMENT_ONLY:{len(queued)}",
         "count": len(queued),
         "jobs": queued,
     }
