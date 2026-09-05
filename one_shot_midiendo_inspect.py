@@ -97,7 +97,37 @@ def inspect(classroom: Any) -> dict[str, Any]:
         payload["rows"].sort(key=lambda r: _norm(r.get("student_name")))
         break
 
-    print("MIDIENDO_INSPECT_JSON=" + json.dumps(payload, ensure_ascii=False, default=str), flush=True)
+    print("MIDIENDO_WORK=" + json.dumps({
+        "course": payload.get("course"),
+        "coursework": payload.get("coursework"),
+        "count": len(payload.get("rows") or []),
+    }, ensure_ascii=False, default=str), flush=True)
+
+    for row in payload.get("rows") or []:
+        compact = {
+            "student_name": row.get("student_name"),
+            "student_email": row.get("student_email"),
+            "user_id": row.get("user_id"),
+            "submission_id": row.get("submission_id"),
+            "submission_url": row.get("submission_url"),
+            "state": row.get("state"),
+            "late": row.get("late"),
+            "draftGrade": row.get("draftGrade"),
+            "assignedGrade": row.get("assignedGrade"),
+            "updateTime": row.get("updateTime"),
+            "attachments": [
+                {
+                    "index": att.get("index"),
+                    "title": att.get("title"),
+                    "id": att.get("id"),
+                    "mimeType": (att.get("metadata") or {}).get("mimeType"),
+                    "alternateLink": att.get("alternateLink"),
+                }
+                for att in (row.get("attachments") or [])
+            ],
+        }
+        print("MIDIENDO_ROW=" + json.dumps(compact, ensure_ascii=False, default=str), flush=True)
+
     print(
         "MIDIENDO_INSPECT_READY: "
         f"{len(payload.get('rows') or [])} entrega(s) encontradas.",
