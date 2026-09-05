@@ -11,13 +11,7 @@ R69_BUILD = "0.8.7-HF4-R6.9-DETAILED-FEEDBACK-CORE"
 
 
 def _patch_bridge_claim_compat_source() -> None:
-    """Compatibiliza el servidor 0.8.7 con Bridge R6.8/R6.9 antes de importar server_core.
-
-    El servidor histórico reclamaba trabajos solo si el header Build era exactamente
-    R6.2. R6.9.2 anuncia el build R6.9, por lo que /bridge/v1/next respondía 200 pero
-    nunca entregaba el job. Este bootstrap conserva todas las capacidades/guardas
-    existentes y amplía únicamente la lista de builds admitidos para lectura/post.
-    """
+    """Compatibiliza el servidor 0.8.7 con Bridge R6.8/R6.9 antes de importar server_core."""
     path = Path(__file__).with_name("server_core.py")
     try:
         text = path.read_text(encoding="utf-8")
@@ -57,8 +51,6 @@ def _patch_bridge_claim_compat_source() -> None:
         )
         occurrences = text.count(old_claim)
         if occurrences:
-            # Deben ser post_capable y read_capable. No se relaja cleanup, que
-            # conserva su contrato/método específico R6.2.
             if occurrences != 2:
                 raise RuntimeError(
                     f"Se esperaban 2 filtros R6.2 de claim y se encontraron {occurrences}."
@@ -71,28 +63,18 @@ def _patch_bridge_claim_compat_source() -> None:
         if changed:
             path.write_text(text, encoding="utf-8")
             print(
-                "SieRoom Bridge: CLAIM COMPAT servidor activo para R6.2/R6.8/R6.9; "
-                "lectura/post R6.9 habilitados.",
+                "SieRoom Bridge: CLAIM COMPAT servidor activo para R6.2/R6.8/R6.9; lectura/post R6.9 habilitados.",
                 flush=True,
             )
         else:
             print("SieRoom Bridge: CLAIM COMPAT servidor ya estaba aplicado.", flush=True)
     except Exception as exc:
-        # Fail loud: si este hotfix no se aplica, el servicio puede arrancar pero
-        # volvería a aceptar /next sin entregar trabajos, que es precisamente el
-        # fallo que queremos evitar diagnosticar a ciegas.
         print(f"SieRoom Bridge: ERROR aplicando CLAIM COMPAT servidor: {exc}", flush=True)
         raise
 
 
 def _patch_feedback_policy_source() -> None:
-    """Alinea la política MCP con el anti-duplicado real de R6.9.
-
-    Un comentario del alumno no debe impedir que el docente publique su
-    retroalimentación. Solo una retroalimentación DOCENTE ya estructurada se
-    considera duplicado; la nota/devolución puede continuar aunque esa
-    retroalimentación ya exista.
-    """
+    """Alinea la política MCP con el anti-duplicado real de R6.9."""
     path = Path(__file__).with_name("server.py")
     try:
         text = path.read_text(encoding="utf-8")
@@ -195,7 +177,7 @@ def _patch_fastmcp_init_for_download() -> None:
 
 
 def _patch_fastmcp_run() -> None:
-    """Reactiva las rutas auxiliares justo antes de levantar FastMCP."""
+    """Reactiva asistencia y encola una sola prueba de comentario para Fátima antes de levantar FastMCP."""
     try:
         from mcp.server.fastmcp import FastMCP
     except Exception:
@@ -220,6 +202,24 @@ def _patch_fastmcp_run() -> None:
                 install_attendance(self, sieweb, settings, classroom)
                 setattr(self, "_sieroom_attendance_installed", True)
                 print("SieRoom Asistencia: rutas /asesoria restauradas.", flush=True)
+
+        if namespace.get("mcp") is self and not getattr(self, "_sieroom_fatima_bridge_test_enqueued", False):
+            classroom = namespace.get("classroom")
+            bridge_queue = namespace.get("bridge_queue")
+            if classroom is not None and bridge_queue is not None:
+                try:
+                    from one_shot_fatima_bridge_test import enqueue_once
+
+                    result = enqueue_once(classroom, bridge_queue)
+                    setattr(self, "_sieroom_fatima_bridge_test_enqueued", True)
+                    print(
+                        "FATIMA_BRIDGE_TEST_STARTUP: "
+                        f"queued={result.get('queued')} job={result.get('job_id')} "
+                        f"course={result.get('course_name')} student={result.get('student_name')}",
+                        flush=True,
+                    )
+                except Exception as exc:
+                    print(f"FATIMA_BRIDGE_TEST_ERROR: {exc}", flush=True)
 
         return original_run(self, *args, **kwargs)
 
