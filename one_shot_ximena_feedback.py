@@ -13,7 +13,7 @@ He revisado tu trabajo de manera detallada y se observa un buen dominio general 
 LO QUE HICISTE BIEN:
 Resolviste correctamente los ejercicios 2, 3, 5, 6, 7 y 8. Identificaste bien las filas, columnas y elementos de una matriz; ubicaste correctamente elementos mediante la notación aij; clasificaste adecuadamente las matrices identidad, escalar, triangular superior y triangular inferior; reconociste la diagonal principal y el tipo de la matriz del ejercicio 6; calculaste correctamente las trazas 12, 17 y 25; y en el ejercicio 8 marcaste correctamente V/F y corregiste las afirmaciones falsas.
 
-LO QUE DEBES CORREGIR:
+LO QUE DEBES MEJORAR:
 Ejercicio 1 – orden de las matrices B y C:
 Tu respuesta/procedimiento: escribiste B = 4×3 y C = 3×2.
 Error detectado: invertiste el número de filas y columnas. El orden de una matriz siempre se expresa como filas × columnas.
