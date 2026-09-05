@@ -6,7 +6,6 @@ from typing import Any
 TARGET_ASSIGNMENT = "SUBIR AQUÍ FICHA INTRO MATRICES"
 TARGET_STUDENT_TOKENS = ("NICOLAS", "VARGAS")
 TARGET_COURSE_TOKENS = ("MATE 5TO", "B")
-GRADE = 19
 
 FEEDBACK = """Nicolás,
 He revisado tu trabajo de manera detallada, considerando las tres evidencias que subiste.
@@ -14,7 +13,7 @@ He revisado tu trabajo de manera detallada, considerando las tres evidencias que
 LO QUE HICISTE BIEN:
 Resolviste correctamente casi toda la ficha. Reconociste el orden de las matrices A, B y C; identificaste correctamente filas, columnas y la fila 2 de la matriz M; determinaste las diagonales y el elemento q21; clasificaste correctamente las matrices identidad, escalar y triangular superior; identificaste bien los elementos de la matriz A; calculaste correctamente las trazas de B, C y D; y en el ejercicio 8 marcaste correctamente V/F y corregiste las proposiciones falsas.
 
-LO QUE DEBES CORREGIR:
+LO QUE DEBES MEJORAR:
 Ejercicio 3 – elemento p34:
 Tu respuesta/procedimiento: escribiste p31 = 7.
 Error detectado: el ejercicio pedía p34, no p31. Esto indica que se intercambió la lectura del índice solicitado.
@@ -28,9 +27,7 @@ Procedimiento correcto: una matriz triangular inferior tiene todos los elementos
 Resultado correcto: R es una matriz triangular inferior.
 
 SUGERENCIAS:
-Antes de responder elementos del tipo pij, verifica siempre primero fila y luego columna. En la clasificación de matrices triangulares, observa dónde están los ceros respecto de la diagonal principal: si están debajo, es triangular superior; si están encima, es triangular inferior. Tu trabajo evidencia un buen dominio general del tema y los errores encontrados son puntuales.
-
-Tu calificación es 19 - (A)""".strip()
+Antes de responder elementos del tipo pij, verifica siempre primero fila y luego columna. En la clasificación de matrices triangulares, observa dónde están los ceros respecto de la diagonal principal: si están debajo, es triangular superior; si están encima, es triangular inferior. Tu trabajo evidencia un buen dominio general del tema y los errores encontrados son puntuales.""".strip()
 
 
 def _norm(value: Any) -> str:
@@ -126,14 +123,14 @@ def enqueue_once(classroom: Any, bridge_queue: Any) -> dict[str, Any]:
         submission_id=target["submission_id"],
         submission_url=target["submission_url"],
         comment=FEEDBACK,
-        grade=GRADE,
-        return_after_comment=True,
+        grade=None,
+        return_after_comment=False,
         operation="post_private_comment",
     )
     print(
-        "NICOLAS_FEEDBACK: encolado SOLO para "
+        "NICOLAS_FEEDBACK: comentario encolado SOLO para "
         f"{target['student_name']} | {target['course_name']} {target['course_section'] or ''} | "
-        f"grade={GRADE} job={job.id} guard={job.guard_job_id} estado={job.status}",
+        f"job={job.id} guard={job.guard_job_id} estado={job.status}",
         flush=True,
     )
     return {"queued": True, "job_id": job.id, "guard_job_id": job.guard_job_id, **target}
