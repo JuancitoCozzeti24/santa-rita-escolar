@@ -4,14 +4,14 @@ from typing import Any
 
 
 def enqueue_once(classroom: Any, bridge_queue: Any) -> dict[str, Any]:
-    # Reutilizamos el hook puntual existente SOLO para descubrir las entregas que
-    # actualmente tienen nota 0. No se encola ninguna escritura durante esta fase.
-    from one_shot_zero_grade_inspect import inspect_zeroes
+    # Reutilizamos el hook puntual existente para la prueba masiva solicitada.
+    # Solo encola entregas de 5.º B que siguen con nota 0 Y tienen evidencia adjunta.
+    from one_shot_zero_grade_mass import enqueue_mass
 
-    payload = inspect_zeroes(classroom)
+    payload = enqueue_mass(classroom, bridge_queue)
     return {
-        "queued": False,
+        "queued": bool(payload.get("queued")),
         "job_id": None,
         "course_name": "MATE 5TO - B",
-        "student_name": f"ZERO_GRADE_SCAN:{payload.get('count', 0)}",
+        "student_name": f"ZERO_GRADE_MASS:{payload.get('count', 0)}",
     }
