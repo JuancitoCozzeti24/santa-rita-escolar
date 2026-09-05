@@ -6,6 +6,7 @@ from typing import Any
 TARGET_ASSIGNMENT = "SUBIR AQUÍ FICHA INTRO MATRICES"
 TARGET_STUDENT_TOKENS = ("NICOLAS", "VARGAS")
 TARGET_COURSE_TOKENS = ("MATE 5TO", "B")
+TARGET_GRADE = 19
 
 FEEDBACK = """Nicolás,
 He revisado tu trabajo de manera detallada, considerando las tres evidencias que subiste.
@@ -102,35 +103,40 @@ def enqueue_once(classroom: Any, bridge_queue: Any) -> dict[str, Any]:
         )
 
     target = candidates[0]
-    existing = [
+    already_done = [
         j for j in bridge_queue.recent(100)
         if j.operation == "post_private_comment"
         and j.course_id == target["course_id"]
         and j.course_work_id == target["course_work_id"]
         and j.submission_id == target["submission_id"]
         and str(j.comment or "").strip() == FEEDBACK
+        and j.grade == float(TARGET_GRADE)
+        and bool(j.return_after_comment)
+        and j.status in {"completed", "comment_posted"}
     ]
-    if existing:
+    if already_done:
         print(
-            f"NICOLAS_FEEDBACK: ya existe job {existing[0].id} estado={existing[0].status}; no se duplica.",
+            f"NICOLAS_GRADE: ya existe job completo {already_done[0].id}; no se duplica.",
             flush=True,
         )
-        return {"queued": False, "job_id": existing[0].id, "status": existing[0].status, **target}
+        return {"queued": False, "job_id": already_done[0].id, "status": already_done[0].status, **target}
 
+    # Reutilizamos EXACTAMENTE el comentario ya publicado. R6.9.4 lo detecta como
+    # alreadyPresent y NO lo duplica; después escribe la nota y devuelve la entrega.
     job = bridge_queue.enqueue(
         course_id=target["course_id"],
         course_work_id=target["course_work_id"],
         submission_id=target["submission_id"],
         submission_url=target["submission_url"],
         comment=FEEDBACK,
-        grade=None,
-        return_after_comment=False,
+        grade=TARGET_GRADE,
+        return_after_comment=True,
         operation="post_private_comment",
     )
     print(
-        "NICOLAS_FEEDBACK: comentario encolado SOLO para "
+        "NICOLAS_GRADE: encolado SOLO para "
         f"{target['student_name']} | {target['course_name']} {target['course_section'] or ''} | "
-        f"job={job.id} guard={job.guard_job_id} estado={job.status}",
+        f"grade={TARGET_GRADE} job={job.id} guard={job.guard_job_id} estado={job.status}",
         flush=True,
     )
     return {"queued": True, "job_id": job.id, "guard_job_id": job.guard_job_id, **target}
