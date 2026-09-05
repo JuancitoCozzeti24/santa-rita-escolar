@@ -9,10 +9,60 @@ LO QUE HICISTE BIEN:
 En esta oportunidad no se cuenta con una evidencia presentada que permita reconocer logros específicos de aprendizaje en la actividad.
 
 LO QUE DEBES MEJORAR:
-No se presentó evidencia de trabajo, por lo que no es posible valorar tu proceso ni verificar el desarrollo de los aprendizajes propuestos. Estás cursando quinto año de secundaria, una etapa en la que asumir con mayor autonomía tus responsabilidades académicas es especialmente importante. Cumplir con los compromisos, organizar tus tiempos y atender los plazos establecidos son hábitos que trascienden el colegio y serán valiosos en tus estudios posteriores, en el trabajo y en distintos aspectos de tu vida adulta.
+No se presentó evidencia de trabajo. Por ello, no es posible valorar tu proceso ni verificar resultados matemáticos de esta ficha. Para que la retroalimentación quede registrada de manera clara, se detalla la situación de cada ejercicio sin atribuirte respuestas que no fueron entregadas.
+
+Ejercicio 1:
+Qué escribió o hizo el estudiante: no se presentó respuesta ni evidencia para este ejercicio.
+Cuál fue el error: no existe desarrollo entregado que pueda ser evaluado.
+Procedimiento correcto: resolver el ejercicio siguiendo las indicaciones de la ficha y presentar la evidencia dentro del plazo establecido.
+Resultado correcto: no corresponde consignar un resultado matemático como respuesta del estudiante, porque no existe desarrollo presentado que pueda verificarse.
+
+Ejercicio 2:
+Qué escribió o hizo el estudiante: no se presentó respuesta ni evidencia para este ejercicio.
+Cuál fue el error: no existe desarrollo entregado que pueda ser evaluado.
+Procedimiento correcto: resolver el ejercicio siguiendo las indicaciones de la ficha y presentar la evidencia dentro del plazo establecido.
+Resultado correcto: no corresponde consignar un resultado matemático como respuesta del estudiante, porque no existe desarrollo presentado que pueda verificarse.
+
+Ejercicio 3:
+Qué escribió o hizo el estudiante: no se presentó respuesta ni evidencia para este ejercicio.
+Cuál fue el error: no existe desarrollo entregado que pueda ser evaluado.
+Procedimiento correcto: resolver el ejercicio siguiendo las indicaciones de la ficha y presentar la evidencia dentro del plazo establecido.
+Resultado correcto: no corresponde consignar un resultado matemático como respuesta del estudiante, porque no existe desarrollo presentado que pueda verificarse.
+
+Ejercicio 4:
+Qué escribió o hizo el estudiante: no se presentó respuesta ni evidencia para este ejercicio.
+Cuál fue el error: no existe desarrollo entregado que pueda ser evaluado.
+Procedimiento correcto: resolver el ejercicio siguiendo las indicaciones de la ficha y presentar la evidencia dentro del plazo establecido.
+Resultado correcto: no corresponde consignar un resultado matemático como respuesta del estudiante, porque no existe desarrollo presentado que pueda verificarse.
+
+Ejercicio 5:
+Qué escribió o hizo el estudiante: no se presentó respuesta ni evidencia para este ejercicio.
+Cuál fue el error: no existe desarrollo entregado que pueda ser evaluado.
+Procedimiento correcto: resolver el ejercicio siguiendo las indicaciones de la ficha y presentar la evidencia dentro del plazo establecido.
+Resultado correcto: no corresponde consignar un resultado matemático como respuesta del estudiante, porque no existe desarrollo presentado que pueda verificarse.
+
+Ejercicio 6:
+Qué escribió o hizo el estudiante: no se presentó respuesta ni evidencia para este ejercicio.
+Cuál fue el error: no existe desarrollo entregado que pueda ser evaluado.
+Procedimiento correcto: resolver el ejercicio siguiendo las indicaciones de la ficha y presentar la evidencia dentro del plazo establecido.
+Resultado correcto: no corresponde consignar un resultado matemático como respuesta del estudiante, porque no existe desarrollo presentado que pueda verificarse.
+
+Ejercicio 7:
+Qué escribió o hizo el estudiante: no se presentó respuesta ni evidencia para este ejercicio.
+Cuál fue el error: no existe desarrollo entregado que pueda ser evaluado.
+Procedimiento correcto: resolver el ejercicio siguiendo las indicaciones de la ficha y presentar la evidencia dentro del plazo establecido.
+Resultado correcto: no corresponde consignar un resultado matemático como respuesta del estudiante, porque no existe desarrollo presentado que pueda verificarse.
+
+Ejercicio 8:
+Qué escribió o hizo el estudiante: no se presentó respuesta ni evidencia para este ejercicio.
+Cuál fue el error: no existe desarrollo entregado que pueda ser evaluado.
+Procedimiento correcto: resolver el ejercicio siguiendo las indicaciones de la ficha y presentar la evidencia dentro del plazo establecido.
+Resultado correcto: no corresponde consignar un resultado matemático como respuesta del estudiante, porque no existe desarrollo presentado que pueda verificarse.
+
+Estás cursando quinto año de secundaria, una etapa en la que asumir con mayor autonomía tus responsabilidades académicas es especialmente importante. Cumplir con los compromisos, organizar tus tiempos y atender los plazos establecidos son hábitos que trascienden el colegio y serán valiosos en tus estudios posteriores, en el trabajo y en distintos aspectos de tu vida adulta.
 
 SUGERENCIAS:
-Toma esta situación como una oportunidad para fortalecer tu organización, constancia y responsabilidad personal frente a tus compromisos académicos. En las próximas actividades procura revisar oportunamente las indicaciones, organizar tus tiempos y presentar las evidencias dentro del plazo establecido.
+Toma esta situación como una oportunidad para fortalecer tu organización, constancia y responsabilidad personal frente a tus compromisos académicos. En adelante procura revisar oportunamente las indicaciones y presentar las evidencias dentro de los plazos establecidos.
 
 Tu calificación es 0 - (C). Debido a que el sistema de registro ya se encuentra cerrado, esta calificación queda como definitiva para esta actividad.""".strip()
 
@@ -34,7 +84,6 @@ def enqueue_once(classroom: Any, bridge_queue: Any) -> dict[str, Any]:
         if not all((submission_id, course_id, course_work_id, submission_url)):
             continue
 
-        # Evita volver a encolar exactamente el mismo comentario si ya existe un job equivalente.
         prior = [
             j for j in bridge_queue.matching(
                 course_id=course_id,
