@@ -11,23 +11,23 @@ FEEDBACK = """Fátima,
 He revisado tu trabajo de manera detallada, y he podido observar lo siguiente:
 
 LO QUE HICISTE BIEN:
-Resolviste correctamente los ejercicios 1 al 7, demostrando buen dominio al reconocer el orden de las matrices, ubicar elementos por su posición, identificar diagonales, clasificar matrices y calcular trazas. En el ejercicio 8 identificaste correctamente como falsas las afirmaciones de los incisos c y d.
+Resolviste correctamente los ejercicios 1 al 7: orden, elementos, diagonales, clasificación y trazas. En el ejercicio 8 identificaste correctamente que los incisos c y d eran falsos.
 
 LO QUE DEBES MEJORAR:
 Ejercicio 8 – inciso c:
-Tu respuesta/procedimiento: marcaste F, lo cual es correcto, pero faltó escribir la corrección de la afirmación.
-Error detectado: la respuesta quedó incompleta porque, al ser falsa la proposición, no bastaba con marcar F; también debía corregirse la idea de que la traza existe para cualquier matriz rectangular.
-Procedimiento correcto: recuerda que la traza se define únicamente para matrices cuadradas y se obtiene sumando los elementos de la diagonal principal.
-Resultado correcto: la traza de una matriz cuadrada es igual a la suma de los elementos de su diagonal principal; no se define para cualquier matriz rectangular.
+Tu respuesta/procedimiento: marcaste F, correctamente, pero no escribiste la corrección.
+Error detectado: la respuesta quedó incompleta porque faltó corregir la afirmación sobre la traza.
+Procedimiento correcto: la traza solo se define en matrices cuadradas y se obtiene sumando los elementos de la diagonal principal.
+Resultado correcto: la traza se define solo para matrices cuadradas.
 
 Ejercicio 8 – inciso d:
-Tu respuesta/procedimiento: marcaste F, lo cual es correcto, pero faltó escribir la corrección de la afirmación.
-Error detectado: la respuesta quedó incompleta porque no precisaste cómo se interpreta correctamente el orden 3×4 de una matriz.
-Procedimiento correcto: en el orden m×n, el primer número indica la cantidad de filas y el segundo indica la cantidad de columnas.
-Resultado correcto: una matriz de orden 3×4 tiene 3 filas y 4 columnas.
+Tu respuesta/procedimiento: marcaste F, correctamente, pero no escribiste la corrección.
+Error detectado: la respuesta quedó incompleta porque faltó interpretar el orden 3×4.
+Procedimiento correcto: en m×n, el primer número indica filas y el segundo, columnas.
+Resultado correcto: una matriz 3×4 tiene 3 filas y 4 columnas.
 
 SUGERENCIAS:
-Cuando una afirmación de verdadero o falso sea falsa, no te quedes únicamente en marcar F: escribe también la proposición correcta. Así demuestras que reconoces el error y que comprendes cómo debe expresarse matemáticamente la idea correcta.
+Cuando marques F, escribe también la afirmación correcta para demostrar completamente tu comprensión.
 
 Tu calificación es 18 - (A)""".strip()
 
