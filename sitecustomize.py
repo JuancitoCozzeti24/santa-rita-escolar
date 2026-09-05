@@ -8,6 +8,7 @@ from pathlib import Path
 R62_BUILD = "0.8.7-HF4-GRADE-TARGET-DEDUP-SINGLE-PASS-R6.2"
 R68_BUILD = "0.8.7-HF4-R6.8-CLAIM-CAPABILITY-RESTORE"
 R69_BUILD = "0.8.7-HF4-R6.9-DETAILED-FEEDBACK-CORE"
+R696_CONTENT_BUILD = "0.8.7-HF4-R6.9.6-EXISTING-FEEDBACK-SEND"
 
 
 def _patch_bridge_claim_compat_source() -> None:
@@ -35,7 +36,8 @@ def _patch_bridge_claim_compat_source() -> None:
             '"0.8.7-HF4-GRADE-TARGET-DEDUP-SINGLE-PASS-R6.1", '
             '"0.8.7-HF4-GRADE-TARGET-DEDUP-SINGLE-PASS-R6.2", '
             '"0.8.7-HF4-R6.8-CLAIM-CAPABILITY-RESTORE", '
-            '"0.8.7-HF4-R6.9-DETAILED-FEEDBACK-CORE"}'
+            '"0.8.7-HF4-R6.9-DETAILED-FEEDBACK-CORE", '
+            '"0.8.7-HF4-R6.9.6-EXISTING-FEEDBACK-SEND"}'
         )
         if old_builds in text:
             text = text.replace(old_builds, new_builds, 1)
@@ -63,7 +65,7 @@ def _patch_bridge_claim_compat_source() -> None:
         if changed:
             path.write_text(text, encoding="utf-8")
             print(
-                "SieRoom Bridge: CLAIM COMPAT servidor activo para R6.2/R6.8/R6.9; lectura/post R6.9 habilitados.",
+                "SieRoom Bridge: CLAIM COMPAT servidor activo para R6.2/R6.8/R6.9/R6.9.6; lectura/post habilitados.",
                 flush=True,
             )
         else:
@@ -140,7 +142,7 @@ def _patch_feedback_policy_source() -> None:
 
 
 def _patch_bridge_policy() -> None:
-    """Instala el contrato comentario -> nota -> devolución del Bridge."""
+    """Instala el contrato del Bridge para comentario, nota y devolución."""
     try:
         from bridge_policy_hotfix import install as install_bridge_policy
 
