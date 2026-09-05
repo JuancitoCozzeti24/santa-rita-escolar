@@ -2,6 +2,87 @@ from __future__ import annotations
 
 import functools
 import sys
+from pathlib import Path
+
+
+R62_BUILD = "0.8.7-HF4-GRADE-TARGET-DEDUP-SINGLE-PASS-R6.2"
+R68_BUILD = "0.8.7-HF4-R6.8-CLAIM-CAPABILITY-RESTORE"
+R69_BUILD = "0.8.7-HF4-R6.9-DETAILED-FEEDBACK-CORE"
+
+
+def _patch_bridge_claim_compat_source() -> None:
+    """Compatibiliza el servidor 0.8.7 con Bridge R6.8/R6.9 antes de importar server_core.
+
+    El servidor histórico reclamaba trabajos solo si el header Build era exactamente
+    R6.2. R6.9.2 anuncia el build R6.9, por lo que /bridge/v1/next respondía 200 pero
+    nunca entregaba el job. Este bootstrap conserva todas las capacidades/guardas
+    existentes y amplía únicamente la lista de builds admitidos para lectura/post.
+    """
+    path = Path(__file__).with_name("server_core.py")
+    try:
+        text = path.read_text(encoding="utf-8")
+        changed = False
+
+        old_builds = (
+            'HF4_CONTENT_BUILDS = {HF4_CONTENT_BUILD, '
+            '"0.8.7-HF4-GRADE-TARGET-DEDUP-R4", '
+            '"0.8.7-HF4-GRADE-TARGET-DEDUP-R4-DEDUP-R4", '
+            '"0.8.7-HF4-GRADE-TARGET-DEDUP-R5", '
+            '"0.8.7-HF4-GRADE-TARGET-DEDUP-SINGLE-PASS-R6", '
+            '"0.8.7-HF4-GRADE-TARGET-DEDUP-SINGLE-PASS-R6.1", '
+            '"0.8.7-HF4-GRADE-TARGET-DEDUP-SINGLE-PASS-R6.2"}'
+        )
+        new_builds = (
+            'HF4_CONTENT_BUILDS = {HF4_CONTENT_BUILD, '
+            '"0.8.7-HF4-GRADE-TARGET-DEDUP-R4", '
+            '"0.8.7-HF4-GRADE-TARGET-DEDUP-R4-DEDUP-R4", '
+            '"0.8.7-HF4-GRADE-TARGET-DEDUP-R5", '
+            '"0.8.7-HF4-GRADE-TARGET-DEDUP-SINGLE-PASS-R6", '
+            '"0.8.7-HF4-GRADE-TARGET-DEDUP-SINGLE-PASS-R6.1", '
+            '"0.8.7-HF4-GRADE-TARGET-DEDUP-SINGLE-PASS-R6.2", '
+            '"0.8.7-HF4-R6.8-CLAIM-CAPABILITY-RESTORE", '
+            '"0.8.7-HF4-R6.9-DETAILED-FEEDBACK-CORE"}'
+        )
+        if old_builds in text:
+            text = text.replace(old_builds, new_builds, 1)
+            changed = True
+        elif new_builds not in text:
+            raise RuntimeError("No se encontró la definición esperada de HF4_CONTENT_BUILDS.")
+
+        old_claim = f'and bridge_build == "{R62_BUILD}"'
+        new_claim = (
+            'and bridge_build in {'
+            f'"{R62_BUILD}", "{R68_BUILD}", "{R69_BUILD}"'
+            '}'
+        )
+        occurrences = text.count(old_claim)
+        if occurrences:
+            # Deben ser post_capable y read_capable. No se relaja cleanup, que
+            # conserva su contrato/método específico R6.2.
+            if occurrences != 2:
+                raise RuntimeError(
+                    f"Se esperaban 2 filtros R6.2 de claim y se encontraron {occurrences}."
+                )
+            text = text.replace(old_claim, new_claim)
+            changed = True
+        elif text.count(new_claim) != 2:
+            raise RuntimeError("No se encontró el filtro de claim esperado ni su versión parcheada.")
+
+        if changed:
+            path.write_text(text, encoding="utf-8")
+            print(
+                "SieRoom Bridge: CLAIM COMPAT servidor activo para R6.2/R6.8/R6.9; "
+                "lectura/post R6.9 habilitados.",
+                flush=True,
+            )
+        else:
+            print("SieRoom Bridge: CLAIM COMPAT servidor ya estaba aplicado.", flush=True)
+    except Exception as exc:
+        # Fail loud: si este hotfix no se aplica, el servicio puede arrancar pero
+        # volvería a aceptar /next sin entregar trabajos, que es precisamente el
+        # fallo que queremos evitar diagnosticar a ciegas.
+        print(f"SieRoom Bridge: ERROR aplicando CLAIM COMPAT servidor: {exc}", flush=True)
+        raise
 
 
 def _patch_bridge_policy() -> None:
@@ -74,6 +155,7 @@ def _patch_fastmcp_run() -> None:
     FastMCP.run = run_with_attendance
 
 
+_patch_bridge_claim_compat_source()
 _patch_bridge_policy()
 _patch_fastmcp_init_for_download()
 _patch_fastmcp_run()
