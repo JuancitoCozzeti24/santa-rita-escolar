@@ -154,7 +154,7 @@ def _patch_fastmcp_init_for_download() -> None:
 
 
 def _patch_fastmcp_run() -> None:
-    """Reactiva rutas auxiliares e inspecciona C1 Midiendo Nuestro Avance sin modificar Classroom."""
+    """Reactiva rutas auxiliares y encola la revisión masiva ya verificada de C1 Midiendo Nuestro Avance."""
     try:
         from mcp.server.fastmcp import FastMCP
     except Exception:
@@ -175,16 +175,17 @@ def _patch_fastmcp_run() -> None:
                 install_attendance(self, sieweb, settings, classroom)
                 setattr(self, "_sieroom_attendance_installed", True)
                 print("SieRoom Asistencia: rutas /asesoria restauradas.", flush=True)
-        if namespace.get("mcp") is self and not getattr(self, "_sieroom_c1_midiendo_inspected", False):
+        if namespace.get("mcp") is self and not getattr(self, "_sieroom_c1_midiendo_mass_enqueued", False):
             classroom = namespace.get("classroom")
-            if classroom is not None:
+            bridge_queue = namespace.get("bridge_queue")
+            if classroom is not None and bridge_queue is not None:
                 try:
-                    from one_shot_c1_midiendo_inspect import inspect
-                    result = inspect(classroom)
-                    setattr(self, "_sieroom_c1_midiendo_inspected", True)
-                    print(f"C1_MIDIENDO_INSPECT_STARTUP: count={result.get('count')} work={result.get('course_work_title')}", flush=True)
+                    from one_shot_c1_midiendo_mass import enqueue_mass
+                    result = enqueue_mass(classroom, bridge_queue)
+                    setattr(self, "_sieroom_c1_midiendo_mass_enqueued", True)
+                    print(f"C1_MIDIENDO_MASS_STARTUP: queued={result.get('queued')} count={result.get('count')} work={result.get('work')}", flush=True)
                 except Exception as exc:
-                    print(f"C1_MIDIENDO_INSPECT_ERROR: {exc}", flush=True)
+                    print(f"C1_MIDIENDO_MASS_ERROR: {exc}", flush=True)
         return original_run(self, *args, **kwargs)
     setattr(run_with_attendance, "_sieroom_attendance_bootstrap", True)
     FastMCP.run = run_with_attendance
