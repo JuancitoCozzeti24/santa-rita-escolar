@@ -179,7 +179,7 @@ def _patch_fastmcp_init_for_download() -> None:
 
 
 def _patch_fastmcp_run() -> None:
-    """Reactiva rutas auxiliares e inspecciona una vez la entrega de Ximena antes de levantar FastMCP."""
+    """Reactiva rutas auxiliares y encola una sola revisión de Ximena antes de levantar FastMCP."""
     try:
         from mcp.server.fastmcp import FastMCP
     except Exception:
@@ -205,16 +205,23 @@ def _patch_fastmcp_run() -> None:
                 setattr(self, "_sieroom_attendance_installed", True)
                 print("SieRoom Asistencia: rutas /asesoria restauradas.", flush=True)
 
-        if namespace.get("mcp") is self and not getattr(self, "_sieroom_ximena_inspected", False):
+        if namespace.get("mcp") is self and not getattr(self, "_sieroom_ximena_feedback_enqueued", False):
             classroom = namespace.get("classroom")
-            if classroom is not None:
+            bridge_queue = namespace.get("bridge_queue")
+            if classroom is not None and bridge_queue is not None:
                 try:
-                    from one_shot_ximena_inspect import inspect_once
+                    from one_shot_ximena_feedback import enqueue_once
 
-                    inspect_once(classroom)
-                    setattr(self, "_sieroom_ximena_inspected", True)
+                    result = enqueue_once(classroom, bridge_queue)
+                    setattr(self, "_sieroom_ximena_feedback_enqueued", True)
+                    print(
+                        "XIMENA_FEEDBACK_STARTUP: "
+                        f"queued={result.get('queued')} job={result.get('job_id')} "
+                        f"course={result.get('course_name')} student={result.get('student_name')}",
+                        flush=True,
+                    )
                 except Exception as exc:
-                    print(f"XIMENA_INSPECT_ERROR: {exc}", flush=True)
+                    print(f"XIMENA_FEEDBACK_ERROR: {exc}", flush=True)
 
         return original_run(self, *args, **kwargs)
 
