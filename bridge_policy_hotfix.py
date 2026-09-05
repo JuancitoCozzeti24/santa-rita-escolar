@@ -12,6 +12,8 @@ def install() -> None:
     - Una lectura-guardia válida ya no bloquea una retroalimentación nueva solo
       porque existan comentarios privados anteriores. La deduplicación exacta la
       realiza el content script antes de pulsar Enviar/Publicar.
+    - Los fallos del navegador se registran con su mensaje exacto para no volver
+      a diagnosticar a ciegas cuando Classroom cambie su DOM.
     """
     try:
         from bridge import ClassroomBridgeQueue
@@ -23,6 +25,7 @@ def install() -> None:
 
     original_enqueue = ClassroomBridgeQueue.enqueue
     original_mark_completed = ClassroomBridgeQueue.mark_completed
+    original_mark_failed = ClassroomBridgeQueue.mark_failed
 
     def enqueue_hardened(self: Any, *args: Any, **kwargs: Any):
         operation = str(kwargs.get("operation") or "post_private_comment").strip().lower()
@@ -70,8 +73,29 @@ def install() -> None:
 
         return result
 
+    def mark_failed_hardened(
+        self: Any,
+        job_id: str,
+        error: str,
+        bridge_result: dict[str, Any] | None = None,
+    ):
+        before = self.get(job_id)
+        print(
+            "SIEROOM_BRIDGE_EXACT_FAILURE: "
+            f"job={job_id} operation={getattr(before, 'operation', None)} "
+            f"error={error!r} result={bridge_result!r}",
+            flush=True,
+        )
+        return original_mark_failed(
+            self,
+            job_id,
+            error,
+            bridge_result=bridge_result,
+        )
+
     ClassroomBridgeQueue.enqueue = enqueue_hardened
     ClassroomBridgeQueue.mark_completed = mark_completed_hardened
+    ClassroomBridgeQueue.mark_failed = mark_failed_hardened
     setattr(ClassroomBridgeQueue, "_sieroom_triple_contract_r62", True)
 
 
