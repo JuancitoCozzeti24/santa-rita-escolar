@@ -48,10 +48,6 @@ def _norm(v: Any) -> str:
     return " ".join(t.upper().replace(":"," ").split())
 
 
-def _letter(g: int) -> str:
-    return "A" if g >= 15 else ("B" if g >= 11 else "C")
-
-
 def _first(name: str) -> str:
     return str(name or "Estudiante").split()[0].title()
 
@@ -135,10 +131,32 @@ def _ximena(name: str) -> str:
 He revisado la evidencia adjunta en C3: Evaluación de probabilidad condicional.
 
 LO QUE HICISTE BIEN:
-La evidencia presentada muestra trabajo relacionado con probabilidad y permite reconocer una aproximación al tema desarrollado en clase.
+La evidencia presentada es un video relacionado con probabilidad y permite reconocer una aproximación al tema trabajado. Sin embargo, no corresponde al formato JPG solicitado ni muestra de forma verificable el desarrollo de las cuatro preguntas específicas de esta evaluación.
 
 LO QUE DEBES MEJORAR:
-La actividad solicitaba una fotografía en formato JPG del cuaderno con el desarrollo de las cuatro preguntas específicas de la evaluación. En tu entrega se adjuntó un video MP4 y no se observan las respuestas completas y verificables de esas cuatro preguntas del examen. Por ello no es posible otorgar el puntaje correspondiente a los procedimientos y resultados que debían evidenciarse en cada pregunta.
+Pregunta 1:
+Evidencia presentada: en el video no se observa una respuesta verificable a la pregunta de la urna con 5 bolas rojas y 3 bolas azules.
+Dificultad para evaluar: al no aparecer el ejercicio del examen, no se puede comprobar tu procedimiento.
+Procedimiento esperado: comparar 5 casos favorables con 8 casos posibles.
+Resultado esperado: 5/8 = 0,625 = 62,5%.
+
+Pregunta 2:
+Evidencia presentada: no se observa una respuesta verificable al problema del as de corazones condicionado a que la carta sea un as.
+Dificultad para evaluar: el video no muestra el procedimiento correspondiente a esta pregunta.
+Procedimiento esperado: restringir el espacio muestral a los 4 ases y reconocer 1 as de corazones.
+Resultado esperado: 1/4 = 25%.
+
+Pregunta 3:
+Evidencia presentada: no se observa una respuesta verificable al problema de las 12 mujeres, de las cuales 8 usan lentes.
+Dificultad para evaluar: no aparece el cálculo correspondiente a la condición de que el estudiante elegido sea mujer.
+Procedimiento esperado: usar 8 casos favorables entre 12 mujeres.
+Resultado esperado: 8/12 = 2/3 ≈ 66,7%.
+
+Pregunta 4:
+Evidencia presentada: no se observa una respuesta verificable al problema de los dos dados condicionado a que la suma sea 6.
+Dificultad para evaluar: no aparecen los cinco casos posibles ni los dos casos favorables de la evaluación.
+Procedimiento esperado: considerar (1,5), (2,4), (3,3), (4,2) y (5,1), con dos casos donde aparece un 2.
+Resultado esperado: 2/5 = 40%.
 
 SUGERENCIAS:
 Antes de entregar, verifica el formato solicitado y que el archivo corresponda exactamente a la actividad. Cuando se pida evidencia de una evaluación escrita, debe verse con claridad cada pregunta, su procedimiento y su respuesta final.
@@ -202,8 +220,6 @@ def execute(classroom: Any, bridge_queue: Any) -> dict[str, Any]:
     if set(by_name)!=set(GRADES):
         raise RuntimeError("C3_PROB_5B: cambió el roster de la actividad; se bloqueó el lote. "+json.dumps({"expected":sorted(GRADES),"observed":sorted(by_name)},ensure_ascii=False))
 
-    # Guardia de evidencia: Maya debe seguir sin adjuntos; Ximena debe seguir con su video;
-    # todos los demás deben conservar al menos una evidencia adjunta.
     for name,(st,sub) in by_name.items():
         att=((sub.get("assignmentSubmission") or {}).get("attachments") or [])
         if name=="MAYA CUEVA VALERA":
@@ -212,16 +228,14 @@ def execute(classroom: Any, bridge_queue: Any) -> dict[str, Any]:
         elif not att:
             raise RuntimeError(f"C3_PROB_5B: desapareció la evidencia de {name}; lote bloqueado.")
 
-    # 1) Nota cuantitativa por API de Classroom, sin tocar SIEWeb.
     api_results=[]
     for name,grade in GRADES.items():
         st,sub=by_name[name]
         sid=str(sub.get("id") or "")
-        result=classroom.grade_submission(cid,wid,sid,grade=float(grade),return_to_student=False)
+        classroom.grade_submission(cid,wid,sid,grade=float(grade),return_to_student=False)
         api_results.append({"student":st.get("name"),"grade":grade,"submissionId":sid})
         print(f"C3_PROB_5B_API_GRADE: {st.get('name')} -> {grade}/20",flush=True)
 
-    # Relectura obligatoria de notas.
     after=classroom.list_submissions(cid,wid)
     after_by_id={str(s.get("id") or ""):s for s in after}
     failures=[]
@@ -235,8 +249,6 @@ def execute(classroom: Any, bridge_queue: Any) -> dict[str, Any]:
         raise RuntimeError("C3_PROB_5B: falló verificación de notas Classroom: "+json.dumps(failures,ensure_ascii=False))
     print("C3_PROB_5B_API_VERIFIED: 26/26 notas cuantitativas confirmadas.",flush=True)
 
-    # 2) Comentario privado por Bridge. Las entregas ya devueltas no se vuelven a devolver;
-    # Maya es CREATED y tampoco admite devolución. El guard evita duplicar feedback estructurado.
     jobs=[]
     for name,grade in GRADES.items():
         st,sub=by_name[name]
