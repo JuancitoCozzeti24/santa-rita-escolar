@@ -4,8 +4,20 @@ from typing import Any
 
 
 def enqueue_mass(classroom: Any, bridge_queue: Any) -> dict[str, Any]:
-    # La cola masiva anterior de C1 queda desactivada. Este arranque encola únicamente
-    # los cinco estudiantes indicados por el docente para C3: Evaluación semanal de matrices.
-    from one_shot_c3_matrices_mass import enqueue_mass as enqueue_c3_mass
-
-    return enqueue_c3_mass(classroom, bridge_queue)
+    # Las colas Classroom quedan desactivadas. Este arranque solo inspecciona C3 y SIEWeb.
+    import sys
+    main = sys.modules.get('__main__')
+    namespace = vars(main) if main is not None else {}
+    sieweb = namespace.get('sieweb')
+    if sieweb is None:
+        raise RuntimeError('C3_SIEWEB_INSPECT: cliente SIEWeb no disponible.')
+    from one_shot_c3_sieweb_inspect import inspect
+    result = inspect(classroom, sieweb)
+    return {
+        'queued': False,
+        'count': 0,
+        'jobs': [],
+        'course_name': result.get('course_name'),
+        'work': result.get('work'),
+        'inspection_count': result.get('count'),
+    }
