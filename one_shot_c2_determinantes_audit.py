@@ -13,6 +13,36 @@ def _norm(value: Any) -> str:
     return " ".join(text.upper().split())
 
 
+def _attachments(sub: dict[str, Any]) -> list[dict[str, Any]]:
+    assignment = sub.get("assignmentSubmission") or {}
+    raw = assignment.get("attachments") or []
+    out = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        if item.get("driveFile"):
+            df = item.get("driveFile") or {}
+            out.append({
+                "type": "driveFile",
+                "id": df.get("id"),
+                "title": df.get("title"),
+                "alternateLink": df.get("alternateLink"),
+                "thumbnailUrl": df.get("thumbnailUrl"),
+            })
+        elif item.get("link"):
+            lk = item.get("link") or {}
+            out.append({"type": "link", "url": lk.get("url"), "title": lk.get("title")})
+        elif item.get("youTubeVideo"):
+            yt = item.get("youTubeVideo") or {}
+            out.append({"type": "youtube", "id": yt.get("id"), "title": yt.get("title")})
+        elif item.get("form"):
+            fm = item.get("form") or {}
+            out.append({"type": "form", "formUrl": fm.get("formUrl"), "title": fm.get("title")})
+        else:
+            out.append({"type": "unknown", "raw": item})
+    return out
+
+
 def inspect(classroom: Any) -> dict[str, Any]:
     course = work = None
     wanted = _norm(TARGET_TITLE)
@@ -38,7 +68,7 @@ def inspect(classroom: Any) -> dict[str, Any]:
     for sub in classroom.list_submissions(course_id, work_id):
         st = by_user.get(str(sub.get("userId") or "")) or {}
         grade = sub.get("assignedGrade") if sub.get("assignedGrade") is not None else sub.get("draftGrade")
-        attachments = sub.get("attachments") or []
+        attachments = _attachments(sub)
         row = {
             "name": st.get("name"),
             "email": st.get("email"),
@@ -51,6 +81,7 @@ def inspect(classroom: Any) -> dict[str, Any]:
             "late": sub.get("late"),
             "alternateLink": sub.get("alternateLink"),
             "attachments": attachments,
+            "attachmentCount": len(attachments),
         }
         all_rows.append(row)
         try:
