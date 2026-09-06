@@ -4,5 +4,5 @@ from typing import Any
 
 
 def enqueue_mass(classroom: Any, bridge_queue: Any) -> dict[str, Any]:
-    from one_shot_c3_prob_create_performances import execute
-    return execute(classroom)
+    from one_shot_c3_prob_5b_full_audit import inspect
+    return inspect(classroom)
