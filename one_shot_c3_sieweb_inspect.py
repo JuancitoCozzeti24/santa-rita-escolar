@@ -12,7 +12,6 @@ def _norm(v: Any) -> str:
 
 
 def inspect(classroom: Any, sieweb: Any) -> dict[str, Any]:
-    # Classroom: current official grades for exact C3.
     course = work = None
     for c in classroom.list_courses(active_only=True):
         hay = _norm(f"{c.get('name') or ''} {c.get('section') or ''}")
@@ -30,17 +29,17 @@ def inspect(classroom: Any, sieweb: Any) -> dict[str, Any]:
         st = by_user.get(str(sub.get('userId') or '')) or {}
         grade = sub.get('assignedGrade') if sub.get('assignedGrade') is not None else sub.get('draftGrade')
         grades.append({'name': st.get('name'), 'code': str(st.get('email') or '').split('@',1)[0], 'grade': grade})
+    grades.sort(key=lambda x: _norm(x.get('name')))
     print('C3_CLASSROOM_GRADES_COMPACT=' + json.dumps(grades, ensure_ascii=False), flush=True)
 
-    # Discover 5B scope read-only. 5A is known as 524; scan nearby scopes and inspect class names.
-    candidates = {}
-    for ambito in range(520, 531):
-        try:
-            payload = sieweb.list_classes(id_ambito=ambito)
-            rows = (payload.get('json') or []) if isinstance(payload, dict) else []
-            if rows:
-                candidates[str(ambito)] = rows
-        except Exception as exc:
-            candidates[str(ambito)] = {'error': str(exc)}
-    print('C3_SIEWEB_AMBITO_SCAN=' + json.dumps(candidates, ensure_ascii=False, default=str), flush=True)
-    return {'queued': False, 'course_name': course.get('name'), 'work': work.get('title'), 'count': len(grades)}
+    ctx = sieweb.resolve_class_context(section='5B', period=2, course_code='05', id_ambito=525)
+    extra = {'idPeriodoAnt': ctx.get('idPeriodoAnt', 0)}
+    summary = sieweb.get_gradebook_summary(class_period_id=ctx['idClasePeriodo'], root_content_id=ctx['idContenido'], extra_params=extra)
+    print('C3_SIEWEB_CONTEXT=' + json.dumps(ctx, ensure_ascii=False, default=str), flush=True)
+    criteria = summary.get('criteria') or []
+    print('C3_SIEWEB_CRITERIA=' + json.dumps(criteria, ensure_ascii=False, default=str), flush=True)
+    searches = {q: sieweb.find_criteria_in_gradebook(summary, q) for q in ('C3','MATRIZ','MATRICES','EVALUACION','SEMANAL')}
+    print('C3_SIEWEB_SEARCHES=' + json.dumps(searches, ensure_ascii=False, default=str), flush=True)
+    # Student cells are included so we can compare existing SIEWeb values before writing.
+    print('C3_SIEWEB_STUDENTS=' + json.dumps(summary.get('students') or [], ensure_ascii=False, default=str), flush=True)
+    return {'queued': False, 'course_name': course.get('name'), 'work': work.get('title'), 'count': len(grades), 'context': ctx}
