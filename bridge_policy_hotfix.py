@@ -3,7 +3,66 @@ from __future__ import annotations
 import functools
 import json
 import sys
+from pathlib import Path
 from typing import Any
+
+
+def _patch_sieweb_achievement_route_source() -> None:
+    """Extiende SOLO save_grades_verified para nivelEva=1 con guardas explícitas.
+
+    Se parchea server_core.py antes de que server.py lo importe. La acción existente
+    conserva nivel 3 por defecto; nivel 1 solo se habilita cuando target_level=1.
+    """
+    path = Path(__file__).with_name("server_core.py")
+    try:
+        text = path.read_text(encoding="utf-8")
+        marker = "def sieweb_save_grades_verified("
+        if marker not in text:
+            raise RuntimeError("No se encontró sieweb_save_grades_verified en server_core.py.")
+        prefix, tail = text.split(marker, 1)
+        changed = False
+
+        old_sig = '    confirmed: bool = False,\n) -> str:'
+        new_sig = '    confirmed: bool = False,\n    target_level: int = 3,\n) -> str:'
+        if new_sig not in tail:
+            if old_sig not in tail:
+                raise RuntimeError("No se encontró la firma esperada de sieweb_save_grades_verified.")
+            tail = tail.replace(old_sig, new_sig, 1)
+            changed = True
+
+        old_guard = '    target = sieweb.assert_performance_target(summary, header_id=header_id, performance_level=3)'
+        new_guard = '''    requested_level = int(target_level)\n    if requested_level == 1:\n        matches = [\n            item for item in (summary.get("criteria") or [])\n            if str(item.get("id") or "") == str(header_id)\n        ]\n        if len(matches) != 1:\n            raise ValueError(f"Protección Nivel de Logro: la cabecera {header_id} no es única.")\n        target = matches[0]\n        if str(target.get("nivelEva") or "") != "1":\n            raise ValueError(\n                f"Protección Nivel de Logro: cabecera {header_id} tiene nivelEva={target.get('nivelEva')!r}; se exige 1."\n            )\n        program = str(target.get("programa") or "").strip().lower()\n        if program and "competencia" not in program:\n            raise ValueError(\n                f"Protección Nivel de Logro: cabecera {header_id} no es Competencia ({target.get('programa')!r})."\n            )\n        roster_codes = {\n            str(student.get("alucod") or "").strip()\n            for student in (summary.get("students") or [])\n            if str(student.get("alucod") or "").strip()\n        }\n        requested_codes = set(grade_map)\n        if requested_codes != roster_codes:\n            raise ValueError(\n                "Protección Nivel de Logro: el lote debe coincidir exactamente con la matrícula completa. "\n                + json.dumps({\n                    "roster_count": len(roster_codes),\n                    "requested_count": len(requested_codes),\n                    "missing": sorted(roster_codes - requested_codes),\n                    "extra": sorted(requested_codes - roster_codes),\n                }, ensure_ascii=False)\n            )\n    elif requested_level == 3:\n        target = sieweb.assert_performance_target(summary, header_id=header_id, performance_level=3)\n    else:\n        raise ValueError("target_level solo admite 1 (Nivel de Logro) o 3 (Desempeño).")'''
+        if new_guard not in tail:
+            if old_guard not in tail:
+                raise RuntimeError("No se encontró la guarda histórica de desempeño.")
+            tail = tail.replace(old_guard, new_guard, 1)
+            changed = True
+
+        old_save_guard = '            protect_achievement_level=True,\n            performance_level=3,\n'
+        new_save_guard = '            protect_achievement_level=(requested_level != 1),\n            performance_level=requested_level,\n'
+        if new_save_guard not in tail:
+            if old_save_guard not in tail:
+                raise RuntimeError("No se encontró la protección histórica del PUT de notas.")
+            tail = tail.replace(old_save_guard, new_save_guard, 1)
+            changed = True
+
+        text = prefix + marker + tail
+        old_route = '    if action == "save_grades_verified": return sieweb_save_grades_verified(str(p["year"]), str(p["course_code"]), int(p["class_period_id"]), int(p["root_content_id"]), int(p["period"]), json.dumps(p["section_ng"], ensure_ascii=False), int(p["header_id"]), json.dumps(p.get("grades_by_student_code", {}), ensure_ascii=False), str(p.get("class_name", "")), json.dumps(p.get("extra_params", {}), ensure_ascii=False), confirmed)'
+        new_route = '    if action == "save_grades_verified": return sieweb_save_grades_verified(str(p["year"]), str(p["course_code"]), int(p["class_period_id"]), int(p["root_content_id"]), int(p["period"]), json.dumps(p["section_ng"], ensure_ascii=False), int(p["header_id"]), json.dumps(p.get("grades_by_student_code", {}), ensure_ascii=False), str(p.get("class_name", "")), json.dumps(p.get("extra_params", {}), ensure_ascii=False), confirmed, int(p.get("target_level", 3)))'
+        if new_route not in text:
+            if old_route not in text:
+                raise RuntimeError("No se encontró la ruta histórica save_grades_verified.")
+            text = text.replace(old_route, new_route, 1)
+            changed = True
+
+        if changed:
+            path.write_text(text, encoding="utf-8")
+            print("SieRoom: save_grades_verified habilitado de forma verificada para nivelEva=1/3.", flush=True)
+        else:
+            print("SieRoom: ruta verificada nivelEva=1/3 ya estaba aplicada.", flush=True)
+    except Exception as exc:
+        print(f"SieRoom: ERROR habilitando Nivel de Logro verificado: {exc}", flush=True)
+        raise
 
 
 def install() -> None:
@@ -289,5 +348,6 @@ def install_achievement_levels_tool() -> None:
     FastMCP.run = run_with_achievement_levels
 
 
+_patch_sieweb_achievement_route_source()
 install()
 install_achievement_levels_tool()
