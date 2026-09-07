@@ -1,28 +1,66 @@
+from __future__ import annotations
+
+import os
+import sys
 from pathlib import Path
 
 from browser_controller import ReadOnlyBrowserController
 
 
+APP_NAME = "SIEROOM Desktop Agent"
+APP_VERSION = "0.1.0"
+
+
+def app_data_root() -> Path:
+    """Return a writable persistent Windows app-data folder.
+
+    When packaged with PyInstaller one-file mode, __file__ points into a
+    temporary extraction directory. Browser profiles and evidence therefore
+    must live outside the bundle.
+    """
+    if os.name == "nt":
+        base = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA")
+        if base:
+            return Path(base) / "SIEROOM" / "DesktopAgent"
+    return Path.home() / ".sieroom" / "desktop_agent"
+
+
+def pause(message: str) -> None:
+    try:
+        input(message)
+    except EOFError:
+        pass
+
+
 def main() -> None:
-    root = Path(__file__).resolve().parent
+    data_root = app_data_root()
     controller = ReadOnlyBrowserController(
-        profile_dir=root / ".browser_profile",
-        evidence_dir=root / "evidence",
+        profile_dir=data_root / "browser_profile",
+        evidence_dir=data_root / "evidence",
     )
 
-    print("SIEROOM Desktop Agent — Fase 1 (SOLO LECTURA)")
+    print(f"{APP_NAME} v{APP_VERSION} — Fase 1 (SOLO LECTURA)")
     print("No publica notas, comentarios ni modifica SIEweb/Classroom.")
+    print(f"Datos locales: {data_root}")
     print("Abriendo navegador dedicado...")
 
-    context = controller.start()
+    try:
+        context = controller.start()
+    except Exception as exc:
+        print("\nNo se pudo abrir Google Chrome.")
+        print("Esta primera versión usa el Chrome instalado en Windows.")
+        print(f"Detalle técnico: {exc}")
+        pause("\nPresiona ENTER para cerrar...")
+        raise SystemExit(2) from exc
+
     try:
         page = context.pages[0] if context.pages else context.new_page()
         if page.url == "about:blank":
             page.goto("https://classroom.google.com/", wait_until="domcontentloaded")
 
-        print("\nInicia sesión si el perfil todavía no está autenticado.")
+        print("\nSi es la primera ejecución, inicia sesión en el navegador dedicado.")
         print("Navega a Classroom o SIEweb y luego vuelve a esta ventana.")
-        input("Presiona ENTER para inspeccionar la pestaña activa...")
+        pause("Presiona ENTER para inspeccionar la pestaña activa...")
 
         pages = context.pages
         page = pages[-1]
@@ -39,7 +77,7 @@ def main() -> None:
         print(f"Campos detectados: {len(report.inputs)}")
         print(f"Reporte JSON: {json_path}")
         print(f"Captura: {png_path}")
-        input("\nPresiona ENTER para cerrar el agente...")
+        pause("\nPresiona ENTER para cerrar el agente...")
     finally:
         controller.stop()
 
