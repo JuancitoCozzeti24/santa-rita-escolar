@@ -1,23 +1,17 @@
 from __future__ import annotations
 
 import os
-import sys
 from pathlib import Path
 
 from browser_controller import ReadOnlyBrowserController
 
 
 APP_NAME = "SIEROOM Desktop Agent"
-APP_VERSION = "0.1.0"
+APP_VERSION = "0.1.1"
 
 
 def app_data_root() -> Path:
-    """Return a writable persistent Windows app-data folder.
-
-    When packaged with PyInstaller one-file mode, __file__ points into a
-    temporary extraction directory. Browser profiles and evidence therefore
-    must live outside the bundle.
-    """
+    """Return a writable persistent app-data folder outside a PyInstaller bundle."""
     if os.name == "nt":
         base = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA")
         if base:
@@ -41,28 +35,31 @@ def main() -> None:
 
     print(f"{APP_NAME} v{APP_VERSION} — Fase 1 (SOLO LECTURA)")
     print("No publica notas, comentarios ni modifica SIEweb/Classroom.")
-    print(f"Datos locales: {data_root}")
-    print("Abriendo navegador dedicado...")
+    print(f"Datos locales persistentes: {data_root}")
+    print("Abriendo navegador dedicado en modo normal...")
 
     try:
         context = controller.start()
     except Exception as exc:
-        print("\nNo se pudo abrir Google Chrome.")
-        print("Esta primera versión usa el Chrome instalado en Windows.")
+        print("\nNo se pudo abrir el navegador dedicado.")
+        print("El agente busca Google Chrome y, como respaldo, Microsoft Edge.")
         print(f"Detalle técnico: {exc}")
         pause("\nPresiona ENTER para cerrar...")
         raise SystemExit(2) from exc
 
     try:
-        page = context.pages[0] if context.pages else context.new_page()
-        if page.url == "about:blank":
-            page.goto("https://classroom.google.com/", wait_until="domcontentloaded")
-
-        print("\nSi es la primera ejecución, inicia sesión en el navegador dedicado.")
-        print("Navega a Classroom o SIEweb y luego vuelve a esta ventana.")
+        print(f"\nNavegador detectado: {controller.browser_name}")
+        print("Classroom se abrió en una sesión persistente exclusiva para SIEROOM.")
+        print("Si es la primera vez, inicia sesión normalmente en Google.")
+        print("Cuando Classroom ya haya terminado de cargar, vuelve a esta ventana.")
         pause("Presiona ENTER para inspeccionar la pestaña activa...")
 
         pages = context.pages
+        if not pages:
+            print("No hay ninguna pestaña abierta para inspeccionar.")
+            pause("Presiona ENTER para cerrar...")
+            return
+
         page = pages[-1]
         report = controller.inspect(page)
         json_path, png_path = controller.save_evidence(page, report)
