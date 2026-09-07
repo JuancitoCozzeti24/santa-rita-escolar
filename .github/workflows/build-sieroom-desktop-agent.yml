@@ -48,7 +48,7 @@ jobs:
             --clean `
             --onefile `
             --console `
-            --name "SIEROOM-Desktop-Agent-v0.1.1" `
+            --name "SIEROOM-Desktop-Agent-v0.1.2" `
             --paths desktop_agent `
             --collect-all playwright `
             desktop_agent/main.py
@@ -56,7 +56,7 @@ jobs:
       - name: Verify executable exists
         shell: pwsh
         run: |
-          $exe = "dist/SIEROOM-Desktop-Agent-v0.1.1.exe"
+          $exe = "dist/SIEROOM-Desktop-Agent-v0.1.2.exe"
           if (-not (Test-Path $exe)) {
             throw "No se generó $exe"
           }
@@ -68,19 +68,13 @@ jobs:
         shell: pwsh
         run: |
           @"
-          SIEROOM Desktop Agent v0.1.1 - Fase 1 SOLO LECTURA
+          SIEROOM Desktop Agent v0.1.2 - Fase 1 SOLO LECTURA
 
-          CAMBIO IMPORTANTE:
-          Esta versión abre Chrome/Edge como navegador normal y luego se conecta
-          localmente para inspeccionarlo. Se hizo para mejorar la compatibilidad
-          con Google Classroom.
-
-          1. Cierra cualquier SIEROOM Desktop Agent v0.1 anterior.
-          2. Ejecuta SIEROOM-Desktop-Agent-v0.1.1.exe.
-          3. Si Windows SmartScreen pregunta, pulsa Más información > Ejecutar de todas formas.
-          4. Inicia sesión en Google si este perfil dedicado todavía no lo está.
-          5. Espera a que Classroom cargue completamente.
-          6. Vuelve a la consola del agente y presiona ENTER para generar el reporte.
+          CAMBIOS:
+          - Busca la pestaña real de Classroom o SIEweb aunque no sea la última pestaña.
+          - Distingue la página informativa de Google for Education de la aplicación Classroom.
+          - Si solo encuentra la página informativa, abre classroom.google.com automáticamente.
+          - Muestra todas las pestañas detectadas antes del reporte.
 
           Esta versión NO escribe notas, comentarios ni datos.
           "@ | Set-Content -Encoding UTF8 dist/LEEME-PRIMERO.txt
@@ -88,9 +82,9 @@ jobs:
       - name: Upload Windows build
         uses: actions/upload-artifact@v4
         with:
-          name: SIEROOM-Desktop-Agent-Windows-v0.1.1
+          name: SIEROOM-Desktop-Agent-Windows-v0.1.2
           path: |
-            dist/SIEROOM-Desktop-Agent-v0.1.1.exe
+            dist/SIEROOM-Desktop-Agent-v0.1.2.exe
             dist/LEEME-PRIMERO.txt
           if-no-files-found: error
           retention-days: 14
