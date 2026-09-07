@@ -3318,23 +3318,159 @@ class SieWebClient:
         extra_params: dict[str, Any] | None = None,
         notify: bool = True,
         verification_attempts: int = 3,
-        protect_achievement_level: bool = False,
+        protect_achievement_level: bool = True,
         performance_level: int = 3,
+        allow_achievement_level: bool = False,
     ) -> dict[str, Any]:
-        """Guarda notas con preflight y verificación posterior obligatoria."""
+        """Guarda notas con preflight y verificación posterior obligatoria.
+
+        Por defecto conserva el flujo histórico de desempeños nivelEva=3. Nivel de
+        logro solo se habilita cuando ``allow_achievement_level`` es True y el
+        llamador, además, desactiva explícitamente la protección histórica. Esa
+        vía acepta exclusivamente una cabecera Competencia nivelEva=1 y A/B/C.
+        """
+        if type(allow_achievement_level) is not bool:
+            raise SieWebError("allow_achievement_level debe ser booleano explícito.")
+        achievement_mode = allow_achievement_level is True
+        if achievement_mode:
+            if protect_achievement_level is not False or int(performance_level) != 1:
+                raise SieWebError(
+                    "PROTECCIÓN NIVEL DE LOGRO HF12: el modo explícito requiere "
+                    "protect_achievement_level=False y performance_level=1. No se envió nada."
+                )
+        else:
+            if protect_achievement_level is not True or int(performance_level) != 3:
+                raise SieWebError(
+                    "PROTECCIÓN DE NOTAS: sin allow_achievement_level=true, "
+                    "save_grades_verified solo admite desempeños nivelEva=3. No se envió nada."
+                )
+
+        requested = {
+            str(code).strip(): str(grade).strip().upper()
+            for code, grade in (grades_by_student_code or {}).items()
+            if str(code).strip()
+        }
+        if not requested:
+            raise SieWebError("No hay calificaciones para guardar.")
+        if achievement_mode:
+            invalid = {code: grade for code, grade in requested.items() if grade not in {"A", "B", "C"}}
+            if invalid:
+                raise SieWebError(
+                    "PROTECCIÓN NIVEL DE LOGRO HF12: solo se permiten A, B o C. No se envió nada: "
+                    + json.dumps(invalid, ensure_ascii=False)
+                )
+
         before = self.get_gradebook_summary(
             class_period_id=class_period_id,
             root_content_id=root_content_id,
             extra_params=extra_params,
         )
-        if protect_achievement_level:
-            self.assert_performance_target(before, header_id=header_id, performance_level=performance_level)
+        expected_level = 1 if achievement_mode else 3
+        target = self.assert_performance_target(
+            before, header_id=header_id, performance_level=expected_level
+        )
+
+        if achievement_mode:
+            program = str(target.get("programa") or "").strip().casefold()
+            parent_id = target.get("idpadre")
+            class_content_id = target.get("idClaseContenido")
+            is_grouper = target.get("esAgrupador")
+            if program != "competencia":
+                raise SieWebError(
+                    f"PROTECCIÓN NIVEL DE LOGRO HF12: la cabecera {header_id} no es Competencia "
+                    f"(programa={target.get('programa')!r}). No se envió nada."
+                )
+            if str(parent_id) != str(root_content_id):
+                raise SieWebError(
+                    f"PROTECCIÓN NIVEL DE LOGRO HF12: la cabecera {header_id} no pertenece al "
+                    f"contenido raíz {root_content_id}. No se envió nada."
+                )
+            if class_content_id in (None, "", 0, "0"):
+                raise SieWebError(
+                    f"PROTECCIÓN NIVEL DE LOGRO HF12: la Competencia {header_id} no tiene "
+                    "idClaseContenido persistido. No se envió nada."
+                )
+            if is_grouper is True or str(is_grouper).strip().lower() in {"1", "true", "si", "sí"}:
+                raise SieWebError(
+                    f"PROTECCIÓN NIVEL DE LOGRO HF12: la cabecera {header_id} es agrupadora, "
+                    "no una celda final de Nivel de logro. No se envió nada."
+                )
+
         native_obj_ng = self.resolve_grade_write_scope(before, section_ng)
         records = self.build_grade_records(
             before,
             header_id=header_id,
-            grades_by_student_code=grades_by_student_code,
+            grades_by_student_code=requested,
         )
+        if len(records) != len(requested):
+            raise SieWebError(
+                f"Preflight incompleto: se solicitaron {len(requested)} celdas y se prepararon "
+                f"{len(records)}. No se envió nada."
+            )
+
+        if achievement_mode:
+            expected_ccid = str(target.get("idClaseContenido"))
+            for rec in records:
+                rec_level = self._dict_get_ci(rec, "nivelEva", "NIVEL", "nivel")
+                rec_header = self._dict_get_ci(rec, "idCabecera", "ID_CABECERA", "header_id")
+                rec_grade = str(self._dict_get_ci(rec, "notaNue", "NOTANUE", "nota", "grade") or "").strip().upper()
+                rec_note_id = self._dict_get_ci(rec, "idNota", "ID_NOTA")
+                if str(rec_level) != "1":
+                    raise SieWebError(
+                        f"PROTECCIÓN NIVEL DE LOGRO HF12: registro con nivelEva={rec_level!r}; no se envió nada."
+                    )
+                if str(rec_header) != str(header_id):
+                    raise SieWebError(
+                        f"PROTECCIÓN NIVEL DE LOGRO HF12: registro con cabecera {rec_header!r} distinta "
+                        f"de {header_id}. No se envió nada."
+                    )
+                if rec_grade not in {"A", "B", "C"}:
+                    raise SieWebError(
+                        f"PROTECCIÓN NIVEL DE LOGRO HF12: nota {rec_grade!r} inválida; no se envió nada."
+                    )
+                if str(rec_note_id) != expected_ccid:
+                    raise SieWebError(
+                        f"PROTECCIÓN NIVEL DE LOGRO HF12: idNota {rec_note_id!r} no coincide con "
+                        f"idClaseContenido {expected_ccid}. No se envió nada."
+                    )
+
+        def snapshot_non_target(summary: dict[str, Any]) -> dict[str, dict[str, Any]]:
+            by_code = {
+                str(student.get("alucod") or "").strip(): student
+                for student in (summary.get("students") or [])
+                if str(student.get("alucod") or "").strip()
+            }
+            snap: dict[str, dict[str, Any]] = {}
+            for code in requested:
+                student = by_code.get(code)
+                if student is None:
+                    raise SieWebError(
+                        f"PROTECCIÓN HF12: el alumno {code} desapareció de la relectura; verificación abortada."
+                    )
+                notes = student.get("notas") or {}
+                if not isinstance(notes, dict):
+                    raise SieWebError(
+                        f"PROTECCIÓN HF12: notas inválidas para {code}; verificación abortada."
+                    )
+                for note_key, note in notes.items():
+                    if not isinstance(note, dict):
+                        continue
+                    note_header = self._dict_get_ci(note, "idCabecera", "ID_CABECERA")
+                    if note_header in (None, ""):
+                        note_header = note_key
+                    if str(note_header) == str(header_id):
+                        continue
+                    snap[f"{code}:{note_header}"] = {
+                        "idNota": self._dict_get_ci(note, "idNota", "ID_NOTA"),
+                        "notaIni": self._dict_get_ci(note, "notaIni", "NOTAINI"),
+                        "notaReg": self._dict_get_ci(note, "notaReg", "NOTAREG"),
+                        "notaPeAnt": self._dict_get_ci(note, "notaPeAnt", "NOTAPEANT"),
+                        "nivelEva": self._dict_get_ci(note, "nivelEva", "NIVEL", "nivel"),
+                        "llave": self._dict_get_ci(note, "llave", "LLAVE"),
+                    }
+            return snap
+
+        non_target_before = snapshot_non_target(before) if achievement_mode else {}
 
         update_result = self.update_grades(
             year=year,
@@ -3350,11 +3486,17 @@ class SieWebClient:
         attempts: list[dict[str, Any]] = []
         verification: dict[str, Any] = {
             "ok": False,
-            "requested_count": len(grades_by_student_code or {}),
+            "requested_count": len(requested),
             "verified_count": 0,
-            "failed_count": len(grades_by_student_code or {}),
+            "failed_count": len(requested),
             "verified": [],
             "failed": [],
+        }
+        non_target_verification: dict[str, Any] = {
+            "checked": achievement_mode,
+            "ok": not achievement_mode,
+            "verified_count": 0,
+            "changed": [],
         }
         max_attempts = max(1, min(int(verification_attempts or 1), 5))
         for attempt in range(1, max_attempts + 1):
@@ -3366,7 +3508,7 @@ class SieWebClient:
             verification = self.verify_grade_changes(
                 after,
                 header_id=header_id,
-                grades_by_student_code=grades_by_student_code,
+                grades_by_student_code=requested,
             )
             attempts.append({
                 "attempt": attempt,
@@ -3375,24 +3517,51 @@ class SieWebClient:
                 "failed_count": verification["failed_count"],
             })
             if verification["ok"]:
+                if achievement_mode:
+                    non_target_after = snapshot_non_target(after)
+                    all_keys = sorted(set(non_target_before) | set(non_target_after))
+                    changed = [
+                        {
+                            "cell": key,
+                            "before": non_target_before.get(key),
+                            "after": non_target_after.get(key),
+                        }
+                        for key in all_keys
+                        if non_target_before.get(key) != non_target_after.get(key)
+                    ]
+                    non_target_verification = {
+                        "checked": True,
+                        "ok": not changed,
+                        "verified_count": len(all_keys) - len(changed),
+                        "changed": changed,
+                    }
+                    if changed:
+                        raise SieWebError(
+                            "PROTECCIÓN HF12: la relectura detectó cambios fuera de la cabecera autorizada. "
+                            "Se detiene el flujo: " + json.dumps(changed[:20], ensure_ascii=False)
+                        )
                 break
             if attempt < max_attempts:
                 time.sleep(0.4 * attempt)
 
         if not verification["ok"]:
             raise SieWebError(
-                "SieWeb respondió a la actualización, pero la relectura no confirmó "
-                "todas las notas. No se declarará éxito. Verificación: "
+                "SieWeb respondió a la actualización, pero la relectura no confirmó todas las notas. "
+                "No se declarará éxito. Verificación: "
                 + json.dumps(verification, ensure_ascii=False)
             )
 
         return {
             "saved": True,
-            "requested_count": len(grades_by_student_code or {}),
+            "mode": "achievement_level" if achievement_mode else "performance_level_3",
+            "target": target,
+            "requested_count": len(requested),
             "prepared_count": len(records),
             "update": update_result,
             "verification": verification,
             "verification_attempts": attempts,
+            "non_target_verification": non_target_verification,
+            "objNG": native_obj_ng,
         }
 
     def save_grades_multi_verified(

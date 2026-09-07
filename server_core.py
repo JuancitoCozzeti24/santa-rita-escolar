@@ -1572,7 +1572,7 @@ def sieweb_messaging(action: str, payload_json: str = "{}", confirmed: bool = Fa
 
 @mcp.tool()
 def sieweb_academics(action: str, payload_json: str = "{}", confirmed: bool = False) -> str:
-    """Registro académico de SieWeb agrupado. action: login_status|resolve_class_context|gradebook|gradebook_by_section|gradebook_summary|find_students|find_criteria|get_criteria|criteria_write_preflight|upsert_criteria_verified|build_grade_records|save_grades_verified|update_grades|get_conclusion|get_conclusions_batch|save_conclusion|save_conclusions_batch. v0.8.4 crea desempeños con el contrato nativo del modal y lee la matrícula completa sin objInfoRegIndividual[alucod]=False; verifica Competencia→Capacidad→Desempeño y bloquea Nivel de Logro. Para notas nuevas prefiere save_grades_verified. v0.8.10 permite cambiar la abreviatura de desempeños existentes mediante upsert_criteria_verified enviando el árbol nativo completo resCriterios; conserva IDs, padres, descripciones y notas, y bloquea duplicados."""
+    """Registro académico de SieWeb agrupado. action: login_status|resolve_class_context|gradebook|gradebook_by_section|gradebook_summary|find_students|find_criteria|get_criteria|criteria_write_preflight|upsert_criteria_verified|build_grade_records|save_grades_verified|update_grades|get_conclusion|get_conclusions_batch|save_conclusion|save_conclusions_batch. v0.8.4 crea desempeños con el contrato nativo del modal y lee la matrícula completa sin objInfoRegIndividual[alucod]=False; verifica Competencia→Capacidad→Desempeño y bloquea Nivel de Logro. Para notas nuevas prefiere save_grades_verified; Nivel de logro exige allow_achievement_level=true y conserva verificación estricta. v0.8.12 permite cambiar la abreviatura de desempeños existentes mediante upsert_criteria_verified enviando el árbol nativo completo resCriterios; conserva IDs, padres, descripciones y notas, y bloquea duplicados."""
     action = action.strip().lower(); p = _json_obj(payload_json, {})
     if action == "login_status": return sieweb_login_status()
     if action == "resolve_class_context": return sieweb_resolve_class_context(str(p["section"]), int(p["period"]), str(p.get("course_code", "05")), p.get("id_ambito"))
@@ -1592,7 +1592,20 @@ def sieweb_academics(action: str, payload_json: str = "{}", confirmed: bool = Fa
         if p.get("id_ambito") in (None, ""):
             return _ok({"error":"v0.8.4 bloqueó la escritura porque falta id_ambito. No se usará un ámbito silencioso de otra sección.","blocked":True})
         return sieweb_upsert_criteria_verified_tool(int(p["class_id"]), int(p["class_period_id"]), int(p["root_content_id"]), int(p["id_ambito"]), json.dumps(p.get("records", []), ensure_ascii=False), json.dumps(p.get("expected", []), ensure_ascii=False), json.dumps(p.get("replica", {}), ensure_ascii=False), json.dumps(p.get("extra_params", {}), ensure_ascii=False), confirmed)
-    if action == "save_grades_verified": return sieweb_save_grades_verified(str(p["year"]), str(p["course_code"]), int(p["class_period_id"]), int(p["root_content_id"]), int(p["period"]), json.dumps(p["section_ng"], ensure_ascii=False), int(p["header_id"]), json.dumps(p.get("grades_by_student_code", {}), ensure_ascii=False), str(p.get("class_name", "")), json.dumps(p.get("extra_params", {}), ensure_ascii=False), confirmed)
+    if action == "save_grades_verified":
+        allow_achievement_level = p.get("allow_achievement_level", False)
+        if type(allow_achievement_level) is not bool:
+            raise ValueError("allow_achievement_level debe ser booleano JSON true/false.")
+        return sieweb_save_grades_verified(
+            str(p["year"]), str(p["course_code"]), int(p["class_period_id"]),
+            int(p["root_content_id"]), int(p["period"]),
+            json.dumps(p["section_ng"], ensure_ascii=False), int(p["header_id"]),
+            json.dumps(p.get("grades_by_student_code", {}), ensure_ascii=False),
+            str(p.get("class_name", "")),
+            json.dumps(p.get("extra_params", {}), ensure_ascii=False),
+            confirmed=confirmed,
+            allow_achievement_level=allow_achievement_level,
+        )
     if action == "update_grades":
         return _ok({
             "blocked": True,
@@ -1699,8 +1712,15 @@ def sieweb_save_grades_verified(
     class_name: str = "",
     extra_params_json: str = "{}",
     confirmed: bool = False,
+    allow_achievement_level: bool = False,
 ) -> str:
-    """Guarda notas SIEweb desde la matrícula real y verifica persistencia. Requiere confirmed=true."""
+    """Guarda notas SIEweb desde la matrícula real y verifica persistencia.
+
+    Nivel de logro permanece bloqueado salvo ``allow_achievement_level=True``.
+    Requiere confirmed=true para cualquier escritura.
+    """
+    if type(allow_achievement_level) is not bool:
+        raise ValueError("allow_achievement_level debe ser booleano JSON true/false.")
     section_ng = json.loads(section_ng_json or "[]")
     grade_map = {
         str(k).strip(): str(v).strip().upper()
@@ -1722,7 +1742,10 @@ def sieweb_save_grades_verified(
         root_content_id=root_content_id,
         extra_params=extra,
     )
-    target = sieweb.assert_performance_target(summary, header_id=header_id, performance_level=3)
+    expected_level = 1 if allow_achievement_level else 3
+    target = sieweb.assert_performance_target(
+        summary, header_id=header_id, performance_level=expected_level
+    )
     records = sieweb.build_grade_records(
         summary,
         header_id=header_id,
@@ -1735,7 +1758,8 @@ def sieweb_save_grades_verified(
         "root_content_id": root_content_id,
         "period": period,
         "header_id": header_id,
-        "target_performance": target,
+        "target": target,
+        "allow_achievement_level": allow_achievement_level,
         "section_ng": section_ng,
         "class_name": class_name,
         "requested_count": len(grade_map),
@@ -1744,7 +1768,9 @@ def sieweb_save_grades_verified(
             {
                 "alucod": str(record.get("alucod") or ""),
                 "idPersona": record.get("idPersona"),
+                "idCabecera": record.get("idCabecera"),
                 "idNota": record.get("idNota"),
+                "nivelEva": record.get("nivelEva"),
                 "notaNue": record.get("notaNue"),
                 "preserved_fields": sorted(record.keys()),
             }
@@ -1771,8 +1797,9 @@ def sieweb_save_grades_verified(
             class_name=class_name or None,
             extra_params=extra,
             notify=bool(class_name),
-            protect_achievement_level=True,
-            performance_level=3,
+            protect_achievement_level=not allow_achievement_level,
+            performance_level=expected_level,
+            allow_achievement_level=allow_achievement_level,
         )
     )
 
