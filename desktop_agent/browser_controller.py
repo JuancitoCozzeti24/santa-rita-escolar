@@ -28,12 +28,7 @@ class PageReport:
 
 
 class ReadOnlyBrowserController:
-    """Phase 1 controller: inspect a normal local Chrome/Edge without writes.
-
-    The browser is started as a regular installed browser with a dedicated
-    persistent profile. Playwright attaches afterwards through Chrome DevTools
-    Protocol (CDP), instead of launching Chrome in Playwright's test mode.
-    """
+    """Phase 1 controller: inspect a normal local Chrome/Edge without writes."""
 
     def __init__(self, profile_dir: Path, evidence_dir: Path) -> None:
         self.profile_dir = profile_dir.resolve()
@@ -49,7 +44,6 @@ class ReadOnlyBrowserController:
     @staticmethod
     def _find_browser() -> tuple[Path, str]:
         candidates: list[tuple[Path, str]] = []
-
         for env_name in ("PROGRAMFILES", "PROGRAMFILES(X86)", "LOCALAPPDATA"):
             base = os.environ.get(env_name)
             if not base:
@@ -61,16 +55,13 @@ class ReadOnlyBrowserController:
                     (root / "Microsoft" / "Edge" / "Application" / "msedge.exe", "Microsoft Edge"),
                 ]
             )
-
         for executable, name in candidates:
             if executable.exists():
                 return executable, name
-
         for command, name in (("chrome", "Google Chrome"), ("msedge", "Microsoft Edge")):
             found = shutil.which(command)
             if found:
                 return Path(found), name
-
         raise FileNotFoundError("No se encontró Google Chrome ni Microsoft Edge instalado.")
 
     @staticmethod
@@ -97,11 +88,9 @@ class ReadOnlyBrowserController:
     def start(self) -> BrowserContext:
         executable, self.browser_name = self._find_browser()
         port = self._free_port()
-
         creationflags = 0
         if os.name == "nt":
             creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
-
         args = [
             str(executable),
             f"--remote-debugging-port={port}",
@@ -111,7 +100,6 @@ class ReadOnlyBrowserController:
             "--no-default-browser-check",
             "https://classroom.google.com/",
         ]
-
         self._browser_process = subprocess.Popen(
             args,
             stdout=subprocess.DEVNULL,
@@ -119,7 +107,6 @@ class ReadOnlyBrowserController:
             creationflags=creationflags,
         )
         self._wait_for_cdp(port)
-
         self._pw = sync_playwright().start()
         self._browser = self._pw.chromium.connect_over_cdp(f"http://127.0.0.1:{port}")
         if not self._browser.contexts:
@@ -135,14 +122,12 @@ class ReadOnlyBrowserController:
                 pass
             self._browser = None
         self.context = None
-
         if self._pw is not None:
             try:
                 self._pw.stop()
             except Exception:
                 pass
             self._pw = None
-
         if self._browser_process is not None:
             try:
                 if self._browser_process.poll() is None:
@@ -160,9 +145,42 @@ class ReadOnlyBrowserController:
         value = url.lower()
         if "classroom.google.com" in value:
             return "classroom"
+        if "edu.google.com" in value and "classroom" in value:
+            return "google_classroom_info"
         if "sieweb" in value or "sieroom" in value:
             return "sieweb"
         return "other"
+
+    def select_target_page(self, context: BrowserContext) -> Page | None:
+        pages = [page for page in context.pages if not page.is_closed()]
+        if not pages:
+            return None
+
+        # Prefer actual supported application tabs regardless of tab order.
+        supported = [
+            page for page in pages if self.detect_site(page.url) in {"classroom", "sieweb"}
+        ]
+        if supported:
+            return supported[-1]
+
+        # Otherwise choose the most recent ordinary web page, not an internal page.
+        for page in reversed(pages):
+            if page.url.startswith(("https://", "http://")):
+                return page
+        return pages[-1]
+
+    @staticmethod
+    def describe_pages(context: BrowserContext) -> list[tuple[str, str]]:
+        result: list[tuple[str, str]] = []
+        for page in context.pages:
+            if page.is_closed():
+                continue
+            try:
+                title = page.title().strip()
+            except Exception:
+                title = ""
+            result.append((title[:120], page.url))
+        return result
 
     @staticmethod
     def _texts(page: Page, selector: str, limit: int = 40) -> list[str]:
@@ -191,7 +209,6 @@ class ReadOnlyBrowserController:
                 )
             except Exception:
                 continue
-
         return PageReport(
             captured_at=datetime.now(timezone.utc).isoformat(),
             site=self.detect_site(page.url),
