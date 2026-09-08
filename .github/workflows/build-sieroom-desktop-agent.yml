@@ -38,7 +38,7 @@ jobs:
       - name: Validate Python sources
         shell: pwsh
         run: |
-          python -m py_compile desktop_agent/main.py desktop_agent/browser_controller.py desktop_agent/semantic_inspector.py desktop_agent/gradebook_mapper.py desktop_agent/grade_cell_mapper.py desktop_agent/grade_cell_probe.py desktop_agent/editor_open_probe.py desktop_agent/launcher_v100rc1.py
+          python -m py_compile desktop_agent/main.py desktop_agent/browser_controller.py desktop_agent/semantic_inspector.py desktop_agent/gradebook_mapper.py desktop_agent/grade_cell_mapper.py desktop_agent/grade_cell_mapper_rc2.py desktop_agent/grade_cell_probe.py desktop_agent/editor_open_probe.py desktop_agent/launcher_v100rc1.py desktop_agent/launcher_v100rc2.py
 
       - name: Build executable
         shell: pwsh
@@ -48,15 +48,15 @@ jobs:
             --clean `
             --onefile `
             --console `
-            --name "SIEROOM-Desktop-Agent-v1.0-RC1" `
+            --name "SIEROOM-Desktop-Agent-v1.0-RC2" `
             --paths desktop_agent `
             --collect-all playwright `
-            desktop_agent/launcher_v100rc1.py
+            desktop_agent/launcher_v100rc2.py
 
       - name: Verify executable exists
         shell: pwsh
         run: |
-          $exe = "dist/SIEROOM-Desktop-Agent-v1.0-RC1.exe"
+          $exe = "dist/SIEROOM-Desktop-Agent-v1.0-RC2.exe"
           if (-not (Test-Path $exe)) {
             throw "No se generó $exe"
           }
@@ -68,33 +68,25 @@ jobs:
         shell: pwsh
         run: |
           @"
-          SIEROOM Desktop Agent 1.0 RC1 - PREFLIGHT DE ESCRITURA VERIFICADA
+          SIEROOM Desktop Agent v1.0 RC2 - PREFLIGHT DE ESCRITURA VERIFICADA
 
-          OBJETIVO:
-          - Consolidar las sondas 0.9.x en un flujo simple de producto.
-          - Detectar matrícula, alumno, columna/competencia y valor visible actual.
-          - Permitir preparar un plan de una sola nota A/B/C.
-          - Guardar un JSON auditable del plan en LOCALAPPDATA/SIEROOM/DesktopAgent/evidence.
+          CORRECCION RC2:
+          - RC1 podía detectar solo 3 competencias cuando la ventana de SIEweb era estrecha.
+          - RC2 elimina el corte fijo horizontal y detecta dinámicamente las celdas .td.bgprograma_3.
+          - El objetivo es recuperar las 4 competencias sin depender del ancho del monitor.
 
-          SEGURIDAD RC1:
-          - La escritura está BLOQUEADA por diseño.
-          - No modifica notas ni dispara el endpoint de guardado.
-          - El contrato preparado apunta al verified writer existente: sieweb.save_grades_verified.
-
-          USO:
-          1) Abre el EXE y entra a Registro de Notas de SIEweb.
-          2) Selecciona la pestaña SIEweb en la consola.
-          3) Cuando aparezca el PRECHECK, escribe P para preparar una prueba.
-          4) Elige alumno, columna y A/B/C.
-          5) Revisa el PLAN DE ESCRITURA VERIFICADA. En RC1 no se ejecutará.
+          SEGURIDAD:
+          - Esta RC2 NO escribe notas.
+          - Solo prepara un plan auditable alumno + competencia + valor actual + nota propuesta.
+          - La escritura real sigue bloqueada hasta conectar save_grades_verified.
           "@ | Set-Content -Encoding UTF8 dist/LEEME-PRIMERO.txt
 
       - name: Upload Windows build
         uses: actions/upload-artifact@v4
         with:
-          name: SIEROOM-Desktop-Agent-Windows-v1.0-RC1
+          name: SIEROOM-Desktop-Agent-Windows-v1.0-RC2
           path: |
-            dist/SIEROOM-Desktop-Agent-v1.0-RC1.exe
+            dist/SIEROOM-Desktop-Agent-v1.0-RC2.exe
             dist/LEEME-PRIMERO.txt
           if-no-files-found: error
           retention-days: 14
