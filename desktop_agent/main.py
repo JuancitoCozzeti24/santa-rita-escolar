@@ -11,7 +11,7 @@ from semantic_inspector import inspect_semantics
 
 
 APP_NAME = "SIEROOM Desktop Agent"
-APP_VERSION = "0.3.0"
+APP_VERSION = "0.3.1"
 
 
 def app_data_root() -> Path:
@@ -88,45 +88,54 @@ def print_semantic_summary(semantic) -> None:
 
 def print_gradebook_map(mapped) -> None:
     print("\n--- MAPEO DE REGISTRO DE NOTAS ---")
-    print(f"Tablas DOM: {mapped.table_count}")
-    print(f"Grillas ARIA: {mapped.grid_count}")
+    print(f"Frames/documentos inspeccionados: {mapped.frame_count}")
+    print(f"Tablas DOM totales: {mapped.table_count}")
+    print(f"Grillas ARIA totales: {mapped.grid_count}")
+    print(f"Filas candidatas DIV/grid: {mapped.candidate_row_count}")
     print(f"Controles visibles no secretos: {mapped.control_count}")
     if mapped.grade_like_values:
         print(f"Valores con forma de calificación detectados: {', '.join(mapped.grade_like_values[:30])}")
     else:
-        print("Valores con forma de calificación detectados: ninguno en controles/texto visible")
+        print("Valores con forma de calificación detectados: ninguno")
 
-    for table in mapped.tables[:6]:
+    for frame in mapped.frames:
         print(
-            f"  Tabla {table.get('table_index', 0) + 1}: "
-            f"{table.get('total_rows', 0)} filas DOM, "
-            f"{table.get('sampled_rows', 0)} analizadas"
+            f"  Frame {frame.get('frame_index', 0) + 1}: "
+            f"accesible={'sí' if frame.get('accessible') else 'no'} | "
+            f"tablas={frame.get('table_count', 0)} | "
+            f"grillas={frame.get('grid_count', 0)} | "
+            f"filas-candidatas={frame.get('candidate_row_count', 0)} | "
+            f"controles={frame.get('control_count', 0)}"
         )
-        headers = table.get("headers", [])
-        if headers:
-            print(f"    Encabezados ({len(headers)}): {' | '.join(headers[:18])}")
+        print(f"    URL frame: {frame.get('frame_url', '')}")
 
-        interesting_rows = []
-        for row in table.get("rows", []):
-            cells = row.get("cells", [])
-            controls = sum(len(cell.get("controls", [])) for cell in cells)
-            text = row.get("text", "")
-            if controls or text:
-                interesting_rows.append((row, controls))
-
-        print(f"    Filas con contenido/controles: {len(interesting_rows)}")
-        for row, controls in interesting_rows[:12]:
-            cells = row.get("cells", [])
-            first_texts = [cell.get("text", "") for cell in cells if cell.get("text", "")][:3]
-            preview = " | ".join(first_texts)[:220] or "(sin texto; posible fila de controles)"
-            print(f"      Fila {row.get('row_index', 0) + 1}: controles={controls} :: {preview}")
-
-    if mapped.grids:
-        for grid in mapped.grids[:4]:
+        for table in frame.get("tables", [])[:4]:
             print(
-                f"  Grilla {grid.get('grid_index', 0) + 1}: "
-                f"rol={grid.get('role', '')}, filas={grid.get('total_rows', 0)}"
+                f"    Tabla {table.get('table_index', 0) + 1}: "
+                f"{table.get('total_rows', 0)} filas DOM"
             )
+            headers = table.get("headers", [])
+            if headers:
+                print(f"      Encabezados: {' | '.join(headers[:14])}")
+            interesting = []
+            for row in table.get("rows", []):
+                controls = sum(len(cell.get("controls", [])) for cell in row.get("cells", []))
+                if controls or row.get("text"):
+                    interesting.append((row, controls))
+            for row, controls in interesting[:8]:
+                preview = row.get("text", "")[:220] or "(sin texto)"
+                print(f"      Fila {row.get('row_index', 0) + 1}: controles={controls} :: {preview}")
+
+        candidates = frame.get("candidate_rows", [])
+        if candidates:
+            print("    Filas DIV/grid candidatas (muestra):")
+            for index, row in enumerate(candidates[:12], start=1):
+                preview = row.get("text", "")[:220] or "(sin texto)"
+                print(
+                    f"      {index}. tag={row.get('tag', '')} "
+                    f"hijos={row.get('child_count', 0)} "
+                    f"clase={row.get('class_name', '')[:70]} :: {preview}"
+                )
 
 
 def choose_page(controller: ReadOnlyBrowserController, context, choice: str):
@@ -147,9 +156,9 @@ def main() -> None:
         evidence_dir=evidence_dir,
     )
 
-    print(f"{APP_NAME} v{APP_VERSION} — MAPEO ESTRUCTURAL (SOLO LECTURA)")
+    print(f"{APP_NAME} v{APP_VERSION} — MAPEO ESTRUCTURAL PROFUNDO (SOLO LECTURA)")
     print("No publica notas, comentarios ni modifica SIEweb/Classroom.")
-    print("Puede leer valores actuales de campos de notas NO secretos para mapear la libreta.")
+    print("Inspecciona documento principal, iframes y grillas DIV/ARIA.")
     print("Nunca lee campos password/hidden y no realiza escrituras.")
     print(f"Datos locales persistentes: {data_root}")
     print("Abriendo navegador dedicado en modo normal...")
@@ -231,7 +240,7 @@ def main() -> None:
                     )
                     print_gradebook_map(mapped)
                     print(f"Mapa detallado de libreta: {mapped_path}")
-                    print("OK: estructura de la libreta mapeada en modo lectura.")
+                    print("OK: estructura profunda de la libreta mapeada en modo lectura.")
                 except Exception as exc:
                     print(f"AVISO: no se pudo completar el mapeo profundo: {exc}")
 
