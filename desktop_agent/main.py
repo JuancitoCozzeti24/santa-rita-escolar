@@ -7,12 +7,13 @@ from pathlib import Path
 
 from browser_controller import ReadOnlyBrowserController
 from grade_cell_mapper import map_grade_cells
+from grade_cell_probe import probe_grade_cells
 from gradebook_mapper import map_gradebook
 from semantic_inspector import inspect_semantics
 
 
 APP_NAME = "SIEROOM Desktop Agent"
-APP_VERSION = "0.5.0"
+APP_VERSION = "0.6.0"
 
 
 def app_data_root() -> Path:
@@ -139,6 +140,35 @@ def print_grade_cell_map(cell_map) -> None:
         )
 
 
+def print_grade_cell_probe(probe) -> None:
+    print("\n--- CONTRATO DOM DE CELDAS DE NOTA ---")
+    print(f"Columnas inspeccionadas: {probe.column_count}")
+    print(f"Celdas estudiante×columna localizadas: {probe.probed_cell_count}")
+
+    print("\nColumnas semánticas:")
+    for col in probe.columns[:30]:
+        label = col.get("semantic_header") or col.get("header") or "(sin encabezado aislado)"
+        print(
+            f"  Col {col.get('index', 0) + 1:>2} | x={col.get('x')} | "
+            f"soporte={col.get('support')} | {label[:180]}"
+        )
+
+    print("\nFirmas DOM únicas de las celdas (muestra):")
+    for sig in probe.cell_signatures[:16]:
+        attrs = sig.get("attributes", {})
+        useful = []
+        for key in ("onclick", "data-id", "data-index", "data-col", "data-row", "id", "class", "tabindex", "role"):
+            value = attrs.get(key)
+            if value:
+                useful.append(f"{key}={value}")
+        suffix = " | ".join(useful) if useful else "sin atributos especiales visibles"
+        print(
+            f"  Col {sig.get('column_index', 0) + 1} | "
+            f"tag={sig.get('tag')} | clase={sig.get('class_name', '')[:100]} | "
+            f"onclick={'sí' if sig.get('has_onclick_property') or sig.get('onclick_attribute') else 'no'} | {suffix[:220]}"
+        )
+
+
 def choose_page(controller: ReadOnlyBrowserController, context, choice: str):
     pages = [page for page in context.pages if not page.is_closed()]
     if choice.isdigit():
@@ -157,9 +187,9 @@ def main() -> None:
         evidence_dir=evidence_dir,
     )
 
-    print(f"{APP_NAME} v{APP_VERSION} — MAPEO ESTUDIANTE → CELDA (SOLO LECTURA)")
+    print(f"{APP_NAME} v{APP_VERSION} — CONTRATO DE CELDAS (SOLO LECTURA)")
     print("No publica notas, comentarios ni modifica SIEweb/Classroom.")
-    print("Relaciona cada fila de estudiante con las celdas visuales de calificación por geometría.")
+    print("Identifica estudiantes, columnas, celdas y metadatos DOM sin hacer clic ni escribir.")
     print("Nunca lee campos password/hidden y no realiza escrituras.")
     print(f"Datos locales persistentes: {data_root}")
     print("Abriendo navegador dedicado en modo normal...")
@@ -251,10 +281,19 @@ def main() -> None:
                     print_grade_cell_map(cell_map)
                     print(f"Mapa estudiante→celda: {cell_path}")
 
-                    if mapped.student_row_count and cell_map.mapped_student_count:
+                    probe = probe_grade_cells(page, cell_map)
+                    probe_path = save_json(
+                        evidence_dir,
+                        f"{stamp}_sieweb_registro_notas_cell_contract.json",
+                        probe.as_dict(),
+                    )
+                    print_grade_cell_probe(probe)
+                    print(f"Contrato DOM de celdas: {probe_path}")
+
+                    if mapped.student_row_count and cell_map.mapped_student_count == mapped.student_row_count:
                         print(
-                            f"OK: {mapped.student_row_count} estudiantes aislados; "
-                            f"{cell_map.mapped_student_count} asociados a celdas visuales, sin modificar datos."
+                            f"OK: {mapped.student_row_count} estudiantes aislados y "
+                            f"{cell_map.column_count} columnas de nota mapeadas; metadatos DOM leídos sin modificar datos."
                         )
                     else:
                         print("AVISO: aún falta completar la asociación estudiante→celda.")
