@@ -38,7 +38,7 @@ jobs:
       - name: Validate Python sources
         shell: pwsh
         run: |
-          python -m py_compile desktop_agent/main.py desktop_agent/browser_controller.py desktop_agent/semantic_inspector.py desktop_agent/gradebook_mapper.py desktop_agent/grade_cell_mapper.py desktop_agent/grade_cell_probe.py desktop_agent/event_listener_probe.py desktop_agent/vue_event_probe.py desktop_agent/launcher_v08.py
+          python -m py_compile desktop_agent/main.py desktop_agent/browser_controller.py desktop_agent/semantic_inspector.py desktop_agent/gradebook_mapper.py desktop_agent/grade_cell_mapper.py desktop_agent/grade_cell_probe.py desktop_agent/event_listener_probe.py desktop_agent/vue_event_probe.py desktop_agent/editor_open_probe.py desktop_agent/launcher_v09.py
 
       - name: Build executable
         shell: pwsh
@@ -48,15 +48,15 @@ jobs:
             --clean `
             --onefile `
             --console `
-            --name "SIEROOM-Desktop-Agent-v0.8.0" `
+            --name "SIEROOM-Desktop-Agent-v0.9.0" `
             --paths desktop_agent `
             --collect-all playwright `
-            desktop_agent/launcher_v08.py
+            desktop_agent/launcher_v09.py
 
       - name: Verify executable exists
         shell: pwsh
         run: |
-          $exe = "dist/SIEROOM-Desktop-Agent-v0.8.0.exe"
+          $exe = "dist/SIEROOM-Desktop-Agent-v0.9.0.exe"
           if (-not (Test-Path $exe)) {
             throw "No se generó $exe"
           }
@@ -68,26 +68,31 @@ jobs:
         shell: pwsh
         run: |
           @"
-          SIEROOM Desktop Agent v0.8.0 - VUE/QUASAR HANDLER PROBE SOLO LECTURA
+          SIEROOM Desktop Agent v0.9.0 - PRUEBA CONTROLADA DE APERTURA DE EDITOR
+
+          DESCUBRIMIENTO CONFIRMADO EN v0.8:
+          - El listener de la celda invoca clickEdicion().
+          - El listener del ancestro/fila invoca clickAlumno(...).
+          - Ambos pasan por el wrapper Vue/Quasar de vendor.js.
 
           CAMBIOS PRINCIPALES:
-          - Conserva 28 estudiantes, 4 competencias y 112 celdas mapeadas.
-          - Conserva la detección CDP de listeners click en celda y ancestro.
-          - Inspecciona el objeto handler/originalHandler sin ejecutar eventos.
-          - Busca wrappers Vue y propiedades como fns/value/handler/invoker.
-          - Busca marcadores Vue en la celda y sus ancestros (__vue__, _vei, __vnode, etc.).
-          - Puede revelar la función real detrás del wrapper genérico de vendor.js.
-          - No hace clic, no enfoca, no escribe y no modifica calificaciones.
+          - Normaliza el desplazamiento horizontal de la libreta a la izquierda antes del mapeo.
+          - Mantiene el análisis de estudiantes, competencias, celdas y handlers.
+          - Ofrece una prueba OPCIONAL: el usuario elige E, estudiante y columna.
+          - La prueba hace un solo clic sobre la celda elegida para observar el editor.
+          - No escribe ningún valor y no activa guardar/enviar.
+          - Registra nuevos inputs/dialogs y solicitudes POST/PUT/PATCH/DELETE observadas al abrir.
+          - Envía Escape para cerrar el editor y verifica que el texto visible de la nota no cambió.
 
-          Esta versión sigue siendo SOLO LECTURA.
+          IMPORTANTE: la interacción es opcional. ENTER omite el clic y mantiene solo lectura.
           "@ | Set-Content -Encoding UTF8 dist/LEEME-PRIMERO.txt
 
       - name: Upload Windows build
         uses: actions/upload-artifact@v4
         with:
-          name: SIEROOM-Desktop-Agent-Windows-v0.8.0
+          name: SIEROOM-Desktop-Agent-Windows-v0.9.0
           path: |
-            dist/SIEROOM-Desktop-Agent-v0.8.0.exe
+            dist/SIEROOM-Desktop-Agent-v0.9.0.exe
             dist/LEEME-PRIMERO.txt
           if-no-files-found: error
           retention-days: 14
