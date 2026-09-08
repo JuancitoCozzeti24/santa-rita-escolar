@@ -6,12 +6,13 @@ from datetime import datetime
 from pathlib import Path
 
 from browser_controller import ReadOnlyBrowserController
+from grade_cell_mapper import map_grade_cells
 from gradebook_mapper import map_gradebook
 from semantic_inspector import inspect_semantics
 
 
 APP_NAME = "SIEROOM Desktop Agent"
-APP_VERSION = "0.4.0"
+APP_VERSION = "0.5.0"
 
 
 def app_data_root() -> Path:
@@ -94,10 +95,6 @@ def print_gradebook_map(mapped) -> None:
     print(f"Filas candidatas DIV/grid: {mapped.candidate_row_count}")
     print(f"ESTUDIANTES IDENTIFICADOS POR CÓDIGO: {mapped.student_row_count}")
     print(f"Controles visibles no secretos: {mapped.control_count}")
-    if mapped.grade_like_values:
-        print(f"Valores con forma de calificación detectados: {', '.join(mapped.grade_like_values[:30])}")
-    else:
-        print("Valores con forma de calificación detectados: ninguno")
 
     if mapped.student_rows:
         print("\n--- FILAS DE ESTUDIANTES IDENTIFICADAS ---")
@@ -110,42 +107,36 @@ def print_gradebook_map(mapped) -> None:
                 f"{student.get('name') or '(nombre no aislado)'} | "
                 f"celdas={len(cells)} controles={controls}"
             )
-            sample = [cell.get("text", "") for cell in cells if cell.get("text", "")][:8]
-            if sample:
-                print(f"     Muestra celdas: {' | '.join(sample)[:240]}")
     else:
         print("\nNo se aislaron todavía filas de estudiantes por código de 8 dígitos.")
 
-    for frame in mapped.frames:
-        print(
-            f"\n  Frame {frame.get('frame_index', 0) + 1}: "
-            f"accesible={'sí' if frame.get('accessible') else 'no'} | "
-            f"tablas={frame.get('table_count', 0)} | "
-            f"grillas={frame.get('grid_count', 0)} | "
-            f"filas-candidatas={frame.get('candidate_row_count', 0)} | "
-            f"estudiantes={frame.get('student_row_count', 0)} | "
-            f"controles={frame.get('control_count', 0)}"
-        )
-        print(f"    URL frame: {frame.get('frame_url', '')}")
 
-        headers = frame.get("header_cells", [])
-        if headers:
-            print("    Encabezados geométricos (muestra):")
-            for header in headers[:12]:
-                rect = header.get("rect", {})
-                print(
-                    f"      x={rect.get('x', '?')} ancho={rect.get('width', '?')} :: "
-                    f"{header.get('text', '')[:180]}"
-                )
+def print_grade_cell_map(cell_map) -> None:
+    print("\n--- MAPEO GEOMÉTRICO DE CELDAS DE NOTA ---")
+    print(f"Estudiantes base: {cell_map.student_count}")
+    print(f"Estudiantes con celdas de nota asociadas: {cell_map.mapped_student_count}")
+    print(f"COLUMNAS DE NOTA REPETIDAS DETECTADAS: {cell_map.column_count}")
 
-        for table in frame.get("tables", [])[:4]:
+    if cell_map.columns:
+        print("\nColumnas detectadas:")
+        for col in cell_map.columns[:30]:
+            header = col.get("header") or "(encabezado aún no aislado)"
             print(
-                f"    Tabla {table.get('table_index', 0) + 1}: "
-                f"{table.get('total_rows', 0)} filas DOM"
+                f"  Col {col.get('index', 0) + 1:>2} | x={col.get('x')} | "
+                f"ancho≈{col.get('average_width')} | soporte={col.get('support')} | {header[:150]}"
             )
-            headers_table = table.get("headers", [])
-            if headers_table:
-                print(f"      Encabezados: {' | '.join(headers_table[:14])}")
+            sample_class = col.get("sample_class") or ""
+            if sample_class:
+                print(f"       clase muestra: {sample_class[:180]}")
+
+    print("\nMuestra estudiante → celdas de nota:")
+    for student in cell_map.students[:12]:
+        cells = student.get("grade_cells", [])
+        xs = ", ".join(str(cell.get("x")) for cell in cells)
+        print(
+            f"  Orden {student.get('order') or '?':>2} | {student.get('code')} | "
+            f"{student.get('name') or '(sin nombre)'} | celdas_nota={len(cells)} | x=[{xs}]"
+        )
 
 
 def choose_page(controller: ReadOnlyBrowserController, context, choice: str):
@@ -166,9 +157,9 @@ def main() -> None:
         evidence_dir=evidence_dir,
     )
 
-    print(f"{APP_NAME} v{APP_VERSION} — IDENTIFICACIÓN DE ESTUDIANTES (SOLO LECTURA)")
+    print(f"{APP_NAME} v{APP_VERSION} — MAPEO ESTUDIANTE → CELDA (SOLO LECTURA)")
     print("No publica notas, comentarios ni modifica SIEweb/Classroom.")
-    print("Busca filas reales de estudiantes usando el código SIEweb de 8 dígitos y geometría DOM.")
+    print("Relaciona cada fila de estudiante con las celdas visuales de calificación por geometría.")
     print("Nunca lee campos password/hidden y no realiza escrituras.")
     print(f"Datos locales persistentes: {data_root}")
     print("Abriendo navegador dedicado en modo normal...")
@@ -250,13 +241,23 @@ def main() -> None:
                     )
                     print_gradebook_map(mapped)
                     print(f"\nMapa detallado de libreta: {mapped_path}")
-                    if mapped.student_row_count:
+
+                    cell_map = map_grade_cells(page)
+                    cell_path = save_json(
+                        evidence_dir,
+                        f"{stamp}_sieweb_registro_notas_grade_cells.json",
+                        cell_map.as_dict(),
+                    )
+                    print_grade_cell_map(cell_map)
+                    print(f"Mapa estudiante→celda: {cell_path}")
+
+                    if mapped.student_row_count and cell_map.mapped_student_count:
                         print(
-                            f"OK: {mapped.student_row_count} filas de estudiantes fueron aisladas "
-                            "sin modificar datos."
+                            f"OK: {mapped.student_row_count} estudiantes aislados; "
+                            f"{cell_map.mapped_student_count} asociados a celdas visuales, sin modificar datos."
                         )
                     else:
-                        print("AVISO: aún no se aislaron filas de estudiantes.")
+                        print("AVISO: aún falta completar la asociación estudiante→celda.")
                 except Exception as exc:
                     print(f"AVISO: no se pudo completar el mapeo profundo: {exc}")
 
