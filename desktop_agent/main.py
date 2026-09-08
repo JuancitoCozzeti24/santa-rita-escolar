@@ -11,7 +11,7 @@ from semantic_inspector import inspect_semantics
 
 
 APP_NAME = "SIEROOM Desktop Agent"
-APP_VERSION = "0.3.1"
+APP_VERSION = "0.4.0"
 
 
 def app_data_root() -> Path:
@@ -92,50 +92,60 @@ def print_gradebook_map(mapped) -> None:
     print(f"Tablas DOM totales: {mapped.table_count}")
     print(f"Grillas ARIA totales: {mapped.grid_count}")
     print(f"Filas candidatas DIV/grid: {mapped.candidate_row_count}")
+    print(f"ESTUDIANTES IDENTIFICADOS POR CÓDIGO: {mapped.student_row_count}")
     print(f"Controles visibles no secretos: {mapped.control_count}")
     if mapped.grade_like_values:
         print(f"Valores con forma de calificación detectados: {', '.join(mapped.grade_like_values[:30])}")
     else:
         print("Valores con forma de calificación detectados: ninguno")
 
+    if mapped.student_rows:
+        print("\n--- FILAS DE ESTUDIANTES IDENTIFICADAS ---")
+        for student in mapped.student_rows[:40]:
+            controls = len(student.get("controls", []))
+            cells = student.get("cells", [])
+            print(
+                f"  Orden {student.get('order') or '?':>2} | "
+                f"Código {student.get('code', '')} | "
+                f"{student.get('name') or '(nombre no aislado)'} | "
+                f"celdas={len(cells)} controles={controls}"
+            )
+            sample = [cell.get("text", "") for cell in cells if cell.get("text", "")][:8]
+            if sample:
+                print(f"     Muestra celdas: {' | '.join(sample)[:240]}")
+    else:
+        print("\nNo se aislaron todavía filas de estudiantes por código de 8 dígitos.")
+
     for frame in mapped.frames:
         print(
-            f"  Frame {frame.get('frame_index', 0) + 1}: "
+            f"\n  Frame {frame.get('frame_index', 0) + 1}: "
             f"accesible={'sí' if frame.get('accessible') else 'no'} | "
             f"tablas={frame.get('table_count', 0)} | "
             f"grillas={frame.get('grid_count', 0)} | "
             f"filas-candidatas={frame.get('candidate_row_count', 0)} | "
+            f"estudiantes={frame.get('student_row_count', 0)} | "
             f"controles={frame.get('control_count', 0)}"
         )
         print(f"    URL frame: {frame.get('frame_url', '')}")
+
+        headers = frame.get("header_cells", [])
+        if headers:
+            print("    Encabezados geométricos (muestra):")
+            for header in headers[:12]:
+                rect = header.get("rect", {})
+                print(
+                    f"      x={rect.get('x', '?')} ancho={rect.get('width', '?')} :: "
+                    f"{header.get('text', '')[:180]}"
+                )
 
         for table in frame.get("tables", [])[:4]:
             print(
                 f"    Tabla {table.get('table_index', 0) + 1}: "
                 f"{table.get('total_rows', 0)} filas DOM"
             )
-            headers = table.get("headers", [])
-            if headers:
-                print(f"      Encabezados: {' | '.join(headers[:14])}")
-            interesting = []
-            for row in table.get("rows", []):
-                controls = sum(len(cell.get("controls", [])) for cell in row.get("cells", []))
-                if controls or row.get("text"):
-                    interesting.append((row, controls))
-            for row, controls in interesting[:8]:
-                preview = row.get("text", "")[:220] or "(sin texto)"
-                print(f"      Fila {row.get('row_index', 0) + 1}: controles={controls} :: {preview}")
-
-        candidates = frame.get("candidate_rows", [])
-        if candidates:
-            print("    Filas DIV/grid candidatas (muestra):")
-            for index, row in enumerate(candidates[:12], start=1):
-                preview = row.get("text", "")[:220] or "(sin texto)"
-                print(
-                    f"      {index}. tag={row.get('tag', '')} "
-                    f"hijos={row.get('child_count', 0)} "
-                    f"clase={row.get('class_name', '')[:70]} :: {preview}"
-                )
+            headers_table = table.get("headers", [])
+            if headers_table:
+                print(f"      Encabezados: {' | '.join(headers_table[:14])}")
 
 
 def choose_page(controller: ReadOnlyBrowserController, context, choice: str):
@@ -156,9 +166,9 @@ def main() -> None:
         evidence_dir=evidence_dir,
     )
 
-    print(f"{APP_NAME} v{APP_VERSION} — MAPEO ESTRUCTURAL PROFUNDO (SOLO LECTURA)")
+    print(f"{APP_NAME} v{APP_VERSION} — IDENTIFICACIÓN DE ESTUDIANTES (SOLO LECTURA)")
     print("No publica notas, comentarios ni modifica SIEweb/Classroom.")
-    print("Inspecciona documento principal, iframes y grillas DIV/ARIA.")
+    print("Busca filas reales de estudiantes usando el código SIEweb de 8 dígitos y geometría DOM.")
     print("Nunca lee campos password/hidden y no realiza escrituras.")
     print(f"Datos locales persistentes: {data_root}")
     print("Abriendo navegador dedicado en modo normal...")
@@ -239,8 +249,14 @@ def main() -> None:
                         mapped.as_dict(),
                     )
                     print_gradebook_map(mapped)
-                    print(f"Mapa detallado de libreta: {mapped_path}")
-                    print("OK: estructura profunda de la libreta mapeada en modo lectura.")
+                    print(f"\nMapa detallado de libreta: {mapped_path}")
+                    if mapped.student_row_count:
+                        print(
+                            f"OK: {mapped.student_row_count} filas de estudiantes fueron aisladas "
+                            "sin modificar datos."
+                        )
+                    else:
+                        print("AVISO: aún no se aislaron filas de estudiantes.")
                 except Exception as exc:
                     print(f"AVISO: no se pudo completar el mapeo profundo: {exc}")
 
