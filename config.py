@@ -37,6 +37,34 @@ def _install_bridge_download_bootstrap() -> None:
 _install_bridge_download_bootstrap()
 
 
+def _install_bitacora_bootstrap() -> None:
+    """Instala la política/herramienta de bitácora al crearse FastMCP."""
+    try:
+        from mcp.server.fastmcp import FastMCP
+    except Exception:
+        return
+
+    original_init = FastMCP.__init__
+    if getattr(original_init, "_sieroom_bitacora_bootstrap", False):
+        return
+
+    @functools.wraps(original_init)
+    def init_with_bitacora(self, *args, **kwargs):
+        original_init(self, *args, **kwargs)
+        try:
+            from bitacora import install as install_bitacora
+
+            install_bitacora(self)
+        except Exception as exc:
+            print(f"SieRoom Bitácora: error habilitando módulo: {exc}", flush=True)
+
+    setattr(init_with_bitacora, "_sieroom_bitacora_bootstrap", True)
+    FastMCP.__init__ = init_with_bitacora
+
+
+_install_bitacora_bootstrap()
+
+
 def _int(name: str, default: int) -> int:
     raw = os.getenv(name)
     return int(raw) if raw else default
