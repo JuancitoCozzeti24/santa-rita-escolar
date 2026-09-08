@@ -38,7 +38,7 @@ jobs:
       - name: Validate Python sources
         shell: pwsh
         run: |
-          python -m py_compile desktop_agent/main.py desktop_agent/browser_controller.py desktop_agent/semantic_inspector.py desktop_agent/gradebook_mapper.py desktop_agent/grade_cell_mapper.py desktop_agent/grade_cell_probe.py desktop_agent/event_listener_probe.py desktop_agent/vue_event_probe.py desktop_agent/editor_open_probe.py desktop_agent/launcher_v09.py
+          python -m py_compile desktop_agent/main.py desktop_agent/browser_controller.py desktop_agent/semantic_inspector.py desktop_agent/gradebook_mapper.py desktop_agent/grade_cell_mapper.py desktop_agent/grade_cell_probe.py desktop_agent/event_listener_probe.py desktop_agent/vue_event_probe.py desktop_agent/editor_open_probe.py desktop_agent/editor_open_probe_v2.py desktop_agent/launcher_v091.py
 
       - name: Build executable
         shell: pwsh
@@ -48,15 +48,15 @@ jobs:
             --clean `
             --onefile `
             --console `
-            --name "SIEROOM-Desktop-Agent-v0.9.0" `
+            --name "SIEROOM-Desktop-Agent-v0.9.1" `
             --paths desktop_agent `
             --collect-all playwright `
-            desktop_agent/launcher_v09.py
+            desktop_agent/launcher_v091.py
 
       - name: Verify executable exists
         shell: pwsh
         run: |
-          $exe = "dist/SIEROOM-Desktop-Agent-v0.9.0.exe"
+          $exe = "dist/SIEROOM-Desktop-Agent-v0.9.1.exe"
           if (-not (Test-Path $exe)) {
             throw "No se generó $exe"
           }
@@ -68,31 +68,32 @@ jobs:
         shell: pwsh
         run: |
           @"
-          SIEROOM Desktop Agent v0.9.0 - PRUEBA CONTROLADA DE APERTURA DE EDITOR
+          SIEROOM Desktop Agent v0.9.1 - PRUEBA CONTROLADA V2
 
-          DESCUBRIMIENTO CONFIRMADO EN v0.8:
-          - El listener de la celda invoca clickEdicion().
-          - El listener del ancestro/fila invoca clickAlumno(...).
-          - Ambos pasan por el wrapper Vue/Quasar de vendor.js.
+          RESULTADO v0.9.0:
+          - El clic único no abrió un editor nuevo.
+          - No hubo solicitudes de escritura y la nota permaneció intacta.
+          - El contrato Vue/Quasar confirma clickAlumno(...) en fila y clickEdicion() en celda.
 
-          CAMBIOS PRINCIPALES:
-          - Normaliza el desplazamiento horizontal de la libreta a la izquierda antes del mapeo.
-          - Mantiene el análisis de estudiantes, competencias, celdas y handlers.
-          - Ofrece una prueba OPCIONAL: el usuario elige E, estudiante y columna.
-          - La prueba hace un solo clic sobre la celda elegida para observar el editor.
-          - No escribe ningún valor y no activa guardar/enviar.
-          - Registra nuevos inputs/dialogs y solicitudes POST/PUT/PATCH/DELETE observadas al abrir.
-          - Envía Escape para cerrar el editor y verifica que el texto visible de la nota no cambió.
+          CAMBIO PRINCIPAL:
+          - La prueba opcional ahora hace DOS pasos seguros:
+            1) selecciona primero el alumno objetivo en su fila;
+            2) después hace clic en su celda de nota.
+          - Verifica el rótulo Estudiante: antes y después para confirmar selección.
+          - Amplía la detección del editor mediante activeElement, inputs, combobox, contenteditable, q-menu/q-dialog y cambios visibles.
+          - No escribe A/B/C ni ningún valor.
+          - No activa Guardar/Enviar.
+          - Envía Escape y verifica que el texto visible de la nota no cambió.
 
-          IMPORTANTE: la interacción es opcional. ENTER omite el clic y mantiene solo lectura.
+          IMPORTANTE: la interacción es opcional. ENTER omite la prueba.
           "@ | Set-Content -Encoding UTF8 dist/LEEME-PRIMERO.txt
 
       - name: Upload Windows build
         uses: actions/upload-artifact@v4
         with:
-          name: SIEROOM-Desktop-Agent-Windows-v0.9.0
+          name: SIEROOM-Desktop-Agent-Windows-v0.9.1
           path: |
-            dist/SIEROOM-Desktop-Agent-v0.9.0.exe
+            dist/SIEROOM-Desktop-Agent-v0.9.1.exe
             dist/LEEME-PRIMERO.txt
           if-no-files-found: error
           retention-days: 14
