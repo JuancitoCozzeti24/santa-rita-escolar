@@ -38,7 +38,7 @@ jobs:
       - name: Validate Python sources
         shell: pwsh
         run: |
-          python -m py_compile desktop_agent/main.py desktop_agent/browser_controller.py desktop_agent/semantic_inspector.py desktop_agent/gradebook_mapper.py desktop_agent/grade_cell_mapper.py desktop_agent/grade_cell_probe.py desktop_agent/event_listener_probe.py desktop_agent/vue_event_probe.py desktop_agent/editor_open_probe.py desktop_agent/editor_open_probe_v2.py desktop_agent/editor_contract_probe.py desktop_agent/editor_handler_probe.py desktop_agent/editor_closure_probe.py desktop_agent/editor_closure_probe_fast.py desktop_agent/editor_component_probe.py desktop_agent/editor_component_probe_v2.py desktop_agent/launcher_v091.py desktop_agent/launcher_v092.py desktop_agent/launcher_v093.py desktop_agent/launcher_v094.py desktop_agent/launcher_v095.py desktop_agent/launcher_v096.py desktop_agent/launcher_v097.py
+          python -m py_compile desktop_agent/main.py desktop_agent/browser_controller.py desktop_agent/semantic_inspector.py desktop_agent/gradebook_mapper.py desktop_agent/grade_cell_mapper.py desktop_agent/grade_cell_probe.py desktop_agent/event_listener_probe.py desktop_agent/vue_event_probe.py desktop_agent/editor_open_probe.py desktop_agent/editor_open_probe_v2.py desktop_agent/editor_contract_probe.py desktop_agent/editor_handler_probe.py desktop_agent/editor_closure_probe.py desktop_agent/editor_closure_probe_fast.py desktop_agent/editor_component_probe.py desktop_agent/editor_component_probe_v2.py desktop_agent/launcher_v091.py desktop_agent/launcher_v092.py desktop_agent/launcher_v093.py desktop_agent/launcher_v094.py desktop_agent/launcher_v095.py desktop_agent/launcher_v096.py desktop_agent/launcher_v097.py desktop_agent/launcher_v098.py
 
       - name: Build executable
         shell: pwsh
@@ -48,15 +48,15 @@ jobs:
             --clean `
             --onefile `
             --console `
-            --name "SIEROOM-Desktop-Agent-v0.9.7" `
+            --name "SIEROOM-Desktop-Agent-v0.9.8" `
             --paths desktop_agent `
             --collect-all playwright `
-            desktop_agent/launcher_v097.py
+            desktop_agent/launcher_v098.py
 
       - name: Verify executable exists
         shell: pwsh
         run: |
-          $exe = "dist/SIEROOM-Desktop-Agent-v0.9.7.exe"
+          $exe = "dist/SIEROOM-Desktop-Agent-v0.9.8.exe"
           if (-not (Test-Path $exe)) {
             throw "No se generó $exe"
           }
@@ -68,19 +68,17 @@ jobs:
         shell: pwsh
         run: |
           @"
-          SIEROOM Desktop Agent v0.9.7 - TRAZA REAL Symbol(_assign) -> COMPONENTE
+          SIEROOM Desktop Agent v0.9.8 - RESULTADO VISIBLE Y CIERRE CONTROLADO
 
-          RESULTADO DE v0.9.6:
-          - La prueba termino correctamente y volvió al menú por diseño.
-          - v0.9.6 capturó el HTMLInputElement, no el componente Vue real.
-          - Por eso aparecieron muchos TypeError: Illegal invocation y blur [native code].
+          CORRECCION PRINCIPAL:
+          - v0.9.7 cerraba la consola automáticamente al terminar la prueba E.
+          - v0.9.8 mantiene la ventana abierta para poder leer y tomar captura.
+          - Solo se cierra cuando el usuario presiona ENTER al final.
+          - No vuelve al menú Classroom/SIEweb después de la prueba.
 
-          CAMBIO PRINCIPAL:
-          - Localiza Symbol(_assign) del input, confirmado antes como function(a){return e.nota=a}.
-          - Inspecciona la closure de ESA función para capturar el e que contiene nota.
-          - Lee propiedades/funciones relevantes sin invocar getters ni callbacks.
+          OBJETIVO TECNICO:
+          - Mantiene la misma traza Symbol(_assign) -> e.nota -> componente Vue real.
           - NO escribe notas y cierra el editor con Escape.
-          - Después de la prueba E, el agente termina automáticamente para no volver al menú 1/2.
 
           Esta versión sigue siendo SOLO LECTURA sobre calificaciones.
           "@ | Set-Content -Encoding UTF8 dist/LEEME-PRIMERO.txt
@@ -88,9 +86,9 @@ jobs:
       - name: Upload Windows build
         uses: actions/upload-artifact@v4
         with:
-          name: SIEROOM-Desktop-Agent-Windows-v0.9.7
+          name: SIEROOM-Desktop-Agent-Windows-v0.9.8
           path: |
-            dist/SIEROOM-Desktop-Agent-v0.9.7.exe
+            dist/SIEROOM-Desktop-Agent-v0.9.8.exe
             dist/LEEME-PRIMERO.txt
           if-no-files-found: error
           retention-days: 14
