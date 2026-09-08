@@ -48,7 +48,7 @@ jobs:
             --clean `
             --onefile `
             --console `
-            --name "SIEROOM-Desktop-Agent-v0.3.0" `
+            --name "SIEROOM-Desktop-Agent-v0.3.1" `
             --paths desktop_agent `
             --collect-all playwright `
             desktop_agent/main.py
@@ -56,7 +56,7 @@ jobs:
       - name: Verify executable exists
         shell: pwsh
         run: |
-          $exe = "dist/SIEROOM-Desktop-Agent-v0.3.0.exe"
+          $exe = "dist/SIEROOM-Desktop-Agent-v0.3.1.exe"
           if (-not (Test-Path $exe)) {
             throw "No se generó $exe"
           }
@@ -68,16 +68,15 @@ jobs:
         shell: pwsh
         run: |
           @"
-          SIEROOM Desktop Agent v0.3.0 - MAPEO ESTRUCTURAL SOLO LECTURA
+          SIEROOM Desktop Agent v0.3.1 - MAPEO PROFUNDO SOLO LECTURA
 
           CAMBIOS PRINCIPALES:
-          - Mantiene el explorador semántico de Classroom y SIEweb.
-          - En Registro de Notas hace un mapeo profundo de tablas, filas y celdas.
-          - Detecta controles editables dentro de cada fila/celda y los relaciona con su posición.
-          - Detecta grillas ARIA además de tablas HTML.
-          - Puede leer valores actuales de campos de notas NO secretos para entender la libreta.
+          - Inspecciona el documento principal y todos los iframes adjuntos.
+          - Detecta tablas HTML y grillas ARIA.
+          - Detecta filas renderizadas con DIV por librerías como SlickGrid, AG Grid, jqGrid, Kendo y similares.
+          - Reporta por frame dónde aparecen estudiantes, celdas y controles.
+          - Puede leer valores actuales NO secretos para entender la estructura.
           - Excluye siempre password y hidden.
-          - Genera un mapa JSON detallado para diseñar la futura escritura verificada.
 
           Esta versión NO escribe notas, comentarios ni modifica datos.
           "@ | Set-Content -Encoding UTF8 dist/LEEME-PRIMERO.txt
@@ -85,9 +84,9 @@ jobs:
       - name: Upload Windows build
         uses: actions/upload-artifact@v4
         with:
-          name: SIEROOM-Desktop-Agent-Windows-v0.3.0
+          name: SIEROOM-Desktop-Agent-Windows-v0.3.1
           path: |
-            dist/SIEROOM-Desktop-Agent-v0.3.0.exe
+            dist/SIEROOM-Desktop-Agent-v0.3.1.exe
             dist/LEEME-PRIMERO.txt
           if-no-files-found: error
           retention-days: 14
