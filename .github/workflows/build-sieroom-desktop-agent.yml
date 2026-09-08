@@ -40,7 +40,7 @@ jobs:
       - name: Validate Python sources
         shell: pwsh
         run: |
-          python -m py_compile sieweb.py config.py desktop_agent/main.py desktop_agent/browser_controller.py desktop_agent/semantic_inspector.py desktop_agent/gradebook_mapper.py desktop_agent/grade_cell_mapper.py desktop_agent/grade_cell_mapper_rc2.py desktop_agent/grade_cell_mapper_rc3.py desktop_agent/grade_cell_probe.py desktop_agent/editor_open_probe.py desktop_agent/launcher_v100rc1.py desktop_agent/launcher_v100rc2.py desktop_agent/launcher_v100rc3.py desktop_agent/verified_writer_bridge.py desktop_agent/launcher_v100rc4.py desktop_agent/browser_auth_rc5.py desktop_agent/launcher_v100rc5.py desktop_agent/launcher_v100rc6.py desktop_agent/launcher_v100rc7.py desktop_agent/launcher_v100rc8.py
+          python -m py_compile sieweb.py config.py desktop_agent/main.py desktop_agent/browser_controller.py desktop_agent/semantic_inspector.py desktop_agent/gradebook_mapper.py desktop_agent/grade_cell_mapper.py desktop_agent/grade_cell_mapper_rc2.py desktop_agent/grade_cell_mapper_rc3.py desktop_agent/grade_cell_probe.py desktop_agent/editor_open_probe.py desktop_agent/launcher_v100rc1.py desktop_agent/launcher_v100rc2.py desktop_agent/launcher_v100rc3.py desktop_agent/verified_writer_bridge.py desktop_agent/launcher_v100rc4.py desktop_agent/browser_auth_rc5.py desktop_agent/launcher_v100rc5.py desktop_agent/launcher_v100rc6.py desktop_agent/launcher_v100rc7.py desktop_agent/launcher_v100rc8.py desktop_agent/launcher_v100rc9.py
 
       - name: Build executable
         shell: pwsh
@@ -50,16 +50,16 @@ jobs:
             --clean `
             --onefile `
             --console `
-            --name "SIEROOM-Desktop-Agent-v1.0-RC8" `
+            --name "SIEROOM-Desktop-Agent-v1.0-RC9" `
             --paths . `
             --paths desktop_agent `
             --collect-all playwright `
-            desktop_agent/launcher_v100rc8.py
+            desktop_agent/launcher_v100rc9.py
 
       - name: Verify executable exists
         shell: pwsh
         run: |
-          $exe = "dist/SIEROOM-Desktop-Agent-v1.0-RC8.exe"
+          $exe = "dist/SIEROOM-Desktop-Agent-v1.0-RC9.exe"
           if (-not (Test-Path $exe)) {
             throw "No se generó $exe"
           }
@@ -71,30 +71,34 @@ jobs:
         shell: pwsh
         run: |
           @"
-          SIEROOM Desktop Agent v1.0 RC8 - PREFLIGHT DE LOTE
+          SIEROOM Desktop Agent v1.0 RC9 - LOTE SECUENCIAL VERIFICADO
 
-          OBJETIVO RC8:
-          - Da el salto desde una sola celda verificada a la preparación segura de un lote.
-          - Permite preparar hasta 12 celdas por lote.
-          - Valida cada destino por DOM + API usando la sesión real del navegador.
-          - Rechaza celdas duplicadas, destinos no confiables y sobrescrituras no permitidas.
-          - Genera un JSON auditable con todas las celdas aprobadas y bloqueadas.
-          - RC8 NO ESCRIBE NINGUNA NOTA. Es una etapa de preflight antes de habilitar ejecución secuencial.
+          OBJETIVO RC9:
+          - Ejecuta lotes pequeños de hasta 6 celdas.
+          - Hace preflight completo DOM + API antes de permitir cualquier escritura.
+          - Exige una frase exacta de confirmación del lote.
+          - Revalida cada celda justo antes de ejecutarla, para evitar snapshots obsoletos.
+          - Después de cada celda exige verificación API + navegador.
+          - Ante el primer fallo, detiene inmediatamente las celdas posteriores.
+          - No hace rollback automático de celdas ya verificadas; un rollback ciego sería más riesgoso.
+          - No sobrescribe una nota distinta ya existente.
+          - Rechaza celdas duplicadas.
 
           PRUEBA SUGERIDA:
-          - Abrir Registro de Notas en SIEweb.
-          - Elegir B.
-          - Preparar 2 celdas vacías con notas A/B/C.
-          - Verificar que ambas aparezcan en RESULTADO DEL PREFLIGHT DE LOTE.
-          - No se enviará ningún PUT.
+          - Abrir 2.º A / Matemática / 3.er período / Registro de Notas.
+          - Elegir B y preparar 2 celdas:
+              1) alumno 1, columna 1, A (ya presente)
+              2) alumno 2, columna 1, A (vacía)
+          - Revisar el PREFLIGHT FINAL DEL LOTE.
+          - NO confirmar todavía si se desea revisar con ChatGPT antes de escribir.
           "@ | Set-Content -Encoding UTF8 dist/LEEME-PRIMERO.txt
 
       - name: Upload Windows build
         uses: actions/upload-artifact@v4
         with:
-          name: SIEROOM-Desktop-Agent-Windows-v1.0-RC8
+          name: SIEROOM-Desktop-Agent-Windows-v1.0-RC9
           path: |
-            dist/SIEROOM-Desktop-Agent-v1.0-RC8.exe
+            dist/SIEROOM-Desktop-Agent-v1.0-RC9.exe
             dist/LEEME-PRIMERO.txt
           if-no-files-found: error
           retention-days: 14
