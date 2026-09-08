@@ -6,11 +6,12 @@ from datetime import datetime
 from pathlib import Path
 
 from browser_controller import ReadOnlyBrowserController
+from gradebook_mapper import map_gradebook
 from semantic_inspector import inspect_semantics
 
 
 APP_NAME = "SIEROOM Desktop Agent"
-APP_VERSION = "0.2.0"
+APP_VERSION = "0.3.0"
 
 
 def app_data_root() -> Path:
@@ -28,15 +29,20 @@ def prompt(message: str) -> str:
         return "q"
 
 
-def save_semantic_report(evidence_dir: Path, semantic) -> Path:
+def save_json(evidence_dir: Path, filename: str, payload: dict) -> Path:
     evidence_dir.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    path = evidence_dir / f"{stamp}_{semantic.site}_{semantic.page_kind}_semantic.json"
-    path.write_text(
-        json.dumps(semantic.as_dict(), ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
+    path = evidence_dir / filename
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     return path
+
+
+def save_semantic_report(evidence_dir: Path, semantic) -> Path:
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return save_json(
+        evidence_dir,
+        f"{stamp}_{semantic.site}_{semantic.page_kind}_semantic.json",
+        semantic.as_dict(),
+    )
 
 
 def print_semantic_summary(semantic) -> None:
@@ -53,13 +59,11 @@ def print_semantic_summary(semantic) -> None:
         if courses:
             print("Cursos visibles (muestra):")
             for item in courses[:12]:
-                name = item.get("text") or "(sin texto)"
-                print(f"  - {name}")
+                print(f"  - {item.get('text') or '(sin texto)'}")
         if assignments:
             print("Actividades visibles (muestra):")
             for item in assignments[:12]:
-                name = item.get("text") or "(sin texto)"
-                print(f"  - {name}")
+                print(f"  - {item.get('text') or '(sin texto)'}")
         return
 
     if semantic.site == "sieweb":
@@ -68,21 +72,9 @@ def print_semantic_summary(semantic) -> None:
         fields = summary.get("fields", [])
         print(f"Selectores detectados: {len(selects)}")
         print(f"Tablas detectadas: {len(tables)}")
-        print(f"Campos editables detectados (sin leer valores): {len(fields)}")
-
+        print(f"Campos editables detectados: {len(fields)}")
         if semantic.page_kind == "registro_notas":
             print("OK: pantalla interna de REGISTRO DE NOTAS reconocida.")
-
-        for index, select in enumerate(selects[:10], start=1):
-            label = select.get("aria_label") or select.get("name") or select.get("id") or f"selector {index}"
-            selected = [o.get("text") for o in select.get("options", []) if o.get("selected")]
-            sample = [o.get("text") for o in select.get("options", []) if o.get("text")][:10]
-            print(f"  Selector {index}: {label}")
-            if selected:
-                print(f"    Seleccionado: {', '.join(selected)}")
-            if sample:
-                print(f"    Opciones visibles: {', '.join(sample)}")
-
         for index, table in enumerate(tables[:6], start=1):
             headers = table.get("headers", [])
             rows = table.get("rows", [])
@@ -92,6 +84,49 @@ def print_semantic_summary(semantic) -> None:
         return
 
     print("Pantalla no reconocida como Classroom o SIEweb.")
+
+
+def print_gradebook_map(mapped) -> None:
+    print("\n--- MAPEO DE REGISTRO DE NOTAS ---")
+    print(f"Tablas DOM: {mapped.table_count}")
+    print(f"Grillas ARIA: {mapped.grid_count}")
+    print(f"Controles visibles no secretos: {mapped.control_count}")
+    if mapped.grade_like_values:
+        print(f"Valores con forma de calificación detectados: {', '.join(mapped.grade_like_values[:30])}")
+    else:
+        print("Valores con forma de calificación detectados: ninguno en controles/texto visible")
+
+    for table in mapped.tables[:6]:
+        print(
+            f"  Tabla {table.get('table_index', 0) + 1}: "
+            f"{table.get('total_rows', 0)} filas DOM, "
+            f"{table.get('sampled_rows', 0)} analizadas"
+        )
+        headers = table.get("headers", [])
+        if headers:
+            print(f"    Encabezados ({len(headers)}): {' | '.join(headers[:18])}")
+
+        interesting_rows = []
+        for row in table.get("rows", []):
+            cells = row.get("cells", [])
+            controls = sum(len(cell.get("controls", [])) for cell in cells)
+            text = row.get("text", "")
+            if controls or text:
+                interesting_rows.append((row, controls))
+
+        print(f"    Filas con contenido/controles: {len(interesting_rows)}")
+        for row, controls in interesting_rows[:12]:
+            cells = row.get("cells", [])
+            first_texts = [cell.get("text", "") for cell in cells if cell.get("text", "")][:3]
+            preview = " | ".join(first_texts)[:220] or "(sin texto; posible fila de controles)"
+            print(f"      Fila {row.get('row_index', 0) + 1}: controles={controls} :: {preview}")
+
+    if mapped.grids:
+        for grid in mapped.grids[:4]:
+            print(
+                f"  Grilla {grid.get('grid_index', 0) + 1}: "
+                f"rol={grid.get('role', '')}, filas={grid.get('total_rows', 0)}"
+            )
 
 
 def choose_page(controller: ReadOnlyBrowserController, context, choice: str):
@@ -112,9 +147,10 @@ def main() -> None:
         evidence_dir=evidence_dir,
     )
 
-    print(f"{APP_NAME} v{APP_VERSION} — EXPLORADOR SEMÁNTICO (SOLO LECTURA)")
+    print(f"{APP_NAME} v{APP_VERSION} — MAPEO ESTRUCTURAL (SOLO LECTURA)")
     print("No publica notas, comentarios ni modifica SIEweb/Classroom.")
-    print("No lee contraseñas ni guarda valores de campos editables.")
+    print("Puede leer valores actuales de campos de notas NO secretos para mapear la libreta.")
+    print("Nunca lee campos password/hidden y no realiza escrituras.")
     print(f"Datos locales persistentes: {data_root}")
     print("Abriendo navegador dedicado en modo normal...")
 
@@ -130,7 +166,7 @@ def main() -> None:
     try:
         print(f"\nNavegador detectado: {controller.browser_name}")
         print("Puedes navegar libremente por Classroom y SIEweb.")
-        print("El agente permanecerá abierto y podrás inspeccionar varias pantallas.")
+        print("El agente permanecerá abierto para inspeccionar varias pantallas.")
 
         while True:
             pages_info = controller.describe_pages(context)
@@ -175,14 +211,32 @@ def main() -> None:
             print(f"Sitio detectado: {report.site}")
             print(f"Título: {report.title}")
             print(f"URL: {report.url}")
-            print(f"Encabezados: {len(report.headings)} | Botones: {len(report.buttons)} | Enlaces: {len(report.links)}")
+            print(
+                f"Encabezados: {len(report.headings)} | "
+                f"Botones: {len(report.buttons)} | Enlaces: {len(report.links)}"
+            )
             print(f"Evidencia básica: {json_path}")
             print(f"Captura: {png_path}")
             print_semantic_summary(semantic)
             print(f"Reporte semántico: {semantic_path}")
 
+            if semantic.site == "sieweb" and semantic.page_kind == "registro_notas":
+                try:
+                    mapped = map_gradebook(page)
+                    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    mapped_path = save_json(
+                        evidence_dir,
+                        f"{stamp}_sieweb_registro_notas_gradebook_map.json",
+                        mapped.as_dict(),
+                    )
+                    print_gradebook_map(mapped)
+                    print(f"Mapa detallado de libreta: {mapped_path}")
+                    print("OK: estructura de la libreta mapeada en modo lectura.")
+                except Exception as exc:
+                    print(f"AVISO: no se pudo completar el mapeo profundo: {exc}")
+
             if semantic.site in {"classroom", "sieweb"}:
-                print("\nOK: lectura semántica completada sin modificar datos.")
+                print("\nOK: lectura completada sin modificar datos.")
             else:
                 print("\nAVISO: esta pantalla todavía no pertenece a Classroom/SIEweb.")
 
