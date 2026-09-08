@@ -7,6 +7,8 @@ on:
       - sieroom-desktop-agent-v0.1
     paths:
       - "desktop_agent/**"
+      - "sieweb.py"
+      - "config.py"
       - ".github/workflows/build-sieroom-desktop-agent.yml"
 
 permissions:
@@ -38,7 +40,7 @@ jobs:
       - name: Validate Python sources
         shell: pwsh
         run: |
-          python -m py_compile desktop_agent/main.py desktop_agent/browser_controller.py desktop_agent/semantic_inspector.py desktop_agent/gradebook_mapper.py desktop_agent/grade_cell_mapper.py desktop_agent/grade_cell_mapper_rc2.py desktop_agent/grade_cell_mapper_rc3.py desktop_agent/grade_cell_probe.py desktop_agent/editor_open_probe.py desktop_agent/launcher_v100rc1.py desktop_agent/launcher_v100rc2.py desktop_agent/launcher_v100rc3.py
+          python -m py_compile sieweb.py config.py desktop_agent/main.py desktop_agent/browser_controller.py desktop_agent/semantic_inspector.py desktop_agent/gradebook_mapper.py desktop_agent/grade_cell_mapper.py desktop_agent/grade_cell_mapper_rc2.py desktop_agent/grade_cell_mapper_rc3.py desktop_agent/grade_cell_probe.py desktop_agent/editor_open_probe.py desktop_agent/launcher_v100rc1.py desktop_agent/launcher_v100rc2.py desktop_agent/launcher_v100rc3.py desktop_agent/verified_writer_bridge.py desktop_agent/launcher_v100rc4.py
 
       - name: Build executable
         shell: pwsh
@@ -48,15 +50,16 @@ jobs:
             --clean `
             --onefile `
             --console `
-            --name "SIEROOM-Desktop-Agent-v1.0-RC3" `
+            --name "SIEROOM-Desktop-Agent-v1.0-RC4" `
+            --paths . `
             --paths desktop_agent `
             --collect-all playwright `
-            desktop_agent/launcher_v100rc3.py
+            desktop_agent/launcher_v100rc4.py
 
       - name: Verify executable exists
         shell: pwsh
         run: |
-          $exe = "dist/SIEROOM-Desktop-Agent-v1.0-RC3.exe"
+          $exe = "dist/SIEROOM-Desktop-Agent-v1.0-RC4.exe"
           if (-not (Test-Path $exe)) {
             throw "No se generó $exe"
           }
@@ -68,27 +71,33 @@ jobs:
         shell: pwsh
         run: |
           @"
-          SIEROOM Desktop Agent v1.0 RC3 - PREFLIGHT CON LECTURA SEGURA DEL VALOR ACTUAL
+          SIEROOM Desktop Agent v1.0 RC4 - UNA SOLA ESCRITURA REAL VERIFICADA
 
-          CORRECCION RC3:
-          - RC2 detectó correctamente las 4 competencias, pero podía confundir nombres de iconos UI
-            (por ejemplo COMMENT / VIEW_HISTORY) con el valor visible de una celda vacía.
-          - RC3 elimina iconos/controles auxiliares antes de leer la calificación actual.
-          - Solo considera confiable un valor vacío o una calificación reconocida AD/A/B/C.
-          - Si el valor actual no puede leerse con confianza, el preflight queda BLOQUEADO.
+          OBJETIVO:
+          - RC4 puede ejecutar exactamente UNA escritura de nota.
+          - Revalida sección, período, matrícula, alumno, cabecera API y valor actual antes de escribir.
+          - Reutiliza SieWebClient.save_grades_verified y relee SIEweb después del PUT.
+          - Exige una frase de confirmación exacta antes de cualquier modificación.
 
-          SEGURIDAD:
-          - Esta RC3 NO escribe notas.
-          - La escritura real sigue bloqueada.
-          - El plan auditable exige alumno, competencia, matrícula completa y valor actual confiable.
+          PROTECCIONES RC4:
+          - Solo A/B/C.
+          - Solo una celda por ejecución.
+          - DOM y API deben coincidir antes de escribir.
+          - La matrícula DOM y API debe ser idéntica.
+          - No sobrescribe una nota distinta ya existente.
+          - Nivel de Logro (nivelEva=1) usa exclusivamente el modo explícito HF12.
+          - Desempeño (nivelEva=3) conserva la protección histórica.
+          - No envía notificaciones masivas.
+          - Si la relectura no confirma el valor o detecta cambios inesperados, informa NO VERIFICADO y se detiene.
+          - Tokens/cookies del navegador se usan solo en memoria y nunca se guardan en la evidencia.
           "@ | Set-Content -Encoding UTF8 dist/LEEME-PRIMERO.txt
 
       - name: Upload Windows build
         uses: actions/upload-artifact@v4
         with:
-          name: SIEROOM-Desktop-Agent-Windows-v1.0-RC3
+          name: SIEROOM-Desktop-Agent-Windows-v1.0-RC4
           path: |
-            dist/SIEROOM-Desktop-Agent-v1.0-RC3.exe
+            dist/SIEROOM-Desktop-Agent-v1.0-RC4.exe
             dist/LEEME-PRIMERO.txt
           if-no-files-found: error
           retention-days: 14
