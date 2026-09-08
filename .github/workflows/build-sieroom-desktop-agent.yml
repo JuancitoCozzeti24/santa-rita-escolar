@@ -40,7 +40,7 @@ jobs:
       - name: Validate Python sources
         shell: pwsh
         run: |
-          python -m py_compile sieweb.py config.py desktop_agent/main.py desktop_agent/browser_controller.py desktop_agent/semantic_inspector.py desktop_agent/gradebook_mapper.py desktop_agent/grade_cell_mapper.py desktop_agent/grade_cell_mapper_rc2.py desktop_agent/grade_cell_mapper_rc3.py desktop_agent/grade_cell_probe.py desktop_agent/editor_open_probe.py desktop_agent/launcher_v100rc1.py desktop_agent/launcher_v100rc2.py desktop_agent/launcher_v100rc3.py desktop_agent/verified_writer_bridge.py desktop_agent/launcher_v100rc4.py desktop_agent/browser_auth_rc5.py desktop_agent/launcher_v100rc5.py
+          python -m py_compile sieweb.py config.py desktop_agent/main.py desktop_agent/browser_controller.py desktop_agent/semantic_inspector.py desktop_agent/gradebook_mapper.py desktop_agent/grade_cell_mapper.py desktop_agent/grade_cell_mapper_rc2.py desktop_agent/grade_cell_mapper_rc3.py desktop_agent/grade_cell_probe.py desktop_agent/editor_open_probe.py desktop_agent/launcher_v100rc1.py desktop_agent/launcher_v100rc2.py desktop_agent/launcher_v100rc3.py desktop_agent/verified_writer_bridge.py desktop_agent/launcher_v100rc4.py desktop_agent/browser_auth_rc5.py desktop_agent/launcher_v100rc5.py desktop_agent/launcher_v100rc6.py
 
       - name: Build executable
         shell: pwsh
@@ -50,16 +50,16 @@ jobs:
             --clean `
             --onefile `
             --console `
-            --name "SIEROOM-Desktop-Agent-v1.0-RC5" `
+            --name "SIEROOM-Desktop-Agent-v1.0-RC6" `
             --paths . `
             --paths desktop_agent `
             --collect-all playwright `
-            desktop_agent/launcher_v100rc5.py
+            desktop_agent/launcher_v100rc6.py
 
       - name: Verify executable exists
         shell: pwsh
         run: |
-          $exe = "dist/SIEROOM-Desktop-Agent-v1.0-RC5.exe"
+          $exe = "dist/SIEROOM-Desktop-Agent-v1.0-RC6.exe"
           if (-not (Test-Path $exe)) {
             throw "No se generó $exe"
           }
@@ -71,33 +71,31 @@ jobs:
         shell: pwsh
         run: |
           @"
-          SIEROOM Desktop Agent v1.0 RC5 - SESION REAL DEL NAVEGADOR + UNA SOLA ESCRITURA VERIFICADA
+          SIEROOM Desktop Agent v1.0 RC6 - ESCRITURA + DOBLE VERIFICACION
 
-          CORRECCION RC5:
-          - RC4 podía detectar correctamente alumno/columna, pero al pasar de Playwright al cliente HTTP
-            podía usar un X-Tab-Id nuevo o escoger un JWT distinto al que la pestaña real estaba usando.
-          - Eso podía producir HTTP 401 aunque SIEweb estuviera abierto y autenticado en el navegador.
-          - RC5 abre una pestaña temporal dentro del MISMO perfil, captura en memoria los encabezados reales
-            de una petición SIEweb autenticada y valida esa sesión con una lectura inocua.
-          - Tokens, cookies y headers de autenticación NO se imprimen ni se guardan en evidencia.
+          OBJETIVO RC6:
+          - Mantiene la sesión real del navegador capturada por RC5.
+          - Ejecuta como máximo UNA escritura verificada por ejecución.
+          - Verifica primero por API con save_grades_verified.
+          - Después recarga Registro de Notas y vuelve a mapear la misma celda en el DOM.
+          - Solo informa VERIFICADO COMPLETO cuando API y navegador muestran exactamente la misma nota.
 
           PROTECCIONES:
-          - Antes de escribir, la sesión navegador->writer debe superar una lectura real.
-          - DOM y API deben coincidir en matrícula, alumno, cabecera y valor actual.
+          - DOM y API deben coincidir antes de escribir.
           - Solo A/B/C.
-          - Solo una celda por ejecución.
           - No sobrescribe una nota distinta ya existente.
           - Exige frase de confirmación exacta.
-          - Después del PUT relee SIEweb y verifica que no haya cambios inesperados.
-          - Si algo no puede demostrarse, informa BLOQUEADO/NO VERIFICADO y no continúa.
+          - Tokens, cookies y headers permanecen solo en memoria.
+          - Si la API confirma pero el DOM no, informa API VERIFICADA / DOM NO CONFIRMADO y se detiene.
+          - Si el valor solicitado ya estaba presente, no envía PUT; aun así recarga y verifica la interfaz.
           "@ | Set-Content -Encoding UTF8 dist/LEEME-PRIMERO.txt
 
       - name: Upload Windows build
         uses: actions/upload-artifact@v4
         with:
-          name: SIEROOM-Desktop-Agent-Windows-v1.0-RC5
+          name: SIEROOM-Desktop-Agent-Windows-v1.0-RC6
           path: |
-            dist/SIEROOM-Desktop-Agent-v1.0-RC5.exe
+            dist/SIEROOM-Desktop-Agent-v1.0-RC6.exe
             dist/LEEME-PRIMERO.txt
           if-no-files-found: error
           retention-days: 14
