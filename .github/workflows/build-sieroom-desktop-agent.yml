@@ -4,9 +4,11 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - sieroom-desktop-agent-v0.1
+      - sieroom-desktop-agent-1.0-rc1
     paths:
       - "desktop_agent/**"
+      - "sieweb.py"
+      - "config.py"
       - ".github/workflows/build-sieroom-desktop-agent.yml"
 
 permissions:
@@ -35,10 +37,26 @@ jobs:
           python -m pip install -r desktop_agent/requirements.txt
           python -m pip install "pyinstaller>=6.15,<7"
 
-      - name: Validate Python sources
+      - name: Validate RC1 sources
         shell: pwsh
         run: |
-          python -m py_compile desktop_agent/main.py desktop_agent/browser_controller.py desktop_agent/semantic_inspector.py desktop_agent/gradebook_mapper.py desktop_agent/grade_cell_mapper.py desktop_agent/grade_cell_probe.py desktop_agent/event_listener_probe.py desktop_agent/vue_event_probe.py desktop_agent/editor_open_probe.py desktop_agent/editor_open_probe_v2.py desktop_agent/editor_contract_probe.py desktop_agent/editor_handler_probe.py desktop_agent/editor_closure_probe.py desktop_agent/editor_closure_probe_fast.py desktop_agent/editor_component_probe.py desktop_agent/editor_component_probe_v2.py desktop_agent/launcher_v091.py desktop_agent/launcher_v092.py desktop_agent/launcher_v093.py desktop_agent/launcher_v094.py desktop_agent/launcher_v095.py desktop_agent/launcher_v096.py desktop_agent/launcher_v097.py desktop_agent/launcher_v098.py
+          python -m py_compile `
+            desktop_agent/browser_controller.py `
+            desktop_agent/grade_cell_mapper.py `
+            desktop_agent/grade_cell_probe.py `
+            desktop_agent/editor_open_probe.py `
+            desktop_agent/roster_guard.py `
+            desktop_agent/page_context.py `
+            desktop_agent/verified_writer_bridge.py `
+            desktop_agent/launcher_1_0_rc1.py `
+            sieweb.py `
+            config.py
+
+      - name: Validate authoritative roster counts
+        shell: pwsh
+        run: |
+          $env:PYTHONPATH = "desktop_agent"
+          python -c "from roster_guard import EXPECTED_COUNTS_2026; assert EXPECTED_COUNTS_2026 == {'S2A':28,'S2B':28,'S5A':25,'S5B':26}, EXPECTED_COUNTS_2026; print(EXPECTED_COUNTS_2026)"
 
       - name: Build executable
         shell: pwsh
@@ -48,19 +66,27 @@ jobs:
             --clean `
             --onefile `
             --console `
-            --name "SIEROOM-Desktop-Agent-v0.9.8" `
+            --name "SIEROOM-Desktop-Agent-1.0-RC1" `
             --paths desktop_agent `
+            --paths . `
             --collect-all playwright `
-            desktop_agent/launcher_v098.py
+            --hidden-import sieweb `
+            --hidden-import config `
+            --hidden-import requests `
+            --hidden-import dotenv `
+            desktop_agent/launcher_1_0_rc1.py
 
       - name: Verify executable exists
         shell: pwsh
         run: |
-          $exe = "dist/SIEROOM-Desktop-Agent-v0.9.8.exe"
+          $exe = "dist/SIEROOM-Desktop-Agent-1.0-RC1.exe"
           if (-not (Test-Path $exe)) {
             throw "No se generó $exe"
           }
           $item = Get-Item $exe
+          if ($item.Length -lt 1000000) {
+            throw "El EXE es sospechosamente pequeño: $($item.Length) bytes"
+          }
           Write-Host "EXE generado: $($item.FullName)"
           Write-Host "Tamaño: $($item.Length) bytes"
 
@@ -68,27 +94,41 @@ jobs:
         shell: pwsh
         run: |
           @"
-          SIEROOM Desktop Agent v0.9.8 - RESULTADO VISIBLE Y CIERRE CONTROLADO
+          SIEROOM Desktop Agent 1.0 RC1 — PREVIEW + VERIFIED WRITER
 
-          CORRECCION PRINCIPAL:
-          - v0.9.7 cerraba la consola automáticamente al terminar la prueba E.
-          - v0.9.8 mantiene la ventana abierta para poder leer y tomar captura.
-          - Solo se cierra cuando el usuario presiona ENTER al final.
-          - No vuelve al menú Classroom/SIEweb después de la prueba.
+          ESTA YA NO ES UNA VERSION DE SONDA 0.9.x.
 
-          OBJETIVO TECNICO:
-          - Mantiene la misma traza Symbol(_assign) -> e.nota -> componente Vue real.
-          - NO escribe notas y cierra el editor con Escape.
+          OBJETIVO:
+          - Reconocer Registro de Notas de SIEweb.
+          - Verificar exactamente la nómina autorizada 2026 (2A, 2B, 5A, 5B).
+          - Resolver sección, período, Matemática y la cabecera real.
+          - Preparar UNA sola celda.
+          - No escribir hasta que el usuario escriba exactamente: ESCRIBIR 1 CELDA
+          - Guardar mediante save_grades_verified.
+          - Releer SIEweb y declarar VERIFICADO solo si la persistencia queda confirmada.
+          - En nivelEva=1 aplica HF12 y comprueba que no cambien celdas no objetivo.
 
-          Esta versión sigue siendo SOLO LECTURA sobre calificaciones.
+          USO RC1:
+          1. Ejecuta el EXE.
+          2. En el Edge dedicado entra a SIEweb > Registro de Notas.
+          3. Selecciona sección, 05 - Matemática y período.
+          4. Vuelve a la consola y presiona ENTER.
+          5. P solo PREPARA una nota. Elige explícitamente alumno, columna y A/B/C.
+          6. Revisa el resumen. Solo la frase ESCRIBIR 1 CELDA habilita el PUT real.
+
+          SEGURIDAD:
+          - RC1 nunca hace lotes.
+          - No envía notificaciones.
+          - No guarda contraseña en archivos; primero intenta reutilizar la sesión de Edge.
+          - Si la nómina, cabecera, contexto o verificación no coinciden, bloquea la escritura.
           "@ | Set-Content -Encoding UTF8 dist/LEEME-PRIMERO.txt
 
       - name: Upload Windows build
         uses: actions/upload-artifact@v4
         with:
-          name: SIEROOM-Desktop-Agent-Windows-v0.9.8
+          name: SIEROOM-Desktop-Agent-Windows-1.0-RC1
           path: |
-            dist/SIEROOM-Desktop-Agent-v0.9.8.exe
+            dist/SIEROOM-Desktop-Agent-1.0-RC1.exe
             dist/LEEME-PRIMERO.txt
           if-no-files-found: error
           retention-days: 14
