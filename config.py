@@ -53,8 +53,10 @@ def _install_bitacora_bootstrap() -> None:
         original_init(self, *args, **kwargs)
         try:
             from bitacora import install as install_bitacora
+            from bitacora_link_policy import install as install_bitacora_link_policy
 
             install_bitacora(self)
+            install_bitacora_link_policy(self)
         except Exception as exc:
             print(f"SieRoom Bitácora: error habilitando módulo: {exc}", flush=True)
 
