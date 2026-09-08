@@ -38,7 +38,7 @@ jobs:
       - name: Validate Python sources
         shell: pwsh
         run: |
-          python -m py_compile desktop_agent/main.py desktop_agent/browser_controller.py desktop_agent/semantic_inspector.py desktop_agent/gradebook_mapper.py desktop_agent/grade_cell_mapper.py desktop_agent/grade_cell_probe.py desktop_agent/event_listener_probe.py desktop_agent/vue_event_probe.py desktop_agent/editor_open_probe.py desktop_agent/editor_open_probe_v2.py desktop_agent/editor_contract_probe.py desktop_agent/editor_handler_probe.py desktop_agent/launcher_v091.py desktop_agent/launcher_v092.py desktop_agent/launcher_v093.py
+          python -m py_compile desktop_agent/main.py desktop_agent/browser_controller.py desktop_agent/semantic_inspector.py desktop_agent/gradebook_mapper.py desktop_agent/grade_cell_mapper.py desktop_agent/grade_cell_probe.py desktop_agent/event_listener_probe.py desktop_agent/vue_event_probe.py desktop_agent/editor_open_probe.py desktop_agent/editor_open_probe_v2.py desktop_agent/editor_contract_probe.py desktop_agent/editor_handler_probe.py desktop_agent/editor_closure_probe.py desktop_agent/launcher_v091.py desktop_agent/launcher_v092.py desktop_agent/launcher_v093.py desktop_agent/launcher_v094.py
 
       - name: Build executable
         shell: pwsh
@@ -48,15 +48,15 @@ jobs:
             --clean `
             --onefile `
             --console `
-            --name "SIEROOM-Desktop-Agent-v0.9.3" `
+            --name "SIEROOM-Desktop-Agent-v0.9.4" `
             --paths desktop_agent `
             --collect-all playwright `
-            desktop_agent/launcher_v093.py
+            desktop_agent/launcher_v094.py
 
       - name: Verify executable exists
         shell: pwsh
         run: |
-          $exe = "dist/SIEROOM-Desktop-Agent-v0.9.3.exe"
+          $exe = "dist/SIEROOM-Desktop-Agent-v0.9.4.exe"
           if (-not (Test-Path $exe)) {
             throw "No se generó $exe"
           }
@@ -68,30 +68,29 @@ jobs:
         shell: pwsh
         run: |
           @"
-          SIEROOM Desktop Agent v0.9.3 - CONTRATO DE GUARDADO DEL EDITOR
+          SIEROOM Desktop Agent v0.9.4 - CLOSURES REALES DEL EDITOR
 
-          RESULTADO CONFIRMADO EN v0.9.2:
-          - El editor real es un INPUT vacío dentro de td bgprograma_3 editando.
-          - La selección del alumno y apertura del editor funcionan.
-          - Hay listeners input, change, blur, keydown y click.
-          - Abrir y cerrar con Escape no genera solicitudes de escritura ni altera la nota.
+          RESULTADO CONFIRMADO EN v0.9.3:
+          - El editor tiene listeners blur, change, click, input y keydown.
+          - Los wrappers visibles delegan en e.blur, e.keydown y callbacks de Vue/Quasar.
+          - Todavía no se ha escrito ni guardado ninguna calificación.
 
           CAMBIO PRINCIPAL:
-          - Abre una sola celda y lee en profundidad los callbacks de input/change/blur/keydown/click vía CDP.
-          - Inspecciona wrappers y callbacks anidados sin ejecutarlos.
-          - Busca pistas de guardar/actualizar/nota/Enter/blur/submit en las funciones reales.
-          - NO escribe ningún valor, NO dispara input/change manualmente y NO pulsa Enter.
-          - Cierra con Escape.
+          - Inspecciona las closures internas [[Scopes]] de los handlers usando CDP.
+          - Busca las funciones reales ocultas detrás de e.blur/e.keydown/input/change.
+          - Busca pistas como guardar/save/update/nota/calificacion/Enter/axios/fetch.
+          - NO escribe ningún valor, NO dispara input/change y NO pulsa Enter.
+          - Cierra el editor con Escape.
 
-          Esta versión sigue siendo de SOLO LECTURA sobre calificaciones.
+          Esta versión sigue siendo SOLO LECTURA sobre calificaciones.
           "@ | Set-Content -Encoding UTF8 dist/LEEME-PRIMERO.txt
 
       - name: Upload Windows build
         uses: actions/upload-artifact@v4
         with:
-          name: SIEROOM-Desktop-Agent-Windows-v0.9.3
+          name: SIEROOM-Desktop-Agent-Windows-v0.9.4
           path: |
-            dist/SIEROOM-Desktop-Agent-v0.9.3.exe
+            dist/SIEROOM-Desktop-Agent-v0.9.4.exe
             dist/LEEME-PRIMERO.txt
           if-no-files-found: error
           retention-days: 14
