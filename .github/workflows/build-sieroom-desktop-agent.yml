@@ -38,7 +38,7 @@ jobs:
       - name: Validate Python sources
         shell: pwsh
         run: |
-          python -m py_compile desktop_agent/main.py desktop_agent/browser_controller.py desktop_agent/semantic_inspector.py desktop_agent/gradebook_mapper.py desktop_agent/grade_cell_mapper.py
+          python -m py_compile desktop_agent/main.py desktop_agent/browser_controller.py desktop_agent/semantic_inspector.py desktop_agent/gradebook_mapper.py desktop_agent/grade_cell_mapper.py desktop_agent/grade_cell_probe.py
 
       - name: Build executable
         shell: pwsh
@@ -48,7 +48,7 @@ jobs:
             --clean `
             --onefile `
             --console `
-            --name "SIEROOM-Desktop-Agent-v0.5.0" `
+            --name "SIEROOM-Desktop-Agent-v0.6.0" `
             --paths desktop_agent `
             --collect-all playwright `
             desktop_agent/main.py
@@ -56,7 +56,7 @@ jobs:
       - name: Verify executable exists
         shell: pwsh
         run: |
-          $exe = "dist/SIEROOM-Desktop-Agent-v0.5.0.exe"
+          $exe = "dist/SIEROOM-Desktop-Agent-v0.6.0.exe"
           if (-not (Test-Path $exe)) {
             throw "No se generó $exe"
           }
@@ -68,15 +68,15 @@ jobs:
         shell: pwsh
         run: |
           @"
-          SIEROOM Desktop Agent v0.5.0 - MAPEO ESTUDIANTE A CELDA SOLO LECTURA
+          SIEROOM Desktop Agent v0.6.0 - CONTRATO DOM DE CELDAS SOLO LECTURA
 
           CAMBIOS PRINCIPALES:
-          - Conserva la identificación verificada de estudiantes por código SIEweb.
-          - Busca las celdas visuales de calificación que SIEweb renderiza separadas de nombre/código.
-          - Usa alineación vertical y repetición de posiciones X entre estudiantes.
-          - Agrupa columnas visuales estables y busca su encabezado más cercano.
-          - Relaciona cada estudiante con sus celdas de nota sin hacer clic ni escribir.
-          - Genera un JSON independiente estudiante→celda para preparar escritura verificada futura.
+          - Conserva el mapeo verificado de 28 estudiantes y columnas visuales de nota.
+          - Aísla un encabezado semántico más compacto para cada columna.
+          - Inspecciona el elemento DOM exacto de cada celda sin hacer clic.
+          - Lee tag, clase, atributos data-*, onclick declarado, contenteditable, role y tabindex.
+          - Genera un contrato DOM para descubrir el mecanismo de edición antes de habilitar escrituras.
+          - No cambia valores ni dispara eventos de edición.
 
           Esta versión NO escribe notas, comentarios ni modifica datos.
           "@ | Set-Content -Encoding UTF8 dist/LEEME-PRIMERO.txt
@@ -84,9 +84,9 @@ jobs:
       - name: Upload Windows build
         uses: actions/upload-artifact@v4
         with:
-          name: SIEROOM-Desktop-Agent-Windows-v0.5.0
+          name: SIEROOM-Desktop-Agent-Windows-v0.6.0
           path: |
-            dist/SIEROOM-Desktop-Agent-v0.5.0.exe
+            dist/SIEROOM-Desktop-Agent-v0.6.0.exe
             dist/LEEME-PRIMERO.txt
           if-no-files-found: error
           retention-days: 14
