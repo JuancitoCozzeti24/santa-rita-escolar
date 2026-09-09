@@ -40,7 +40,7 @@ jobs:
       - name: Validate Python sources
         shell: pwsh
         run: |
-          python -m py_compile sieweb.py config.py desktop_agent/main.py desktop_agent/browser_controller.py desktop_agent/semantic_inspector.py desktop_agent/gradebook_mapper.py desktop_agent/grade_cell_mapper.py desktop_agent/grade_cell_mapper_rc2.py desktop_agent/grade_cell_mapper_rc3.py desktop_agent/grade_cell_probe.py desktop_agent/editor_open_probe.py desktop_agent/launcher_v100rc1.py desktop_agent/launcher_v100rc2.py desktop_agent/launcher_v100rc3.py desktop_agent/verified_writer_bridge.py desktop_agent/launcher_v100rc4.py desktop_agent/browser_auth_rc5.py desktop_agent/launcher_v100rc5.py desktop_agent/launcher_v100rc6.py desktop_agent/launcher_v100rc7.py desktop_agent/launcher_v100rc8.py desktop_agent/launcher_v100rc9.py desktop_agent/launcher_v100rc10.py desktop_agent/launcher_v100rc11.py
+          python -m py_compile sieweb.py config.py desktop_agent/main.py desktop_agent/browser_controller.py desktop_agent/semantic_inspector.py desktop_agent/gradebook_mapper.py desktop_agent/grade_cell_mapper.py desktop_agent/grade_cell_mapper_rc2.py desktop_agent/grade_cell_mapper_rc3.py desktop_agent/grade_cell_probe.py desktop_agent/editor_open_probe.py desktop_agent/launcher_v100rc1.py desktop_agent/launcher_v100rc2.py desktop_agent/launcher_v100rc3.py desktop_agent/verified_writer_bridge.py desktop_agent/launcher_v100rc4.py desktop_agent/browser_auth_rc5.py desktop_agent/launcher_v100rc5.py desktop_agent/launcher_v100rc6.py desktop_agent/launcher_v100rc7.py desktop_agent/launcher_v100rc8.py desktop_agent/launcher_v100rc9.py desktop_agent/launcher_v100rc10.py desktop_agent/launcher_v100rc11.py desktop_agent/launcher_v100rc12.py
 
       - name: Build executable
         shell: pwsh
@@ -50,16 +50,16 @@ jobs:
             --clean `
             --onefile `
             --console `
-            --name "SIEROOM-Desktop-Agent-v1.0-RC11" `
+            --name "SIEROOM-Desktop-Agent-v1.0-RC12" `
             --paths . `
             --paths desktop_agent `
             --collect-all playwright `
-            desktop_agent/launcher_v100rc11.py
+            desktop_agent/launcher_v100rc12.py
 
       - name: Verify executable exists
         shell: pwsh
         run: |
-          $exe = "dist/SIEROOM-Desktop-Agent-v1.0-RC11.exe"
+          $exe = "dist/SIEROOM-Desktop-Agent-v1.0-RC12.exe"
           if (-not (Test-Path $exe)) {
             throw "No se generó $exe"
           }
@@ -71,27 +71,29 @@ jobs:
         shell: pwsh
         run: |
           @"
-          SIEROOM Desktop Agent v1.0 RC11 - CONTEXTO DINÁMICO DE LIBRETA
+          SIEROOM Desktop Agent v1.0 RC12 - MODO RAPIDO DE PESTAÑA
 
-          OBJETIVO RC11:
-          - Elimina la dependencia del mapa estático que solo conocía 2.º A y 5.º A.
-          - Obtiene idClasePeriodo, idContenido e idPeriodoAnt desde la petición REAL obtRegistroNotas de la pestaña abierta.
-          - Permite trabajar con 2.º A/B y 5.º A/B sin inventar idAmbito ni IDs de clase.
-          - Exige que matrícula, curso, período, contenido y cabecera coincidan antes de escribir.
-          - Conserva estabilización DOM de RC10, lote secuencial, parada ante primer fallo y verificación API + navegador.
+          OBJETIVO RC12:
+          - Deja de recargar/reseleccionar Salon, Curso y Periodo entre cada nota.
+          - Hace un unico preflight API para todo el lote.
+          - Toma control directo de la pestaña: click en celda, escribe A/B/C, Tab, siguiente alumno.
+          - Admite hasta 28 celdas por lote de prueba.
+          - Verifica el DOM inmediatamente sin recargar y hace una sola verificacion API global al final.
+          - Se detiene ante el primer fallo local y nunca sobreescribe una nota distinta ya existente.
 
           PRUEBA SUGERIDA:
-          - Abrir la sección deseada (por ejemplo 2.º B), Matemática, 3.er período, Registro de Notas.
-          - Preparar un lote pequeño de prueba.
-          - RC11 debe superar el preflight sin mostrar 'Sección no mapeada'.
+          - Abrir Registro de Notas con la seccion, curso y periodo correctos.
+          - Preparar primero 2 celdas de prueba.
+          - Autorizar con ESCRIBIR RAPIDO 2.
+          - Observar que la pestaña permanezca en la misma libreta mientras el agente avanza fila por fila.
           "@ | Set-Content -Encoding UTF8 dist/LEEME-PRIMERO.txt
 
       - name: Upload Windows build
         uses: actions/upload-artifact@v4
         with:
-          name: SIEROOM-Desktop-Agent-Windows-v1.0-RC11
+          name: SIEROOM-Desktop-Agent-Windows-v1.0-RC12
           path: |
-            dist/SIEROOM-Desktop-Agent-v1.0-RC11.exe
+            dist/SIEROOM-Desktop-Agent-v1.0-RC12.exe
             dist/LEEME-PRIMERO.txt
           if-no-files-found: error
           retention-days: 14
