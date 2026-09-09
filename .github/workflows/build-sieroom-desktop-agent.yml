@@ -40,7 +40,7 @@ jobs:
       - name: Validate Python sources
         shell: pwsh
         run: |
-          python -m py_compile sieweb.py config.py desktop_agent/main.py desktop_agent/browser_controller.py desktop_agent/semantic_inspector.py desktop_agent/gradebook_mapper.py desktop_agent/grade_cell_mapper.py desktop_agent/grade_cell_mapper_rc2.py desktop_agent/grade_cell_mapper_rc3.py desktop_agent/grade_cell_probe.py desktop_agent/editor_open_probe.py desktop_agent/launcher_v100rc1.py desktop_agent/launcher_v100rc2.py desktop_agent/launcher_v100rc3.py desktop_agent/verified_writer_bridge.py desktop_agent/launcher_v100rc4.py desktop_agent/browser_auth_rc5.py desktop_agent/launcher_v100rc5.py desktop_agent/launcher_v100rc6.py desktop_agent/launcher_v100rc7.py desktop_agent/launcher_v100rc8.py desktop_agent/launcher_v100rc9.py desktop_agent/launcher_v100rc10.py
+          python -m py_compile sieweb.py config.py desktop_agent/main.py desktop_agent/browser_controller.py desktop_agent/semantic_inspector.py desktop_agent/gradebook_mapper.py desktop_agent/grade_cell_mapper.py desktop_agent/grade_cell_mapper_rc2.py desktop_agent/grade_cell_mapper_rc3.py desktop_agent/grade_cell_probe.py desktop_agent/editor_open_probe.py desktop_agent/launcher_v100rc1.py desktop_agent/launcher_v100rc2.py desktop_agent/launcher_v100rc3.py desktop_agent/verified_writer_bridge.py desktop_agent/launcher_v100rc4.py desktop_agent/browser_auth_rc5.py desktop_agent/launcher_v100rc5.py desktop_agent/launcher_v100rc6.py desktop_agent/launcher_v100rc7.py desktop_agent/launcher_v100rc8.py desktop_agent/launcher_v100rc9.py desktop_agent/launcher_v100rc10.py desktop_agent/launcher_v100rc11.py
 
       - name: Build executable
         shell: pwsh
@@ -50,16 +50,16 @@ jobs:
             --clean `
             --onefile `
             --console `
-            --name "SIEROOM-Desktop-Agent-v1.0-RC10" `
+            --name "SIEROOM-Desktop-Agent-v1.0-RC11" `
             --paths . `
             --paths desktop_agent `
             --collect-all playwright `
-            desktop_agent/launcher_v100rc10.py
+            desktop_agent/launcher_v100rc11.py
 
       - name: Verify executable exists
         shell: pwsh
         run: |
-          $exe = "dist/SIEROOM-Desktop-Agent-v1.0-RC10.exe"
+          $exe = "dist/SIEROOM-Desktop-Agent-v1.0-RC11.exe"
           if (-not (Test-Path $exe)) {
             throw "No se generó $exe"
           }
@@ -71,28 +71,27 @@ jobs:
         shell: pwsh
         run: |
           @"
-          SIEROOM Desktop Agent v1.0 RC10 - LOTE SECUENCIAL CON DOM ESTABILIZADO
+          SIEROOM Desktop Agent v1.0 RC11 - CONTEXTO DINÁMICO DE LIBRETA
 
-          OBJETIVO RC10:
-          - Corrige el falso bloqueo observado en RC9 cuando el DOM cambió de vacío a A entre preflight y ejecución sin que la API hubiera cambiado.
-          - Antes de cada escritura vuelve a sincronizar la MISMA libreta re-seleccionando el período, sin recargar toda la SPA.
-          - Exige dos lecturas DOM consecutivas idénticas antes de permitir el writer.
-          - Mantiene todas las protecciones de RC9: preflight completo, frase exacta, no sobrescritura, lote pequeño, parada ante primer fallo y verificación API + navegador.
+          OBJETIVO RC11:
+          - Elimina la dependencia del mapa estático que solo conocía 2.º A y 5.º A.
+          - Obtiene idClasePeriodo, idContenido e idPeriodoAnt desde la petición REAL obtRegistroNotas de la pestaña abierta.
+          - Permite trabajar con 2.º A/B y 5.º A/B sin inventar idAmbito ni IDs de clase.
+          - Exige que matrícula, curso, período, contenido y cabecera coincidan antes de escribir.
+          - Conserva estabilización DOM de RC10, lote secuencial, parada ante primer fallo y verificación API + navegador.
 
           PRUEBA SUGERIDA:
-          - Abrir 2.º A / Matemática / 3.er período / Registro de Notas.
-          - Preparar dos celdas: alumno 1, col 1, A; alumno 2, col 1, A.
-          - Revisar el preflight.
-          - Autorizar solo si ambos destinos son correctos.
-          - RC10 debe sincronizar cada celda antes de escribir y no aceptar lecturas DOM transitorias.
+          - Abrir la sección deseada (por ejemplo 2.º B), Matemática, 3.er período, Registro de Notas.
+          - Preparar un lote pequeño de prueba.
+          - RC11 debe superar el preflight sin mostrar 'Sección no mapeada'.
           "@ | Set-Content -Encoding UTF8 dist/LEEME-PRIMERO.txt
 
       - name: Upload Windows build
         uses: actions/upload-artifact@v4
         with:
-          name: SIEROOM-Desktop-Agent-Windows-v1.0-RC10
+          name: SIEROOM-Desktop-Agent-Windows-v1.0-RC11
           path: |
-            dist/SIEROOM-Desktop-Agent-v1.0-RC10.exe
+            dist/SIEROOM-Desktop-Agent-v1.0-RC11.exe
             dist/LEEME-PRIMERO.txt
           if-no-files-found: error
           retention-days: 14
