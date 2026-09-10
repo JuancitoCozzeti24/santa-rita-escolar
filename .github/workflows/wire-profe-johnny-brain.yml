@@ -1,0 +1,62 @@
+name: Wire PROFE JOHNNY APP Brain
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/wire-profe-johnny-brain.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Wire brain into server
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("server.py")
+          text = path.read_text(encoding="utf-8")
+
+          import_line = "from profe_johnny_brain import install as install_profe_johnny_brain\n"
+          anchor_import = "from attendance import install as install_attendance\n"
+          if import_line not in text:
+              if anchor_import not in text:
+                  raise SystemExit("No se encontró el ancla de importación de attendance")
+              text = text.replace(anchor_import, anchor_import + import_line, 1)
+
+          install_line = "install_profe_johnny_brain(mcp)\n"
+          anchor_install = "install_attendance(mcp, sieweb, settings, classroom)\n"
+          if install_line not in text:
+              if anchor_install not in text:
+                  raise SystemExit("No se encontró el ancla de instalación de attendance")
+              text = text.replace(anchor_install, install_line + anchor_install, 1)
+
+          path.write_text(text, encoding="utf-8")
+          PY
+
+      - name: Verify syntax
+        run: python -m py_compile profe_johnny_brain.py server.py
+
+      - name: Commit wiring
+        shell: bash
+        run: |
+          if git diff --quiet -- server.py; then
+            echo "server.py ya estaba conectado"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add server.py
+          git commit -m "feat: wire Profe Johnny brain into SieRoom"
+          git push origin main
