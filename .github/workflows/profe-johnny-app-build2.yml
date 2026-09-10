@@ -43,12 +43,12 @@ jobs:
           printf 'PROFE_JOHNNY_VIDEO_PLACEHOLDER' > profe-johnny-app/app/src/main/res/raw/fondo_mate.mp4
           echo 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=' | base64 -d > profe-johnny-app/app/src/main/res/drawable/profe_johnny_logo.png
 
-      - name: Build debug APK
+      - name: Build debug APK connected to school brain
         working-directory: profe-johnny-app
-        run: gradle :app:assembleDebug --stacktrace
+        run: gradle :app:assembleDebug --stacktrace -PPROFE_JOHNNY_API_BASE_URL=https://santa-rita-escolar-tcpb.onrender.com/profe-johnny/v1
 
       - name: Prepare APK artifact
-        run: cp profe-johnny-app/app/build/outputs/apk/debug/app-debug.apk PROFE-JOHNNY-APP-v0.1.0-base.apk
+        run: cp profe-johnny-app/app/build/outputs/apk/debug/app-debug.apk PROFE-JOHNNY-APP-v0.2.0-base.apk
 
       - name: Prepare Android signing tools
         shell: bash
@@ -69,8 +69,8 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: PROFE-JOHNNY-APP-v0.1.0-base
-          path: PROFE-JOHNNY-APP-v0.1.0-base.apk
+          name: PROFE-JOHNNY-APP-v0.2.0-base
+          path: PROFE-JOHNNY-APP-v0.2.0-base.apk
 
       - name: Upload signing tools
         uses: actions/upload-artifact@v4
