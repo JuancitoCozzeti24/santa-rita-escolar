@@ -6,6 +6,7 @@ import re
 import threading
 import time
 from collections import defaultdict, deque
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from io import BytesIO
 from typing import Any
@@ -468,6 +469,17 @@ def _bitacora_memory_context(
     meta["status"] = "records_loaded"
     return "\n".join(lines), meta
 
+def _needs_drive_search(message: str) -> bool:
+    q = _norm(message)
+    markers = (
+        "programacion", "programación", "sesion", "sesión", "unidad", "descriptor",
+        "documento", "drive", "libro", "pagina", "página", "material", "ficha",
+        "calendario", "calendarizacion", "calendarización", "tema", "competencia",
+        "desempeno", "desempeño", "trimestre", "quincena", "planificacion", "planificación",
+    )
+    return any(_norm(m) in q for m in markers)
+
+
 def _looks_sensitive(message: str) -> bool:
     q = _norm(message)
     patterns = (
@@ -546,6 +558,7 @@ def _status_payload() -> dict[str, Any]:
         "knowledge_documents": [str(d.get("name") or "") for d in docs],
         "classroom_oauth_configured": bool(settings.google_client_id and settings.google_client_secret and settings.google_refresh_token),
         "bitacora_memory_configured": True,
+        "chat_engine_version": "2026-09-10-fast1",
         "privacy_mode": "family_student_read_only",
         "updated_at": _now_lima().isoformat(),
         "cache_error": _cache.get("error"),
@@ -587,10 +600,20 @@ def install(mcp: Any) -> None:
         else:
             grade = "grado no especificado"
 
-        core, core_sources = _core_context(message)
-        classroom, classroom_sources = _classroom_context(grade, message)
-        drive, drive_sources = _drive_search_context(message)
-        bitacora, bitacora_meta = _bitacora_memory_context(message, grade, student_hint, section)
+        # Recupera fuentes independientes en paralelo. Drive se consulta solo cuando
+        # la pregunta realmente lo requiere; evita varios segundos de latencia en consultas simples.
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            core_future = pool.submit(_core_context, message)
+            classroom_future = pool.submit(_classroom_context, grade, message)
+            bitacora_future = pool.submit(_bitacora_memory_context, message, grade, student_hint, section)
+            drive_future = pool.submit(_drive_search_context, message) if _needs_drive_search(message) else None
+            core, core_sources = core_future.result()
+            classroom, classroom_sources = classroom_future.result()
+            bitacora, bitacora_meta = bitacora_future.result()
+            if drive_future is not None:
+                drive, drive_sources = drive_future.result()
+            else:
+                drive, drive_sources = "", []
 
         source_blocks = []
         if bitacora:
