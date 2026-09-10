@@ -6,7 +6,9 @@ on:
       - profe-johnny-chat-bg
     paths:
       - ".github/workflows/profe-johnny-chat-bg-build.yml"
-      - "profe-johnny-app/**"
+      - "profe-johnny-app/apply_crash_fix.py"
+      - "profe-johnny-app/app/src/main/java/pe/profejohnny/app/MainActivity.kt"
+      - "profe-johnny-app/app/build.gradle.kts"
 
 jobs:
   build:
@@ -17,68 +19,12 @@ jobs:
         with:
           ref: profe-johnny-chat-bg
 
-      - name: Apply crash-safe chat hotfix
+      - name: Apply crash fix
+        run: python profe-johnny-app/apply_crash_fix.py
+
+      - name: Verify source
         shell: bash
         run: |
-          python - <<'PY'
-          from pathlib import Path
-          p = Path('profe-johnny-app/app/src/main/java/pe/profejohnny/app/MainActivity.kt')
-          s = p.read_text(encoding='utf-8')
-          old = '''    LaunchedEffect(messages.size) {
-        if (messages.isNotEmpty()) {
-            listState.animateScrollToItem(messages.lastIndex)
-        }
-    }
-
-    Box(Modifier.fillMaxSize().imePadding()) {
-        Image(
-            painter = painterResource(R.drawable.chat_fondo),
-            contentDescription = "Fondo matemático del chat",
-            contentScale = ContentScale.Crop,
-            modifier = Modifier.fillMaxSize()
-        )
-        Box(
-            Modifier
-                .fillMaxSize()
-                .background(Color.White.copy(alpha = 0.74f))
-        )
-'''
-          new = '''    LaunchedEffect(messages.size) {
-        if (messages.size > 1) {
-            listState.scrollToItem(messages.lastIndex)
-        }
-    }
-
-    Box(
-        Modifier
-            .fillMaxSize()
-            .imePadding()
-            .background(
-                Brush.verticalGradient(
-                    listOf(
-                        Color(0xFFF7F3E8),
-                        Color(0xFFEAF4EF),
-                        Color(0xFFF7F3E8)
-                    )
-                )
-            )
-    ) {
-'''
-          if old not in s:
-              raise SystemExit('Expected ChatScreen block was not found; refusing unsafe patch')
-          p.write_text(s.replace(old, new), encoding='utf-8')
-
-          g = Path('profe-johnny-app/app/build.gradle.kts')
-          gs = g.read_text(encoding='utf-8')
-          gs = gs.replace('versionCode = 4', 'versionCode = 5')
-          gs = gs.replace('versionName = "0.2.2"', 'versionName = "0.2.3"')
-          g.write_text(gs, encoding='utf-8')
-          PY
-
-      - name: Verify crash-safe chat source
-        shell: bash
-        run: |
-          ! grep -q 'painter = painterResource(R.drawable.chat_fondo)' profe-johnny-app/app/src/main/java/pe/profejohnny/app/MainActivity.kt
           grep -q 'messages.size > 1' profe-johnny-app/app/src/main/java/pe/profejohnny/app/MainActivity.kt
           grep -q 'versionName = "0.2.3"' profe-johnny-app/app/build.gradle.kts
           grep -q 'Hola, soy el Profe Johnny. ¿En qué puedo ayudarte?' profe-johnny-app/app/src/main/java/pe/profejohnny/app/MainActivity.kt
