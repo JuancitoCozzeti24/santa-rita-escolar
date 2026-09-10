@@ -1,0 +1,54 @@
+name: Batalla Matemática - Online Smoke Test
+
+on:
+  push:
+    paths:
+      - 'battle_accounts.py'
+      - 'server.py'
+      - '.github/workflows/battle-online-smoke.yml'
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wait for Render and test online accounts
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE="https://santa-rita-escolar-tcpb.onrender.com/battle/v1"
+          for i in $(seq 1 24); do
+            STATUS=$(curl -fsS --max-time 20 "$BASE/status" || true)
+            if echo "$STATUS" | grep -q '"online_accounts":true'; then
+              echo "Backend online: $STATUS"
+              break
+            fi
+            if [ "$i" = 24 ]; then
+              echo "Backend not ready: $STATUS"
+              exit 1
+            fi
+            sleep 10
+          done
+
+          USER="smoke$(date +%s)"
+          PIN="654321"
+          REGISTER=$(curl -fsS --max-time 30 -X POST "$BASE/register" \
+            -H 'Content-Type: application/json' \
+            --data "{\"username\":\"$USER\",\"pin\":\"$PIN\",\"display_name\":\"Prueba Online\",\"section\":\"2A\",\"avatar\":\"⚡\"}")
+          echo "$REGISTER" | python -c 'import json,sys; d=json.load(sys.stdin); assert d["ok"] and d["token"] and d["profile"]["username"]'
+          TOKEN=$(echo "$REGISTER" | python -c 'import json,sys; print(json.load(sys.stdin)["token"])')
+
+          LOGIN=$(curl -fsS --max-time 30 -X POST "$BASE/login" \
+            -H 'Content-Type: application/json' \
+            --data "{\"username\":\"$USER\",\"pin\":\"$PIN\"}")
+          echo "$LOGIN" | python -c 'import json,sys; d=json.load(sys.stdin); assert d["ok"] and d["profile"]["username"]'
+
+          SCORE=$(curl -fsS --max-time 30 -X POST "$BASE/score" \
+            -H 'Content-Type: application/json' \
+            -H "Authorization: Bearer $TOKEN" \
+            --data '{"score":7,"level":1,"accuracy":88,"client_version":"smoke","game_session_id":"ci"}')
+          echo "$SCORE" | python -c 'import json,sys; d=json.load(sys.stdin); assert d["ok"] and d["score_saved"] and d["section_rank"] >= 1'
+
+          BOARD=$(curl -fsS --max-time 30 "$BASE/leaderboard?section=2A&limit=500")
+          echo "$BOARD" | USER="$USER" python -c 'import json,os,sys; d=json.load(sys.stdin); assert d["ok"] and any(p["username"]==os.environ["USER"] for p in d["players"])'
+          echo "Online account, login, score and leaderboard smoke test passed."
