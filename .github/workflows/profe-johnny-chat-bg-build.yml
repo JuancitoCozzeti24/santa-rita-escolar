@@ -1,4 +1,4 @@
-name: Build PROFE JOHNNY APP chat background
+name: Build PROFE JOHNNY APP crash fix
 
 on:
   push:
@@ -17,13 +17,72 @@ jobs:
         with:
           ref: profe-johnny-chat-bg
 
-      - name: Verify updated chat source
+      - name: Apply crash-safe chat hotfix
         shell: bash
         run: |
-          grep -q 'R.drawable.chat_fondo' profe-johnny-app/app/src/main/java/pe/profejohnny/app/MainActivity.kt
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('profe-johnny-app/app/src/main/java/pe/profejohnny/app/MainActivity.kt')
+          s = p.read_text(encoding='utf-8')
+          old = '''    LaunchedEffect(messages.size) {
+        if (messages.isNotEmpty()) {
+            listState.animateScrollToItem(messages.lastIndex)
+        }
+    }
+
+    Box(Modifier.fillMaxSize().imePadding()) {
+        Image(
+            painter = painterResource(R.drawable.chat_fondo),
+            contentDescription = "Fondo matemático del chat",
+            contentScale = ContentScale.Crop,
+            modifier = Modifier.fillMaxSize()
+        )
+        Box(
+            Modifier
+                .fillMaxSize()
+                .background(Color.White.copy(alpha = 0.74f))
+        )
+'''
+          new = '''    LaunchedEffect(messages.size) {
+        if (messages.size > 1) {
+            listState.scrollToItem(messages.lastIndex)
+        }
+    }
+
+    Box(
+        Modifier
+            .fillMaxSize()
+            .imePadding()
+            .background(
+                Brush.verticalGradient(
+                    listOf(
+                        Color(0xFFF7F3E8),
+                        Color(0xFFEAF4EF),
+                        Color(0xFFF7F3E8)
+                    )
+                )
+            )
+    ) {
+'''
+          if old not in s:
+              raise SystemExit('Expected ChatScreen block was not found; refusing unsafe patch')
+          p.write_text(s.replace(old, new), encoding='utf-8')
+
+          g = Path('profe-johnny-app/app/build.gradle.kts')
+          gs = g.read_text(encoding='utf-8')
+          gs = gs.replace('versionCode = 4', 'versionCode = 5')
+          gs = gs.replace('versionName = "0.2.2"', 'versionName = "0.2.3"')
+          g.write_text(gs, encoding='utf-8')
+          PY
+
+      - name: Verify crash-safe chat source
+        shell: bash
+        run: |
+          ! grep -q 'painter = painterResource(R.drawable.chat_fondo)' profe-johnny-app/app/src/main/java/pe/profejohnny/app/MainActivity.kt
+          grep -q 'messages.size > 1' profe-johnny-app/app/src/main/java/pe/profejohnny/app/MainActivity.kt
+          grep -q 'versionName = "0.2.3"' profe-johnny-app/app/build.gradle.kts
           grep -q 'Hola, soy el Profe Johnny. ¿En qué puedo ayudarte?' profe-johnny-app/app/src/main/java/pe/profejohnny/app/MainActivity.kt
           grep -q 'Consultando información' profe-johnny-app/app/src/main/java/pe/profejohnny/app/MainActivity.kt
-          test -s profe-johnny-app/app/src/main/res/drawable/chat_fondo.jpg
 
       - name: Create compile-time home media placeholders
         shell: bash
@@ -57,10 +116,10 @@ jobs:
         run: gradle :app:assembleDebug --stacktrace -PPROFE_JOHNNY_API_BASE_URL=https://santa-rita-escolar-tcpb.onrender.com/profe-johnny/v1
 
       - name: Prepare artifact
-        run: cp profe-johnny-app/app/build/outputs/apk/debug/app-debug.apk PROFE-JOHNNY-APP-v0.2.2-chat-bg.apk
+        run: cp profe-johnny-app/app/build/outputs/apk/debug/app-debug.apk PROFE-JOHNNY-APP-v0.2.3-CRASH-FIX.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: PROFE-JOHNNY-APP-v0.2.2-chat-bg
-          path: PROFE-JOHNNY-APP-v0.2.2-chat-bg.apk
+          name: PROFE-JOHNNY-APP-v0.2.3-CRASH-FIX
+          path: PROFE-JOHNNY-APP-v0.2.3-CRASH-FIX.apk
