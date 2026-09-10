@@ -34,6 +34,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
@@ -44,6 +45,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -251,10 +253,11 @@ private fun HomeScreen(onConsult: () -> Unit, onNotices: () -> Unit) {
 @Composable
 private fun ChatScreen(onBack: () -> Unit) {
     val scope = rememberCoroutineScope()
+    val listState = rememberLazyListState()
     val messages = remember {
         mutableStateListOf(
             ChatMessage(
-                "Hola. Soy el asistente virtual del Profe Johnny. Puedo orientarte sobre Matemática, actividades, evaluaciones y avisos de 2.º y 5.º de secundaria. ¿En qué puedo ayudarte?",
+                "Hola, soy el Profe Johnny. ¿En qué puedo ayudarte?",
                 false
             )
         )
@@ -262,6 +265,12 @@ private fun ChatScreen(onBack: () -> Unit) {
     var grade by remember { mutableStateOf("2.º") }
     var input by remember { mutableStateOf("") }
     var sending by remember { mutableStateOf(false) }
+
+    LaunchedEffect(messages.size) {
+        if (messages.isNotEmpty()) {
+            listState.animateScrollToItem(messages.lastIndex)
+        }
+    }
 
     Column(Modifier.fillMaxSize().background(Color(0xFFF6F2E8)).imePadding()) {
         Row(
@@ -286,7 +295,18 @@ private fun ChatScreen(onBack: () -> Unit) {
             FilterChip(selected = grade == "5.º", onClick = { grade = "5.º" }, label = { Text("5.º año") })
         }
 
+        if (sending) {
+            Text(
+                "Consultando información…",
+                color = Color(0xFF006C4F),
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+            )
+        }
+
         LazyColumn(
+            state = listState,
             modifier = Modifier.weight(1f).fillMaxWidth().padding(horizontal = 14.dp),
             verticalArrangement = Arrangement.spacedBy(9.dp)
         ) {
@@ -337,7 +357,7 @@ private fun ChatScreen(onBack: () -> Unit) {
                     }
                 },
                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF006C4F))
-            ) { Text(if (sending) "…" else "Enviar") }
+            ) { Text(if (sending) "Consultando…" else "Enviar") }
         }
     }
 }
@@ -345,13 +365,13 @@ private fun ChatScreen(onBack: () -> Unit) {
 private fun askBackend(message: String, grade: String): String {
     val base = BuildConfig.API_BASE_URL.trim().trimEnd('/')
     if (base.isBlank()) {
-        return "La interfaz ya está preparada. La conexión segura con OpenAI se activará cuando configuremos el servidor del Profe Johnny."
+        return "No pude atender tu consulta en este momento. Inténtalo nuevamente en unos segundos."
     }
     return try {
         val connection = (URL("$base/chat").openConnection() as HttpURLConnection).apply {
             requestMethod = "POST"
-            connectTimeout = 12_000
-            readTimeout = 25_000
+            connectTimeout = 15_000
+            readTimeout = 60_000
             doOutput = true
             setRequestProperty("Content-Type", "application/json; charset=utf-8")
         }
