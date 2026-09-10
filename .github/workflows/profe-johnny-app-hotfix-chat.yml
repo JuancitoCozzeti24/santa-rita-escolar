@@ -18,7 +18,7 @@ jobs:
         with:
           ref: profe-johnny-app-v1
 
-      - name: Patch Android chat UX and timeouts
+      - name: Patch Android chat UX, greeting and timeouts
         shell: bash
         run: |
           python - <<'PY'
@@ -40,6 +40,11 @@ jobs:
                   1,
               )
 
+          s = s.replace(
+              'Hola. Soy el asistente virtual del Profe Johnny. Puedo orientarte sobre Matemática, actividades, evaluaciones y avisos de 2.º y 5.º de secundaria. ¿En qué puedo ayudarte?',
+              'Hola, soy el Profe Johnny. ¿En qué puedo ayudarte?'
+          )
+
           if 'val listState = rememberLazyListState()' not in s:
               s = s.replace(
                   'private fun ChatScreen(onBack: () -> Unit) {\n    val scope = rememberCoroutineScope()\n',
@@ -55,7 +60,7 @@ jobs:
               s = s.replace(anchor, replacement, 1)
 
           lazy_anchor = '''        LazyColumn(\n            modifier = Modifier.weight(1f).fillMaxWidth().padding(horizontal = 14.dp),\n            verticalArrangement = Arrangement.spacedBy(9.dp)\n        ) {'''
-          lazy_new = '''        if (sending) {\n            Text(\n                "Consultando información del colegio…",\n                color = Color(0xFF006C4F),\n                fontSize = 13.sp,\n                fontWeight = FontWeight.SemiBold,\n                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)\n            )\n        }\n\n        LazyColumn(\n            state = listState,\n            modifier = Modifier.weight(1f).fillMaxWidth().padding(horizontal = 14.dp),\n            verticalArrangement = Arrangement.spacedBy(9.dp)\n        ) {'''
+          lazy_new = '''        if (sending) {\n            Text(\n                "Consultando información…",\n                color = Color(0xFF006C4F),\n                fontSize = 13.sp,\n                fontWeight = FontWeight.SemiBold,\n                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)\n            )\n        }\n\n        LazyColumn(\n            state = listState,\n            modifier = Modifier.weight(1f).fillMaxWidth().padding(horizontal = 14.dp),\n            verticalArrangement = Arrangement.spacedBy(9.dp)\n        ) {'''
           if 'state = listState' not in s:
               if lazy_anchor not in s:
                   raise SystemExit('LazyColumn anchor not found')
@@ -64,6 +69,10 @@ jobs:
           s = s.replace('connectTimeout = 12_000', 'connectTimeout = 15_000')
           s = s.replace('readTimeout = 25_000', 'readTimeout = 60_000')
           s = s.replace('Text(if (sending) "…" else "Enviar")', 'Text(if (sending) "Consultando…" else "Enviar")')
+          s = s.replace(
+              'La interfaz ya está preparada. La conexión segura con OpenAI se activará cuando configuremos el servidor del Profe Johnny.',
+              'No pude atender tu consulta en este momento. Inténtalo nuevamente en unos segundos.'
+          )
           main.write_text(s, encoding='utf-8')
 
           gradle = Path('profe-johnny-app/app/build.gradle.kts')
@@ -71,12 +80,6 @@ jobs:
           g = g.replace('versionCode = 2', 'versionCode = 3', 1)
           g = g.replace('versionName = "0.2.0"', 'versionName = "0.2.1"', 1)
           gradle.write_text(g, encoding='utf-8')
-
-          wf = Path('.github/workflows/profe-johnny-app-build2.yml')
-          w = wf.read_text(encoding='utf-8')
-          w = w.replace('PROFE-JOHNNY-APP-v0.2.0-base.apk', 'PROFE-JOHNNY-APP-v0.2.1-base.apk')
-          w = w.replace('PROFE-JOHNNY-APP-v0.2.0-base', 'PROFE-JOHNNY-APP-v0.2.1-base')
-          wf.write_text(w, encoding='utf-8')
           PY
 
       - name: Verify hotfix source
@@ -84,7 +87,7 @@ jobs:
         run: |
           grep -q 'readTimeout = 60_000' profe-johnny-app/app/src/main/java/pe/profejohnny/app/MainActivity.kt
           grep -q 'state = listState' profe-johnny-app/app/src/main/java/pe/profejohnny/app/MainActivity.kt
-          grep -q 'Consultando información del colegio' profe-johnny-app/app/src/main/java/pe/profejohnny/app/MainActivity.kt
+          grep -q 'Hola, soy el Profe Johnny. ¿En qué puedo ayudarte?' profe-johnny-app/app/src/main/java/pe/profejohnny/app/MainActivity.kt
           grep -q 'versionName = "0.2.1"' profe-johnny-app/app/build.gradle.kts
 
       - name: Commit hotfix
@@ -92,6 +95,10 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add profe-johnny-app/app/src/main/java/pe/profejohnny/app/MainActivity.kt profe-johnny-app/app/build.gradle.kts .github/workflows/profe-johnny-app-build2.yml
-          git commit -m "fix: make Profe Johnny chat responsive on slow school lookups"
-          git push origin HEAD:profe-johnny-app-v1
+          git add profe-johnny-app/app/src/main/java/pe/profejohnny/app/MainActivity.kt profe-johnny-app/app/build.gradle.kts
+          if git diff --cached --quiet; then
+            echo "No changes needed"
+          else
+            git commit -m "fix: improve Profe Johnny chat UX and greeting"
+            git push origin HEAD:profe-johnny-app-v1
+          fi
