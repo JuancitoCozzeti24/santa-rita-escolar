@@ -19,6 +19,11 @@ from starlette.responses import JSONResponse
 
 from classroom import ClassroomClient, ClassroomError
 from config import settings
+from bitacora import (
+    _history as _bitacora_history,
+    _load_students as _bitacora_load_students,
+    _resolve_student as _bitacora_resolve_student,
+)
 
 
 KB_FOLDER_ID = os.getenv("PROFE_JOHNNY_KB_FOLDER_ID", "1Ih3RaxV89vm7bcWJbUJ-TbOwzlgspTZG")
@@ -51,6 +56,9 @@ REGLAS INNEGOCIABLES:
 - Responde en español, con claridad, cercanía, respeto y criterio pedagógico.
 - Nunca inventes fechas, horarios, tareas, notas, evaluaciones, acuerdos, nombres, páginas o decisiones institucionales.
 - Distingue información general de información privada. No reveles notas, conducta, observaciones, correos, datos personales ni historial de otro estudiante.
+- La BITÁCORA DOCENTE es una fuente de memoria conductual y de seguimiento, pero solo se usa para el propio estudiante cuando este se identifica como tal en la consulta. Nunca la uses para responder sobre un compañero.
+- Si el estudiante está identificado en la pestaña ALUMNOS y su historial BITÁCORA tiene exactamente 0 registros, interpreta que no hay incidencias ni observaciones conductuales registradas. Según la regla del profesor Johnny, puedes decir que su comportamiento ha sido adecuado o que “se ha portado bien” dentro de lo documentado.
+- Si el nombre no existe en ALUMNOS, NO concluyas que se portó bien: di que no pudiste identificar al estudiante en la matrícula.
 - Esta ruta es de consulta para familias/estudiantes: es SOLO LECTURA. Nunca afirmes que modificaste Classroom, SIEweb, notas, correos o archivos.
 - Si una pregunta requiere identidad verificada del estudiante y esa verificación no existe, explica que por privacidad esa información debe consultarse por el canal autenticado o directamente con el profesor.
 - Prioriza, en este orden: datos dinámicos de Classroom cuando correspondan; documentos oficiales de la base PROFE JOHNNY VIRTUAL; documentos institucionales recuperados de Drive; conocimiento general de Matemática.
@@ -344,6 +352,122 @@ def _drive_search_context(query: str) -> tuple[str, list[str]]:
     return "\n\n".join(blocks), names
 
 
+
+def _declared_student_hint(message: str) -> str:
+    """Extrae una identidad declarada en primera persona: soy / me llamo / mi nombre es."""
+    text = str(message or "").strip()
+    m = re.search(r"\b(?:soy|me\s+llamo|mi\s+nombre\s+es)\s+(.+)$", text, flags=re.IGNORECASE)
+    if not m:
+        return ""
+    tail = m.group(1).strip()
+    tail = re.split(
+        r"[,.;?!]|\s+y\s+(?:quiero|quisiera|necesito|deseo|tengo|puedo|me)\b",
+        tail,
+        maxsplit=1,
+        flags=re.IGNORECASE,
+    )[0]
+    tokens = re.findall(r"[A-Za-zÁÉÍÓÚÜÑáéíóúüñ'’-]+", tail)
+    return " ".join(tokens[:6]).strip()
+
+
+def _redact_other_students(text: str, target_name: str) -> str:
+    out = str(text or "")
+    try:
+        students = _bitacora_load_students()
+    except Exception:
+        students = []
+    for row in students:
+        name = str(row.get("nombre") or "").strip()
+        if not name or _norm(name) == _norm(target_name):
+            continue
+        out = re.sub(re.escape(name), "otro estudiante", out, flags=re.IGNORECASE)
+    return out
+
+
+def _bitacora_memory_context(
+    message: str,
+    grade: str,
+    student_hint: str = "",
+    section: str = "",
+) -> tuple[str, dict[str, Any]]:
+    """Carga memoria de bitácora cuando el propio estudiante declara su identidad."""
+    hint = str(student_hint or "").strip() or _declared_student_hint(message)
+    meta: dict[str, Any] = {
+        "requested": bool(hint),
+        "resolved": False,
+        "records": 0,
+        "status": "not_requested" if not hint else "unresolved",
+    }
+    if not hint:
+        return "", meta
+
+    data: dict[str, Any] = {"student": hint}
+    if str(grade).startswith("2") or str(grade).startswith("5"):
+        data["grado"] = str(grade)[:1]
+    if str(section or "").strip():
+        data["seccion"] = str(section).strip()
+
+    try:
+        resolved = _bitacora_resolve_student(data)
+    except Exception as exc:
+        meta["status"] = "error"
+        meta["error"] = f"{type(exc).__name__}: {exc}"
+        return "", meta
+
+    if resolved.get("status") != "resolved":
+        meta["status"] = str(resolved.get("status") or "unresolved")
+        return (
+            "## BITÁCORA DOCENTE\n"
+            "La persona declaró un nombre, pero no fue posible resolverlo de forma única en la pestaña ALUMNOS. "
+            "No interpretes ausencia en matrícula como buena conducta y no inventes información."
+        ), meta
+
+    student = dict(resolved.get("student") or {})
+    target_name = str(student.get("nombre") or hint)
+    meta["resolved"] = True
+    meta["status"] = "resolved"
+
+    try:
+        hist = _bitacora_history({"student": str(student.get("alumno_id") or hint), "limit": 40})
+    except Exception as exc:
+        meta["status"] = "error"
+        meta["error"] = f"{type(exc).__name__}: {exc}"
+        return "", meta
+
+    records = list(hist.get("bitacora") or [])
+    meta["records"] = int((hist.get("counts") or {}).get("bitacora") or len(records))
+    if meta["records"] == 0:
+        meta["status"] = "no_records_good_behavior"
+        return (
+            "## BITÁCORA DOCENTE — MEMORIA DEL PROPIO ESTUDIANTE\n"
+            f"Estudiante resuelto en ALUMNOS: {target_name}.\n"
+            "Registros conductuales encontrados: 0.\n"
+            "REGLA DEL DOCENTE: al estar identificado en ALUMNOS y no tener registros en BITÁCORA, "
+            "se considera que no existen incidencias u observaciones conductuales registradas y puede comunicarse "
+            "que, según la bitácora disponible, se ha portado bien o ha mantenido un comportamiento adecuado."
+        ), meta
+
+    lines = [
+        "## BITÁCORA DOCENTE — MEMORIA DEL PROPIO ESTUDIANTE",
+        f"Estudiante resuelto en ALUMNOS: {target_name}.",
+        f"Registros conductuales totales: {meta['records']}.",
+        "Usa estos registros solo para responder al propio estudiante. No reveles información de compañeros ni nombres de terceros.",
+    ]
+    for row in records[-12:]:
+        date = str(row.get("Fecha") or "")
+        kind = str(row.get("Tipo de registro") or "")
+        category = str(row.get("Categoría") or "")
+        description = _redact_other_students(str(row.get("Descripción objetiva") or ""), target_name)
+        impact = _redact_other_students(str(row.get("Impacto en aprendizaje/convivencia") or ""), target_name)
+        action = _redact_other_students(str(row.get("Acción docente") or ""), target_name)
+        follow = _redact_other_students(str(row.get("Seguimiento") or ""), target_name)
+        lines.append(
+            f"- {date} | {kind} | {category} | Hecho: {description[:700]} | "
+            f"Impacto: {impact[:400]} | Acción docente: {action[:400]} | Seguimiento: {follow[:400]}"
+        )
+    meta["status"] = "records_loaded"
+    return "\n".join(lines), meta
+
 def _looks_sensitive(message: str) -> bool:
     q = _norm(message)
     patterns = (
@@ -421,6 +545,7 @@ def _status_payload() -> dict[str, Any]:
         "knowledge_documents_loaded": len(docs),
         "knowledge_documents": [str(d.get("name") or "") for d in docs],
         "classroom_oauth_configured": bool(settings.google_client_id and settings.google_client_secret and settings.google_refresh_token),
+        "bitacora_memory_configured": True,
         "privacy_mode": "family_student_read_only",
         "updated_at": _now_lima().isoformat(),
         "cache_error": _cache.get("error"),
@@ -449,6 +574,8 @@ def install(mcp: Any) -> None:
 
         message = str(body.get("message") or "").strip()
         grade = str(body.get("grade") or "").strip()
+        student_hint = str(body.get("student") or "").strip()
+        section = str(body.get("section") or "").strip()
         if len(message) > MAX_MESSAGE_CHARS:
             return JSONResponse({"reply": "La consulta es demasiado larga. Resume tu pregunta y vuelve a enviarla."}, status_code=400)
         if not message:
@@ -463,8 +590,11 @@ def install(mcp: Any) -> None:
         core, core_sources = _core_context(message)
         classroom, classroom_sources = _classroom_context(grade, message)
         drive, drive_sources = _drive_search_context(message)
+        bitacora, bitacora_meta = _bitacora_memory_context(message, grade, student_hint, section)
 
         source_blocks = []
+        if bitacora:
+            source_blocks.append(bitacora)
         if classroom:
             source_blocks.append("## CLASSROOM (dinámico)\n" + classroom)
         if core:
@@ -473,10 +603,10 @@ def install(mcp: Any) -> None:
             source_blocks.append("## DRIVE INSTITUCIONAL / MATERIALES RECUPERADOS\n" + drive)
         context = "\n\n".join(source_blocks)[:MAX_CONTEXT_CHARS]
 
-        if _looks_sensitive(message):
+        if _looks_sensitive(message) and not bitacora_meta.get("resolved"):
             context += (
                 "\n\n## RESTRICCIÓN DE PRIVACIDAD\n"
-                "No hay identidad verificada en esta sesión. No se cargaron notas, conducta, bitácora, mensajes ni datos privados de SIEweb."
+                "No hay una identidad propia resuelta para esta consulta. No cargues ni reveles notas, conducta, bitácora, mensajes ni datos privados de otro estudiante."
             )
 
         try:
@@ -485,7 +615,13 @@ def install(mcp: Any) -> None:
             print(f"PROFE JOHNNY APP OpenAI error: {type(exc).__name__}: {exc}", flush=True)
             reply = ""
         if not reply:
-            reply = _fallback(message, grade, core)
+            if bitacora_meta.get("status") == "no_records_good_behavior":
+                reply = (
+                    "No tienes incidencias ni observaciones conductuales registradas en la bitácora. "
+                    "Según la bitácora disponible, has mantenido un buen comportamiento. ¡Sigue así!"
+                )
+            else:
+                reply = _fallback(message, grade, core)
 
         return JSONResponse({
             "reply": reply,
@@ -495,7 +631,8 @@ def install(mcp: Any) -> None:
                 "core_sources": core_sources,
                 "classroom_sources": classroom_sources,
                 "drive_sources": drive_sources,
-                "private_student_data_used": False,
+                "bitacora_memory": bitacora_meta,
+                "private_student_data_used": bool(bitacora_meta.get("resolved") and bitacora_meta.get("records", 0) > 0),
                 "updated_at": _now_lima().isoformat(),
             },
         })
