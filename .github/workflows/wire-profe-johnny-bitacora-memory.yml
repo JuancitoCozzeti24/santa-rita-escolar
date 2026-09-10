@@ -1,0 +1,216 @@
+name: Wire PROFE JOHNNY Bitacora Memory
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/wire-profe-johnny-bitacora-memory.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Patch Profe Johnny brain with bitacora memory
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          p = Path('profe_johnny_brain.py')
+          s = p.read_text(encoding='utf-8')
+
+          old_import = 'from config import settings\n'
+          new_import = '''from config import settings\nfrom bitacora import (\n    _history as _bitacora_history,\n    _load_students as _bitacora_load_students,\n    _resolve_student as _bitacora_resolve_student,\n    _sheets_get as _bitacora_sheets_get,\n)\n'''
+          if 'from bitacora import (' not in s:
+              if old_import not in s:
+                  raise SystemExit('config import anchor not found')
+              s = s.replace(old_import, new_import, 1)
+
+          rule_anchor = '- Distingue información general de información privada. No reveles notas, conducta, observaciones, correos, datos personales ni historial de otro estudiante.\n'
+          rule_extra = '''- La BITÁCORA DOCENTE es una fuente de memoria conductual y de seguimiento, pero solo se usa para el propio estudiante cuando este se identifica como tal en la consulta. Nunca la uses para responder sobre un compañero.\n- Si el estudiante está identificado en la pestaña ALUMNOS y su historial BITÁCORA tiene exactamente 0 registros, interpreta que no hay incidencias ni observaciones conductuales registradas. Según la regla del profesor Johnny, puedes decir que su comportamiento ha sido adecuado o que “se ha portado bien” dentro de lo documentado.\n- Si el nombre no existe en ALUMNOS, NO concluyas que se portó bien: di que no pudiste identificar al estudiante en la matrícula.\n'''
+          if rule_extra.strip() not in s:
+              if rule_anchor not in s:
+                  raise SystemExit('base instructions anchor not found')
+              s = s.replace(rule_anchor, rule_anchor + rule_extra, 1)
+
+          helper_anchor = '\ndef _looks_sensitive(message: str) -> bool:\n'
+          helper = r'''
+
+def _declared_student_hint(message: str) -> str:
+    """Extrae solo una identidad declarada en primera persona: soy / me llamo / mi nombre es."""
+    text = str(message or "").strip()
+    m = re.search(r"\b(?:soy|me\s+llamo|mi\s+nombre\s+es)\s+(.+)$", text, flags=re.IGNORECASE)
+    if not m:
+        return ""
+    tail = m.group(1).strip()
+    tail = re.split(r"[,.;?!]|\s+y\s+(?:quiero|quisiera|necesito|deseo|tengo|puedo|me)\b", tail, maxsplit=1, flags=re.IGNORECASE)[0]
+    tokens = re.findall(r"[A-Za-zÁÉÍÓÚÜÑáéíóúüñ'’-]+", tail)
+    return " ".join(tokens[:6]).strip()
+
+
+def _redact_other_students(text: str, target_name: str) -> str:
+    out = str(text or "")
+    try:
+        students = _bitacora_load_students()
+    except Exception:
+        students = []
+    for row in students:
+        name = str(row.get("nombre") or "").strip()
+        if not name or _norm(name) == _norm(target_name):
+            continue
+        out = re.sub(re.escape(name), "otro estudiante", out, flags=re.IGNORECASE)
+    return out
+
+
+def _bitacora_memory_context(message: str, grade: str, student_hint: str = "", section: str = "") -> tuple[str, dict[str, Any]]:
+    """Carga memoria de bitácora únicamente cuando el propio estudiante declara su identidad."""
+    hint = str(student_hint or "").strip() or _declared_student_hint(message)
+    meta: dict[str, Any] = {
+        "requested": bool(hint),
+        "resolved": False,
+        "records": 0,
+        "status": "not_requested" if not hint else "unresolved",
+    }
+    if not hint:
+        return "", meta
+
+    data: dict[str, Any] = {"student": hint}
+    if str(grade).startswith("2") or str(grade).startswith("5"):
+        data["grado"] = str(grade)[:1]
+    if str(section or "").strip():
+        data["seccion"] = str(section).strip()
+
+    try:
+        resolved = _bitacora_resolve_student(data)
+    except Exception as exc:
+        meta["status"] = "error"
+        meta["error"] = f"{type(exc).__name__}: {exc}"
+        return "", meta
+
+    if resolved.get("status") != "resolved":
+        meta["status"] = str(resolved.get("status") or "unresolved")
+        return (
+            "## BITÁCORA DOCENTE\n"
+            "La persona declaró un nombre, pero no fue posible resolverlo de forma única en la pestaña ALUMNOS. "
+            "No interpretes ausencia en matrícula como buena conducta y no inventes información."
+        ), meta
+
+    student = dict(resolved.get("student") or {})
+    target_name = str(student.get("nombre") or hint)
+    meta["resolved"] = True
+    meta["status"] = "resolved"
+
+    try:
+        hist = _bitacora_history({"student": str(student.get("alumno_id") or hint), "limit": 40})
+    except Exception as exc:
+        meta["status"] = "error"
+        meta["error"] = f"{type(exc).__name__}: {exc}"
+        return "", meta
+
+    records = list(hist.get("bitacora") or [])
+    meta["records"] = int((hist.get("counts") or {}).get("bitacora") or len(records))
+    if meta["records"] == 0:
+        meta["status"] = "no_records_good_behavior"
+        return (
+            "## BITÁCORA DOCENTE — MEMORIA DEL PROPIO ESTUDIANTE\n"
+            f"Estudiante resuelto en ALUMNOS: {target_name}.\n"
+            "Registros conductuales encontrados: 0.\n"
+            "REGLA DEL DOCENTE: al estar identificado en ALUMNOS y no tener registros en BITÁCORA, "
+            "se considera que no existen incidencias u observaciones conductuales registradas y puede comunicarse "
+            "que, según la bitácora disponible, se ha portado bien o ha mantenido un comportamiento adecuado."
+        ), meta
+
+    lines = [
+        "## BITÁCORA DOCENTE — MEMORIA DEL PROPIO ESTUDIANTE",
+        f"Estudiante resuelto en ALUMNOS: {target_name}.",
+        f"Registros conductuales totales: {meta['records']}.",
+        "Usa estos registros solo para responder al propio estudiante. No reveles información de compañeros ni nombres de terceros.",
+    ]
+    for row in records[-12:]:
+        date = str(row.get("Fecha") or "")
+        kind = str(row.get("Tipo de registro") or "")
+        category = str(row.get("Categoría") or "")
+        description = _redact_other_students(str(row.get("Descripción objetiva") or ""), target_name)
+        impact = _redact_other_students(str(row.get("Impacto en aprendizaje/convivencia") or ""), target_name)
+        action = _redact_other_students(str(row.get("Acción docente") or ""), target_name)
+        follow = _redact_other_students(str(row.get("Seguimiento") or ""), target_name)
+        lines.append(
+            f"- {date} | {kind} | {category} | Hecho: {description[:700]} | "
+            f"Impacto: {impact[:400]} | Acción docente: {action[:400]} | Seguimiento: {follow[:400]}"
+        )
+    meta["status"] = "records_loaded"
+    return "\n".join(lines), meta
+'''
+          if '_bitacora_memory_context(' not in s:
+              if helper_anchor not in s:
+                  raise SystemExit('helper anchor not found')
+              s = s.replace(helper_anchor, helper + helper_anchor, 1)
+
+          body_anchor = '        message = str(body.get("message") or "").strip()\n        grade = str(body.get("grade") or "").strip()\n'
+          body_new = '''        message = str(body.get("message") or "").strip()\n        grade = str(body.get("grade") or "").strip()\n        student_hint = str(body.get("student") or "").strip()\n        section = str(body.get("section") or "").strip()\n'''
+          if 'student_hint = str(body.get("student")' not in s:
+              if body_anchor not in s:
+                  raise SystemExit('body anchor not found')
+              s = s.replace(body_anchor, body_new, 1)
+
+          context_anchor = '''        core, core_sources = _core_context(message)\n        classroom, classroom_sources = _classroom_context(grade, message)\n        drive, drive_sources = _drive_search_context(message)\n\n        source_blocks = []\n'''
+          context_new = '''        core, core_sources = _core_context(message)\n        classroom, classroom_sources = _classroom_context(grade, message)\n        drive, drive_sources = _drive_search_context(message)\n        bitacora, bitacora_meta = _bitacora_memory_context(message, grade, student_hint, section)\n\n        source_blocks = []\n        if bitacora:\n            source_blocks.append(bitacora)\n'''
+          if 'bitacora_meta = _bitacora_memory_context' not in s:
+              if context_anchor not in s:
+                  raise SystemExit('context anchor not found')
+              s = s.replace(context_anchor, context_new, 1)
+
+          privacy_old = '''        if _looks_sensitive(message):\n            context += (\n                "\\n\\n## RESTRICCIÓN DE PRIVACIDAD\\n"\n                "No hay identidad verificada en esta sesión. No se cargaron notas, conducta, bitácora, mensajes ni datos privados de SIEweb."\n            )\n'''
+          privacy_new = '''        if _looks_sensitive(message) and not bitacora_meta.get("resolved"):\n            context += (\n                "\\n\\n## RESTRICCIÓN DE PRIVACIDAD\\n"\n                "No hay una identidad propia resuelta para esta consulta. No cargues ni reveles notas, conducta, bitácora, mensajes ni datos privados de otro estudiante."\n            )\n'''
+          if 'not bitacora_meta.get("resolved")' not in s:
+              if privacy_old not in s:
+                  raise SystemExit('privacy anchor not found')
+              s = s.replace(privacy_old, privacy_new, 1)
+
+          fallback_anchor = '''        if not reply:\n            reply = _fallback(message, grade, core)\n\n        return JSONResponse({\n'''
+          fallback_new = '''        if not reply:\n            if bitacora_meta.get("status") == "no_records_good_behavior":\n                reply = (\n                    "No tienes incidencias ni observaciones conductuales registradas en la bitácora. "\n                    "Según la bitácora disponible, has mantenido un buen comportamiento. ¡Sigue así!"\n                )\n            else:\n                reply = _fallback(message, grade, core)\n\n        return JSONResponse({\n'''
+          if 'no_records_good_behavior' in s and 'No tienes incidencias ni observaciones conductuales registradas' not in s:
+              if fallback_anchor not in s:
+                  raise SystemExit('fallback anchor not found')
+              s = s.replace(fallback_anchor, fallback_new, 1)
+
+          meta_anchor = '''                "drive_sources": drive_sources,\n                "private_student_data_used": False,\n                "updated_at": _now_lima().isoformat(),\n'''
+          meta_new = '''                "drive_sources": drive_sources,\n                "bitacora_memory": bitacora_meta,\n                "private_student_data_used": bool(bitacora_meta.get("resolved") and bitacora_meta.get("records", 0) > 0),\n                "updated_at": _now_lima().isoformat(),\n'''
+          if '"bitacora_memory": bitacora_meta' not in s:
+              if meta_anchor not in s:
+                  raise SystemExit('meta anchor not found')
+              s = s.replace(meta_anchor, meta_new, 1)
+
+          status_anchor = '''        "classroom_oauth_configured": bool(settings.google_client_id and settings.google_client_secret and settings.google_refresh_token),\n        "privacy_mode": "family_student_read_only",\n'''
+          status_new = '''        "classroom_oauth_configured": bool(settings.google_client_id and settings.google_client_secret and settings.google_refresh_token),\n        "bitacora_memory_configured": True,\n        "privacy_mode": "family_student_read_only",\n'''
+          if '"bitacora_memory_configured": True' not in s:
+              if status_anchor not in s:
+                  raise SystemExit('status anchor not found')
+              s = s.replace(status_anchor, status_new, 1)
+
+          p.write_text(s, encoding='utf-8')
+          PY
+
+      - name: Verify syntax
+        run: python -m py_compile profe_johnny_brain.py
+
+      - name: Commit patch
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add profe_johnny_brain.py
+          if git diff --cached --quiet; then
+            echo "No changes needed"
+            exit 0
+          fi
+          git commit -m "feat: feed Profe Johnny memory from teacher bitacora"
+          git push origin HEAD:main
