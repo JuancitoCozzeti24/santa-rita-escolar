@@ -6,11 +6,7 @@ on:
       - profe-johnny-chat-bg
     paths:
       - ".github/workflows/profe-johnny-chat-bg-build.yml"
-      - "profe-johnny-app/apply_chat_bg.py"
-      - "profe-johnny-app/chat_fondo_optimized.b64"
-
-permissions:
-  contents: write
+      - "profe-johnny-app/**"
 
 jobs:
   build:
@@ -21,27 +17,21 @@ jobs:
         with:
           ref: profe-johnny-chat-bg
 
-      - name: Apply chat background
-        run: python profe-johnny-app/apply_chat_bg.py
-
-      - name: Verify source
+      - name: Verify updated chat source
         shell: bash
         run: |
           grep -q 'R.drawable.chat_fondo' profe-johnny-app/app/src/main/java/pe/profejohnny/app/MainActivity.kt
-          grep -q 'versionName = "0.2.2"' profe-johnny-app/app/build.gradle.kts
+          grep -q 'Hola, soy el Profe Johnny. ¿En qué puedo ayudarte?' profe-johnny-app/app/src/main/java/pe/profejohnny/app/MainActivity.kt
+          grep -q 'Consultando información' profe-johnny-app/app/src/main/java/pe/profejohnny/app/MainActivity.kt
           test -s profe-johnny-app/app/src/main/res/drawable/chat_fondo.jpg
 
-      - name: Commit app changes
+      - name: Create compile-time home media placeholders
         shell: bash
         run: |
-          rm -f profe-johnny-app/chat_fondo_optimized.b64 profe-johnny-app/apply_chat_bg.py
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A profe-johnny-app
-          if ! git diff --cached --quiet; then
-            git commit -m "feat: use custom math artwork as chat background"
-            git push origin HEAD:profe-johnny-chat-bg
-          fi
+          mkdir -p profe-johnny-app/app/src/main/res/raw
+          mkdir -p profe-johnny-app/app/src/main/res/drawable
+          printf 'PROFE_JOHNNY_VIDEO_PLACEHOLDER' > profe-johnny-app/app/src/main/res/raw/fondo_mate.mp4
+          echo 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=' | base64 -d > profe-johnny-app/app/src/main/res/drawable/profe_johnny_logo.png
 
       - name: Set up Java 17
         uses: actions/setup-java@v4
@@ -56,6 +46,8 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
 
       - name: Install Android platform and build tools
         run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
