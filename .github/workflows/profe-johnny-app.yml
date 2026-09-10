@@ -1,0 +1,70 @@
+name: Build PROFE JOHNNY APP
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - profe-johnny-app-v1
+    paths:
+      - "profe-johnny-app/**"
+      - ".github/workflows/profe-johnny-app.yml"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android platform and build tools
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Create compile-time placeholder media
+        shell: bash
+        run: |
+          mkdir -p profe-johnny-app/app/src/main/res/raw
+          mkdir -p profe-johnny-app/app/src/main/res/drawable
+          printf 'PROFE_JOHNNY_VIDEO_PLACEHOLDER' > profe-johnny-app/app/src/main/res/raw/fondo_mate.mp4
+          echo 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=' | base64 -d > profe-johnny-app/app/src/main/res/drawable/profe_johnny_logo.png
+
+      - name: Build debug APK
+        working-directory: profe-johnny-app
+        run: gradle :app:assembleDebug --stacktrace
+
+      - name: Prepare APK artifact
+        run: |
+          cp profe-johnny-app/app/build/outputs/apk/debug/app-debug.apk PROFE-JOHNNY-APP-v0.1.0-base.apk
+
+      - name: Prepare Android signing tools
+        shell: bash
+        run: |
+          mkdir -p android-signing-tools/lib
+          cp "$ANDROID_HOME/build-tools/35.0.0/zipalign" android-signing-tools/
+          cp "$ANDROID_HOME/build-tools/35.0.0/lib/apksigner.jar" android-signing-tools/lib/
+          chmod +x android-signing-tools/zipalign
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: PROFE-JOHNNY-APP-v0.1.0-base
+          path: PROFE-JOHNNY-APP-v0.1.0-base.apk
+
+      - name: Upload signing tools
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-signing-tools-35
+          path: android-signing-tools
