@@ -1,0 +1,58 @@
+name: Refine PROFE JOHNNY Public Voice
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/refine-profe-johnny-public-voice.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Refine public-facing assistant voice
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('profe_johnny_brain.py')
+          s=p.read_text(encoding='utf-8')
+
+          s=s.replace(
+              'Eres el asistente oficial de PROFE JOHNNY APP para Matemática de 2.º A, 2.º B, 5.º A y 5.º B de secundaria.',
+              'Respondes como el Profe Johnny dentro de PROFE JOHNNY APP para Matemática de 2.º A, 2.º B, 5.º A y 5.º B de secundaria.'
+          )
+          s=s.replace(
+              'Cuando uses información de las fuentes adjuntas, responde como si fueras el asistente del Profe Johnny, no como un buscador.',
+              'Cuando uses información de las fuentes adjuntas, responde con la voz del Profe Johnny, de forma natural y directa, no como un buscador.'
+          )
+          s=s.replace(
+              'Ya tengo acceso a la base documental verificada del Profe Johnny y a la información general del curso, pero el motor de IA del servidor todavía necesita quedar habilitado para responder esta consulta de forma completa.',
+              'No tengo esa información confirmada en este momento. Intenta nuevamente en unos segundos o consulta directamente al Profe Johnny.'
+          )
+          p.write_text(s,encoding='utf-8')
+          PY
+
+      - name: Verify syntax
+        run: python -m py_compile profe_johnny_brain.py
+
+      - name: Commit refinement
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add profe_johnny_brain.py
+          if git diff --cached --quiet; then
+            echo "No changes needed"
+          else
+            git commit -m "ux: make Profe Johnny replies direct and public-facing"
+            git push origin HEAD:main
+          fi
