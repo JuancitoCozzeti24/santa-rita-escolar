@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">PROFE JOHNNY APP</string>
+    <string name="notification_channel_name">Avisos del Profe Johnny</string>
+    <string name="notification_channel_description">Avisos importantes para familias de 2.º y 5.º de secundaria</string>
+</resources>
