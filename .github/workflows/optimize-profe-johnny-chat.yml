@@ -1,0 +1,99 @@
+name: Optimize PROFE JOHNNY Chat Latency
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/optimize-profe-johnny-chat.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  optimize:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Patch chat backend for faster responses
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('profe_johnny_brain.py')
+          s=p.read_text(encoding='utf-8')
+
+          # Add concurrency import.
+          if 'from concurrent.futures import ThreadPoolExecutor' not in s:
+              s=s.replace('from collections import defaultdict, deque\n', 'from collections import defaultdict, deque\nfrom concurrent.futures import ThreadPoolExecutor\n', 1)
+
+          # Add drive-query gate helper before sensitive classifier.
+          anchor='def _looks_sensitive(message: str) -> bool:\n'
+          helper='''def _needs_drive_search(message: str) -> bool:\n    q = _norm(message)\n    markers = (\n        "programacion", "programación", "sesion", "sesión", "unidad", "descriptor",\n        "documento", "drive", "libro", "pagina", "página", "material", "ficha",\n        "calendario", "calendarizacion", "calendarización", "tema", "competencia",\n        "desempeno", "desempeño", "trimestre", "quincena", "planificacion", "planificación",\n    )\n    return any(_norm(m) in q for m in markers)\n\n\n'''
+          if 'def _needs_drive_search(' not in s:
+              if anchor not in s:
+                  raise SystemExit('classifier anchor missing')
+              s=s.replace(anchor, helper+anchor, 1)
+
+          old='''        core, core_sources = _core_context(message)\n        classroom, classroom_sources = _classroom_context(grade, message)\n        drive, drive_sources = _drive_search_context(message)\n        bitacora, bitacora_meta = _bitacora_memory_context(message, grade, student_hint, section)\n'''
+          new='''        # Recupera fuentes independientes en paralelo. Drive se consulta solo cuando\n        # la pregunta realmente lo requiere; evita varios segundos de latencia en consultas simples.\n        with ThreadPoolExecutor(max_workers=4) as pool:\n            core_future = pool.submit(_core_context, message)\n            classroom_future = pool.submit(_classroom_context, grade, message)\n            bitacora_future = pool.submit(_bitacora_memory_context, message, grade, student_hint, section)\n            drive_future = pool.submit(_drive_search_context, message) if _needs_drive_search(message) else None\n            core, core_sources = core_future.result()\n            classroom, classroom_sources = classroom_future.result()\n            bitacora, bitacora_meta = bitacora_future.result()\n            if drive_future is not None:\n                drive, drive_sources = drive_future.result()\n            else:\n                drive, drive_sources = "", []\n'''
+          if old in s:
+              s=s.replace(old,new,1)
+          elif 'with ThreadPoolExecutor(max_workers=4) as pool:' not in s:
+              raise SystemExit('context block anchor missing')
+
+          status_anchor='''        "bitacora_memory_configured": True,\n        "privacy_mode": "family_student_read_only",\n'''
+          status_new='''        "bitacora_memory_configured": True,\n        "chat_engine_version": "2026-09-10-fast1",\n        "privacy_mode": "family_student_read_only",\n'''
+          if '"chat_engine_version": "2026-09-10-fast1"' not in s:
+              if status_anchor not in s:
+                  raise SystemExit('status anchor missing')
+              s=s.replace(status_anchor,status_new,1)
+
+          p.write_text(s,encoding='utf-8')
+          PY
+
+      - name: Verify syntax
+        run: python -m py_compile profe_johnny_brain.py
+
+      - name: Commit optimization
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add profe_johnny_brain.py
+          if git diff --cached --quiet; then
+            echo "No changes needed"
+          else
+            git commit -m "perf: reduce Profe Johnny chat response latency"
+            git push origin HEAD:main
+          fi
+
+      - name: Wait for optimized Render deploy
+        shell: bash
+        run: |
+          set -euo pipefail
+          URL='https://santa-rita-escolar-tcpb.onrender.com/profe-johnny/v1/status'
+          for i in $(seq 1 36); do
+            body=$(curl -fsS "$URL" || true)
+            echo "attempt=$i ${body:0:240}"
+            if echo "$body" | grep -q '2026-09-10-fast1'; then
+              exit 0
+            fi
+            sleep 10
+          done
+          echo 'Optimized deployment did not become ready in time'
+          exit 1
+
+      - name: Measure simple chat latency
+        shell: bash
+        run: |
+          curl -sS --fail-with-body \
+            -o chat.json \
+            -w 'http=%{http_code} total=%{time_total}s connect=%{time_connect}s starttransfer=%{time_starttransfer}s\n' \
+            -H 'Content-Type: application/json' \
+            -d '{"message":"¿Cuál es el horario de Matemática de quinto año?","grade":"5.º"}' \
+            https://santa-rita-escolar-tcpb.onrender.com/profe-johnny/v1/chat
+          cat chat.json
