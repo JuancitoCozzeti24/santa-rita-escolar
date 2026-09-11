@@ -1,0 +1,352 @@
+from __future__ import annotations
+
+import base64
+import hashlib
+import hmac
+import json
+import os
+import re
+import time
+import unicodedata
+from typing import Any
+from urllib.parse import quote
+
+from starlette.requests import Request
+from starlette.responses import JSONResponse
+
+import battle_accounts as ba
+import profe_johnny_brain as brain
+from bitacora import DEFAULT_SPREADSHEET_ID, _google_request
+
+API_VERSION = "2026-09-10-identity-v3"
+TOKEN_SECRET = os.getenv("PROFE_JOHNNY_TOKEN_SECRET", "").strip()
+OWNER_SECRET_HASH = os.getenv("PROFE_JOHNNY_OWNER_SECRET_HASH", "").strip()
+FAMILY_SHEET_ID = os.getenv("PROFE_JOHNNY_FAMILY_SHEET_ID", DEFAULT_SPREADSHEET_ID).strip()
+FAMILY_TAB = "PROFE_APP_FAMILIAS"
+TOKEN_TTL = 30 * 86400
+
+
+def _norm(value: Any) -> str:
+    text = unicodedata.normalize("NFKD", str(value or ""))
+    text = "".join(ch for ch in text if not unicodedata.combining(ch))
+    text = re.sub(r"[^A-Za-z0-9]+", " ", text).upper()
+    return " ".join(text.split())
+
+
+def _json(data: dict[str, Any], status: int = 200) -> JSONResponse:
+    resp = JSONResponse(data, status_code=status)
+    resp.headers["Access-Control-Allow-Origin"] = "*"
+    resp.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
+    resp.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+def _b64(raw: bytes) -> str:
+    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def _b64d(text: str) -> bytes:
+    return base64.urlsafe_b64decode(text + "=" * ((4 - len(text) % 4) % 4))
+
+
+def _sign(payload: dict[str, Any]) -> str:
+    if not TOKEN_SECRET:
+        raise RuntimeError("PROFE_JOHNNY_TOKEN_SECRET no configurado")
+    body = _b64(json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8"))
+    sig = _b64(hmac.new(TOKEN_SECRET.encode("utf-8"), body.encode("ascii"), hashlib.sha256).digest())
+    return body + "." + sig
+
+
+def _token(role: str, *, subject: str, section: str = "", children: list[str] | None = None) -> str:
+    now = int(time.time())
+    return _sign({"sub": subject, "role": role, "section": section, "children": list(children or []), "iat": now, "exp": now + TOKEN_TTL})
+
+
+def _verify_token(value: str) -> dict[str, Any] | None:
+    try:
+        body, sig = value.split(".", 1)
+        expected = _b64(hmac.new(TOKEN_SECRET.encode("utf-8"), body.encode("ascii"), hashlib.sha256).digest())
+        if not hmac.compare_digest(sig, expected):
+            return None
+        payload = json.loads(_b64d(body))
+        if int(payload.get("exp") or 0) < int(time.time()):
+            return None
+        if payload.get("role") not in {"student", "family", "owner"}:
+            return None
+        return payload
+    except Exception:
+        return None
+
+
+def _auth(request: Request) -> dict[str, Any] | None:
+    raw = str(request.headers.get("authorization") or "")
+    if not raw.lower().startswith("bearer "):
+        return None
+    return _verify_token(raw[7:].strip())
+
+
+def _verify_owner_secret(value: str) -> bool:
+    if not OWNER_SECRET_HASH:
+        return False
+    try:
+        algorithm, iterations, salt_b64, digest_b64 = OWNER_SECRET_HASH.split("$", 3)
+        if algorithm != "pbkdf2_sha256":
+            return False
+        salt = _b64d(salt_b64)
+        actual = hashlib.pbkdf2_hmac("sha256", value.encode("utf-8"), salt, int(iterations), dklen=32)
+        return hmac.compare_digest(_b64(actual), digest_b64)
+    except Exception:
+        return False
+
+
+def _roster_record(student_key: str) -> dict[str, str] | None:
+    key = str(student_key or "").strip()
+    if not key:
+        return None
+    rows = ba._sheet_get_from(ba.ROSTER_SHEET_ID, "ALUMNOS!A2:G1000")
+    for raw in rows:
+        row = list(raw) + [""] * (7 - len(raw))
+        if str(row[0]).strip() != key:
+            continue
+        grade_match = re.search(r"[25]", str(row[2] or ""))
+        section_letter = _norm(row[3])
+        active = _norm(row[5]) in {"ACTIVO", "ACTIVE", "SI", "TRUE", "1"}
+        if not grade_match or section_letter not in {"A", "B"} or not active:
+            return None
+        return {"student_key": key, "full_name": str(row[1]).strip(), "grade": grade_match.group(0), "section": section_letter, "group": grade_match.group(0) + section_letter, "alucod": str(row[6]).strip()}
+    return None
+
+
+def _family_rows() -> list[dict[str, str]]:
+    try:
+        rows = ba._sheet_get_from(FAMILY_SHEET_ID, f"{FAMILY_TAB}!A2:E2000")
+    except Exception:
+        return []
+    out: list[dict[str, str]] = []
+    for raw in rows:
+        row = list(raw) + [""] * (5 - len(raw))
+        code, student_key, label, active, created_at = [str(x).strip() for x in row[:5]]
+        if code and student_key and _norm(active) not in {"NO", "FALSE", "0", "INACTIVO"}:
+            out.append({"family_code": code, "student_key": student_key, "label": label, "created_at": created_at})
+    return out
+
+
+def _family_links(code: str) -> list[dict[str, str]]:
+    wanted = str(code or "").strip()
+    return [row for row in _family_rows() if hmac.compare_digest(row["family_code"], wanted)]
+
+
+def _student_login(code: str) -> dict[str, Any] | None:
+    student = _roster_record(code)
+    if not student:
+        return None
+    return {"token": _token("student", subject=student["student_key"], section=student["group"]), "profile": {"role": "student", "display_name": student["full_name"], "grade": student["grade"], "section": student["section"]}}
+
+
+def _family_login(code: str) -> dict[str, Any] | None:
+    links = _family_links(code)
+    children: list[dict[str, str]] = []
+    keys: list[str] = []
+    for link in links:
+        student = _roster_record(link["student_key"])
+        if not student:
+            continue
+        keys.append(student["student_key"])
+        children.append({"student_key": student["student_key"], "display_name": student["full_name"], "grade": student["grade"], "section": student["section"]})
+    if not keys:
+        return None
+    return {"token": _token("family", subject=hashlib.sha256(code.encode()).hexdigest()[:16], children=keys), "profile": {"role": "family", "children": children}}
+
+
+def _course_for_student(student: dict[str, str]) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    courses = [c for c in brain._client.list_courses(active_only=True) if brain._course_matches(c, student["grade"], student["section"])]
+    target_name = _norm(student["full_name"])
+    for course in courses:
+        course_id = str(course.get("id") or "")
+        if not course_id:
+            continue
+        for roster in brain._client.list_students(course_id):
+            if _norm(roster.get("name")) == target_name:
+                return course, roster
+    return (courses[0] if courses else None), None
+
+
+def _student_classroom_summary(student_key: str, limit: int = 25) -> dict[str, Any]:
+    student = _roster_record(student_key)
+    if not student:
+        raise ValueError("student_not_found")
+    course, roster = _course_for_student(student)
+    if not course:
+        return {"student": student, "course": None, "activities": [], "warning": "classroom_course_not_found"}
+    course_id = str(course.get("id") or "")
+    user_id = str((roster or {}).get("userId") or "")
+    activities: list[dict[str, Any]] = []
+    for work in brain._client.list_coursework(course_id, include_drafts=False)[:max(1, min(limit, 50))]:
+        item = {"id": str(work.get("id") or ""), "title": str(work.get("title") or ""), "due": brain._format_due(work), "max_points": work.get("maxPoints"), "state": None, "late": None, "grade": None, "submitted": None}
+        if user_id and item["id"]:
+            try:
+                sub = next((s for s in brain._client.list_submissions(course_id, item["id"]) if str(s.get("userId") or "") == user_id), None)
+            except Exception:
+                sub = None
+            if sub:
+                item.update({"state": sub.get("state"), "late": sub.get("late"), "grade": sub.get("assignedGrade") if sub.get("assignedGrade") is not None else sub.get("draftGrade"), "submitted": sub.get("state") in {"TURNED_IN", "RETURNED"}, "updated_at": sub.get("updateTime")})
+        activities.append(item)
+    return {"student": {"student_key": student["student_key"], "display_name": student["full_name"], "grade": student["grade"], "section": student["section"]}, "course": {"id": course_id, "name": course.get("name")}, "classroom_user_resolved": bool(user_id), "activities": activities}
+
+
+def _allowed_student(payload: dict[str, Any], requested: str = "") -> str:
+    role = str(payload.get("role") or "")
+    if role == "student":
+        return str(payload.get("sub") or "")
+    if role == "family":
+        children = [str(x) for x in (payload.get("children") or [])]
+        if requested and requested in children:
+            return requested
+        return children[0] if len(children) == 1 else ""
+    if role == "owner":
+        return str(requested or "")
+    return ""
+
+
+def _private_context(student_key: str) -> tuple[str, dict[str, Any]]:
+    summary = _student_classroom_summary(student_key)
+    lines = ["## CLASSROOM PRIVADO DEL USUARIO AUTENTICADO", f"Estudiante: {summary['student']['display_name']} | {summary['student']['grade']}.º {summary['student']['section']}"]
+    for item in summary.get("activities") or []:
+        lines.append(f"- {item['title']} | límite={item['due']} | estado={item.get('state')} | nota={item.get('grade')} / {item.get('max_points')} | tardía={item.get('late')}")
+    lines.append("## POLÍTICA SIEWEB")
+    lines.append("Para estudiantes y familias, cualquier información de SIEweb/CIEweb debe convertirse en orientación pedagógica sin revelar letra o nota cruda; para owner sí puede mostrarse el dato disponible. No inventes SIEweb si no está en el contexto.")
+    return "\n".join(lines), summary
+
+
+def _write_family_link(family_code: str, student_key: str, label: str = "") -> None:
+    student = _roster_record(student_key)
+    if not student:
+        raise ValueError("student_not_found")
+    if any(r["family_code"] == family_code and r["student_key"] == student_key for r in _family_rows()):
+        return
+    url = f"https://sheets.googleapis.com/v4/spreadsheets/{FAMILY_SHEET_ID}/values/{quote(FAMILY_TAB + '!A:E', safe='')}:append"
+    _google_request("POST", url, params={"valueInputOption": "RAW", "insertDataOption": "INSERT_ROWS"}, json_body={"values": [[family_code, student_key, label, "ACTIVO", brain._now_lima().isoformat()]]})
+
+
+def install(mcp: Any) -> None:
+    if getattr(mcp, "_profe_johnny_identity_v3_installed", False):
+        return
+
+    @mcp.custom_route("/profe-johnny/v1/auth", methods=["POST", "OPTIONS"])
+    async def auth_route(request: Request):
+        if request.method == "OPTIONS":
+            return _json({"ok": True})
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        role = str(body.get("role") or "").strip().lower()
+        code = str(body.get("code") or "").strip()
+        if role == "student":
+            result = _student_login(code)
+        elif role == "family":
+            result = _family_login(code)
+        elif role == "owner":
+            result = {"token": _token("owner", subject="owner"), "profile": {"role": "owner", "display_name": "Profe Johnny"}} if _verify_owner_secret(code) else None
+        else:
+            return _json({"ok": False, "error": "invalid_role"}, 400)
+        if not result:
+            return _json({"ok": False, "error": "invalid_credentials"}, 401)
+        return _json({"ok": True, **result})
+
+    @mcp.custom_route("/profe-johnny/v1/me", methods=["GET", "OPTIONS"])
+    async def me_route(request: Request):
+        if request.method == "OPTIONS":
+            return _json({"ok": True})
+        payload = _auth(request)
+        if not payload:
+            return _json({"ok": False, "error": "unauthorized"}, 401)
+        role = payload["role"]
+        if role == "student":
+            profile = {"role": role, "student": _roster_record(str(payload.get("sub") or ""))}
+        elif role == "family":
+            profile = {"role": role, "children": [_roster_record(str(k)) for k in payload.get("children") or []]}
+        else:
+            profile = {"role": "owner", "display_name": "Profe Johnny"}
+        return _json({"ok": True, "profile": profile})
+
+    @mcp.custom_route("/profe-johnny/v1/student-summary", methods=["GET", "OPTIONS"])
+    async def student_summary_route(request: Request):
+        if request.method == "OPTIONS":
+            return _json({"ok": True})
+        payload = _auth(request)
+        if not payload:
+            return _json({"ok": False, "error": "unauthorized"}, 401)
+        requested = str(request.query_params.get("student_key") or "").strip()
+        allowed = _allowed_student(payload, requested)
+        if not allowed:
+            return _json({"ok": False, "error": "student_selection_required"}, 400)
+        if payload["role"] != "owner" and requested and requested != allowed:
+            return _json({"ok": False, "error": "forbidden"}, 403)
+        try:
+            summary = _student_classroom_summary(allowed)
+        except ValueError as exc:
+            return _json({"ok": False, "error": str(exc)}, 404)
+        return _json({"ok": True, **summary})
+
+    @mcp.custom_route("/profe-johnny/v1/secure-chat", methods=["POST", "OPTIONS"])
+    async def secure_chat_route(request: Request):
+        if request.method == "OPTIONS":
+            return _json({"ok": True})
+        payload = _auth(request)
+        if not payload:
+            return _json({"ok": False, "error": "unauthorized"}, 401)
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        message = str(body.get("message") or "").strip()
+        requested = str(body.get("student_key") or "").strip()
+        if not message:
+            return _json({"ok": False, "error": "empty_message"}, 400)
+        student_key = _allowed_student(payload, requested)
+        private_context = ""
+        summary: dict[str, Any] | None = None
+        if student_key:
+            try:
+                private_context, summary = _private_context(student_key)
+            except Exception as exc:
+                private_context = f"## DATOS PRIVADOS\nNo se pudo cargar Classroom privado: {type(exc).__name__}."
+        elif payload["role"] != "owner":
+            return _json({"ok": False, "error": "student_selection_required"}, 400)
+        rules = {"student": "Responde solo sobre el estudiante autenticado. Puedes mostrar sus propias notas exactas de Classroom. Nunca datos de compañeros.", "family": "Responde solo sobre hijos vinculados al código familiar. Usa lenguaje formal y psicopedagógico. Nunca datos de otros estudiantes.", "owner": "El usuario autenticado es el propietario/docente. Puede consultar cualquier estudiante y recibir datos académicos completos disponibles."}
+        context = f"## IDENTIDAD VERIFICADA\nRol: {payload['role']}\n{rules[payload['role']]}\n\n" + private_context
+        grade = str(summary["student"]["grade"]) + ".º año" if summary else "según contexto"
+        try:
+            reply = brain._openai_reply(message, grade, context)
+        except Exception:
+            reply = ""
+        if not reply:
+            reply = "No pude generar la respuesta completa en este momento, pero tu identidad sí quedó verificada."
+        return _json({"ok": True, "reply": reply, "meta": {"role": payload["role"], "student_key": student_key or None, "private_classroom_used": bool(summary), "api_version": API_VERSION}})
+
+    @mcp.custom_route("/profe-johnny/v1/owner/family-link", methods=["POST", "OPTIONS"])
+    async def family_link_route(request: Request):
+        if request.method == "OPTIONS":
+            return _json({"ok": True})
+        payload = _auth(request)
+        if not payload or payload.get("role") != "owner":
+            return _json({"ok": False, "error": "forbidden"}, 403)
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        family_code = str(body.get("family_code") or "").strip()
+        student_key = str(body.get("student_key") or "").strip()
+        label = str(body.get("label") or "").strip()[:80]
+        if not re.fullmatch(r"[A-Za-z0-9._-]{6,40}", family_code):
+            return _json({"ok": False, "error": "invalid_family_code"}, 400)
+        try:
+            _write_family_link(family_code, student_key, label)
+        except Exception as exc:
+            return _json({"ok": False, "error": f"{type(exc).__name__}: {exc}"}, 500)
+        return _json({"ok": True, "linked": True})
+
+    setattr(mcp, "_profe_johnny_identity_v3_installed", True)
+    print("PROFE JOHNNY APP Identity v3: auth, me, student-summary y secure-chat instalados.", flush=True)
