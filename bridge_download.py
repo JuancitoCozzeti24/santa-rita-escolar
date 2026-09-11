@@ -59,6 +59,6 @@ def install(mcp) -> None:
         from profe_johnny_mobile_v2 import install as install_profe_johnny_mobile_v2
         install_profe_johnny_mobile_v2(mcp)
 
-    if not getattr(mcp, "_profe_johnny_identity_v3_installed", False):
-        from profe_johnny_identity_v3 import install as install_profe_johnny_identity_v3
-        install_profe_johnny_identity_v3(mcp)
+    if not getattr(mcp, "_profe_johnny_identity_v4_installed", False):
+        from profe_johnny_identity_v4 import install as install_profe_johnny_identity_v4
+        install_profe_johnny_identity_v4(mcp)
