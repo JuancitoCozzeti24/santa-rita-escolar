@@ -27,19 +27,22 @@ def _build_zip() -> bytes:
 
 
 def install(mcp) -> None:
-    if getattr(mcp, "_sieroom_bridge_download_installed", False):
-        return
+    if not getattr(mcp, "_sieroom_bridge_download_installed", False):
+        @mcp.custom_route(DOWNLOAD_PATH, methods=["GET"])
+        async def download_bridge(_request):
+            payload = _build_zip()
+            return Response(
+                content=payload,
+                media_type="application/zip",
+                headers={
+                    "Content-Disposition": f'attachment; filename="{ARCHIVE_NAME}"',
+                    "Cache-Control": "no-store",
+                },
+            )
+        setattr(mcp, "_sieroom_bridge_download_installed", True)
 
-    @mcp.custom_route(DOWNLOAD_PATH, methods=["GET"])
-    async def download_bridge(_request):
-        payload = _build_zip()
-        return Response(
-            content=payload,
-            media_type="application/zip",
-            headers={
-                "Content-Disposition": f'attachment; filename="{ARCHIVE_NAME}"',
-                "Cache-Control": "no-store",
-            },
-        )
-
-    setattr(mcp, "_sieroom_bridge_download_installed", True)
+    if not getattr(mcp, "_battle_identity_v17_installed", False):
+        from battle_identity_v17 import install as install_battle_identity
+        install_battle_identity(mcp)
+        setattr(mcp, "_battle_identity_v17_installed", True)
+        print("BATALLA MATEMÁTICA: /battle/v1/create y /claim cargados en Render.", flush=True)
