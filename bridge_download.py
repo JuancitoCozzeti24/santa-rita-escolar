@@ -31,26 +31,23 @@ def install(mcp) -> None:
         @mcp.custom_route(DOWNLOAD_PATH, methods=["GET"])
         async def download_bridge(_request):
             payload = _build_zip()
-            return Response(
-                content=payload,
-                media_type="application/zip",
-                headers={
-                    "Content-Disposition": f'attachment; filename="{ARCHIVE_NAME}"',
-                    "Cache-Control": "no-store",
-                },
-            )
+            return Response(content=payload, media_type="application/zip", headers={"Content-Disposition": f'attachment; filename="{ARCHIVE_NAME}"', "Cache-Control": "no-store"})
         setattr(mcp, "_sieroom_bridge_download_installed", True)
 
     if not getattr(mcp, "_battle_identity_v17_installed", False):
         from battle_identity_v17 import install as install_battle_identity
         install_battle_identity(mcp)
         setattr(mcp, "_battle_identity_v17_installed", True)
-        print("BATALLA MATEMÁTICA: /battle/v1/create y /claim cargados en Render.", flush=True)
 
     if not getattr(mcp, "_battle_simple_access_installed", False):
         from battle_simple_access import install as install_battle_simple_access
         install_battle_simple_access(mcp)
         setattr(mcp, "_battle_simple_access_installed", True)
+
+    if not getattr(mcp, "_battle_quick_school_login_installed", False):
+        from battle_quick_school_login import install as install_battle_quick_school_login
+        install_battle_quick_school_login(mcp)
+        setattr(mcp, "_battle_quick_school_login_installed", True)
 
     if not getattr(mcp, "_battle_ranking_live_fix_installed", False):
         from battle_ranking_live_fix import install as install_battle_ranking_live_fix
@@ -63,7 +60,6 @@ def install(mcp) -> None:
         from battle_voice_bootstrap import run_once as run_battle_voice_bootstrap
         run_battle_voice_bootstrap()
         setattr(mcp, "_battle_voice_v20_installed", True)
-        print("BATALLA MATEMÁTICA: voz ElevenLabs cargada en Render.", flush=True)
 
     if not getattr(mcp, "_profe_johnny_mobile_v2_installed", False):
         from profe_johnny_mobile_v2 import install as install_profe_johnny_mobile_v2
