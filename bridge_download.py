@@ -47,6 +47,12 @@ def install(mcp) -> None:
         setattr(mcp, "_battle_identity_v17_installed", True)
         print("BATALLA MATEMÁTICA: /battle/v1/create y /claim cargados en Render.", flush=True)
 
+    if not getattr(mcp, "_battle_voice_v20_installed", False):
+        from battle_voice_v20 import install as install_battle_voice
+        install_battle_voice(mcp)
+        setattr(mcp, "_battle_voice_v20_installed", True)
+        print("BATALLA MATEMÁTICA: voz ElevenLabs cargada en Render.", flush=True)
+
     if not getattr(mcp, "_profe_johnny_mobile_v2_installed", False):
         from profe_johnny_mobile_v2 import install as install_profe_johnny_mobile_v2
         install_profe_johnny_mobile_v2(mcp)
