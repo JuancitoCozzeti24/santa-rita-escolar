@@ -22,6 +22,11 @@ def _clean_name(value: str) -> str:
     return text[:40]
 
 
+def _clean_avatar(value: str) -> str:
+    avatar = str(value or "").strip()
+    return avatar[:8] if avatar else "⚡"
+
+
 def _username_from_name(full_name: str, used: set[str]) -> str:
     base = _norm_name(full_name).replace(" ", ".")
     base = re.sub(r"[^a-z0-9._-]", "", base).strip(".")[:18] or "jugador"
@@ -46,6 +51,7 @@ def install(mcp) -> None:
             body = {}
 
         entered = _clean_name(body.get("full_name"))
+        avatar = _clean_avatar(body.get("avatar"))
         if len(entered) < 2:
             return ba._json({"ok": False, "error": "name_required"}, 400)
 
@@ -74,7 +80,7 @@ def install(mcp) -> None:
                         ba._pin_hash(hidden_pin, salt),
                         entered,
                         ba.PUBLIC_SECTION,
-                        "⚡",
+                        avatar,
                         now,
                         now,
                         True,
@@ -87,8 +93,10 @@ def install(mcp) -> None:
             else:
                 if account.get("display_name") != entered:
                     ba._sheet_update(f"CUENTAS!E{account['row']}", [[entered]])
-                    account = next(a for a in ba._accounts() if a["account_id"] == account["account_id"])
+                if avatar and account.get("avatar") != avatar:
+                    ba._sheet_update(f"CUENTAS!G{account['row']}", [[avatar]])
                 ba._sheet_update(f"CUENTAS!I{account['row']}", [[ba._now()]])
+                account = next(a for a in ba._accounts() if a["account_id"] == account["account_id"])
 
         return ba._json({
             "ok": True,
