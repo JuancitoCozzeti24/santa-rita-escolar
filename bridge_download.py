@@ -50,6 +50,8 @@ def install(mcp) -> None:
     if not getattr(mcp, "_battle_voice_v20_installed", False):
         from battle_voice_v20 import install as install_battle_voice
         install_battle_voice(mcp)
+        from battle_voice_bootstrap import run_once as run_battle_voice_bootstrap
+        run_battle_voice_bootstrap()
         setattr(mcp, "_battle_voice_v20_installed", True)
         print("BATALLA MATEMÁTICA: voz ElevenLabs cargada en Render.", flush=True)
 
