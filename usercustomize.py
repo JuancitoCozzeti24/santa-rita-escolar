@@ -22,6 +22,11 @@ def _install_battle_accounts_bootstrap() -> None:
             print("BATALLA MATEMÁTICA: bootstrap de cuentas online activo.", flush=True)
         except Exception as exc:
             print(f"BATALLA MATEMÁTICA: error instalando cuentas online: {exc}", flush=True)
+        try:
+            from battle_identity_v17 import install as install_battle_identity_v17
+            install_battle_identity_v17(self)
+        except Exception as exc:
+            print(f"BATALLA MATEMÁTICA v17: error instalando flujo de identidad: {exc}", flush=True)
 
     setattr(init_with_battle_accounts, "_battle_accounts_bootstrap", True)
     FastMCP.__init__ = init_with_battle_accounts
