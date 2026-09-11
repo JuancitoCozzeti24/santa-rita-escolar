@@ -6,8 +6,11 @@ import uuid
 import urllib.request
 import urllib.error
 
-SAMPLE_URL = "https://cdn.creativeclaw.co/u/f6c1ef8d/audio/1974d4af-9086-45ba-955b-df66d5af32a8.mp3"
+import requests
+from bitacora import _google_token
+
 VOICE_NAME = "Profe Johnny - Batalla Matematica"
+DRIVE_FILE_ID = (os.getenv("BATTLE_VOICE_SAMPLE_DRIVE_ID") or "19hMqYiJfowvxqVQF9Wk3fScCkaYE84J-").strip()
 
 
 def _multipart(sample: bytes):
@@ -27,6 +30,22 @@ def _multipart(sample: bytes):
     return boundary, b"".join(chunks)
 
 
+def _download_sample() -> bytes:
+    if not DRIVE_FILE_ID:
+        raise RuntimeError("drive_sample_id_missing")
+    url = f"https://www.googleapis.com/drive/v3/files/{DRIVE_FILE_ID}?alt=media"
+    headers = {"Authorization": f"Bearer {_google_token()}"}
+    response = requests.get(url, headers=headers, timeout=45)
+    if response.status_code == 401:
+        headers["Authorization"] = f"Bearer {_google_token(force=True)}"
+        response = requests.get(url, headers=headers, timeout=45)
+    if not response.ok:
+        raise RuntimeError(f"drive_sample_download_{response.status_code}:{response.text[:300]}")
+    if len(response.content) < 10000:
+        raise RuntimeError("drive_sample_too_small")
+    return response.content
+
+
 def run_once() -> None:
     if (os.getenv("BATTLE_VOICE_AUTO_BOOTSTRAP") or "").strip() != "1":
         return
@@ -38,12 +57,13 @@ def run_once() -> None:
         print("BATTLE_VOICE_BOOTSTRAP_ERROR=api_key_missing", flush=True)
         return
     try:
-        with urllib.request.urlopen(SAMPLE_URL, timeout=30) as src:
-            sample = src.read()
+        sample = _download_sample()
+        print(f"BATTLE_VOICE_SAMPLE_BYTES={len(sample)}", flush=True)
         boundary, body = _multipart(sample)
         req = urllib.request.Request("https://api.elevenlabs.io/v1/voices/add", data=body, method="POST")
         req.add_header("xi-api-key", key)
         req.add_header("Content-Type", f"multipart/form-data; boundary={boundary}")
+        req.add_header("User-Agent", "BatallaMatematica/1.0")
         with urllib.request.urlopen(req, timeout=90) as r:
             data = json.loads(r.read().decode("utf-8"))
         voice_id = str(data.get("voice_id") or "").strip()
