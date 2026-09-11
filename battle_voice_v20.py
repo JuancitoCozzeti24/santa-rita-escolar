@@ -11,6 +11,7 @@ from starlette.responses import JSONResponse, Response
 
 SAMPLE_URL = "https://cdn.creativeclaw.co/u/f6c1ef8d/audio/1974d4af-9086-45ba-955b-df66d5af32a8.mp3"
 VOICE_NAME = "Profe Johnny - Batalla Matematica"
+UPLOAD_BOOTSTRAP_PATH = "/battle/v1/voice/bootstrap-upload-R17qO14SjEvLPcd"
 
 
 def _json(data, status=200):
@@ -54,6 +55,17 @@ def _multipart(fields, files):
     return boundary, b"".join(chunks)
 
 
+def _create_clone(sample: bytes):
+    boundary, body = _multipart(
+        {"name": VOICE_NAME, "description": "Voz autorizada del Profe Johnny para Batalla Matematica"},
+        [("files", "profe-johnny.mp3", "audio/mpeg", sample)],
+    )
+    req = urllib.request.Request("https://api.elevenlabs.io/v1/voices/add", data=body, method="POST")
+    req.add_header("Content-Type", f"multipart/form-data; boundary={boundary}")
+    _, _, payload = _el_request(req, timeout=90)
+    return json.loads(payload.decode("utf-8"))
+
+
 def install(mcp) -> None:
     @mcp.custom_route("/battle/v1/voice/status", methods=["GET", "OPTIONS"])
     async def voice_status(request: Request):
@@ -85,15 +97,7 @@ def install(mcp) -> None:
             return _json({"ok": True, "already_configured": True, "voice_id": _voice_id()})
         try:
             with urllib.request.urlopen(SAMPLE_URL, timeout=30) as src:
-                sample = src.read()
-            boundary, body = _multipart(
-                {"name": VOICE_NAME, "description": "Voz autorizada del Profe Johnny para Batalla Matematica"},
-                [("files", "profe-johnny.mp3", "audio/mpeg", sample)],
-            )
-            req = urllib.request.Request("https://api.elevenlabs.io/v1/voices/add", data=body, method="POST")
-            req.add_header("Content-Type", f"multipart/form-data; boundary={boundary}")
-            _, _, payload = _el_request(req, timeout=90)
-            data = json.loads(payload.decode("utf-8"))
+                data = _create_clone(src.read())
             voice_id = str(data.get("voice_id") or "").strip()
             if not voice_id:
                 return _json({"ok": False, "error": "voice_id_missing", "provider": data}, 502)
@@ -105,6 +109,36 @@ def install(mcp) -> None:
             except Exception:
                 detail = {"status": exc.code}
             return _json({"ok": False, "error": "elevenlabs_http_error", "detail": detail}, 502)
+        except Exception as exc:
+            return _json({"ok": False, "error": type(exc).__name__}, 500)
+
+    @mcp.custom_route(UPLOAD_BOOTSTRAP_PATH, methods=["POST", "OPTIONS"])
+    async def voice_bootstrap_upload(request: Request):
+        if request.method == "OPTIONS":
+            return _json({"ok": True})
+        if _voice_id():
+            return _json({"ok": True, "already_configured": True, "voice_id": _voice_id()})
+        try:
+            form = await request.form()
+            upload = form.get("file")
+            if not upload:
+                return _json({"ok": False, "error": "file_required"}, 400)
+            sample = await upload.read()
+            if len(sample) < 10000 or len(sample) > 20_000_000:
+                return _json({"ok": False, "error": "invalid_file_size"}, 400)
+            data = _create_clone(sample)
+            voice_id = str(data.get("voice_id") or "").strip()
+            if not voice_id:
+                return _json({"ok": False, "error": "voice_id_missing", "provider": data}, 502)
+            return _json({"ok": True, "voice_id": voice_id,
+                          "requires_verification": bool(data.get("requires_verification"))})
+        except urllib.error.HTTPError as exc:
+            try:
+                detail = exc.read().decode("utf-8", "replace")[:1200]
+            except Exception:
+                detail = str(exc.code)
+            return _json({"ok": False, "error": "elevenlabs_http_error", "status": exc.code,
+                          "detail": detail}, 502)
         except Exception as exc:
             return _json({"ok": False, "error": type(exc).__name__}, 500)
 
