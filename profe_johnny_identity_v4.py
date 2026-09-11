@@ -36,11 +36,7 @@ def _course_for_student(student: dict[str, str]):
 def _ensure_family_tab() -> None:
     spreadsheet_id = identity.FAMILY_SHEET_ID
     metadata_url = f"https://sheets.googleapis.com/v4/spreadsheets/{spreadsheet_id}"
-    data = _google_request(
-        "GET",
-        metadata_url,
-        params={"fields": "sheets.properties.title"},
-    )
+    data = _google_request("GET", metadata_url, params={"fields": "sheets.properties.title"})
     titles = {
         str(((sheet or {}).get("properties") or {}).get("title") or "")
         for sheet in (data.get("sheets") or [])
@@ -49,11 +45,7 @@ def _ensure_family_tab() -> None:
         _google_request(
             "POST",
             metadata_url + ":batchUpdate",
-            json_body={
-                "requests": [
-                    {"addSheet": {"properties": {"title": identity.FAMILY_TAB}}}
-                ]
-            },
+            json_body={"requests": [{"addSheet": {"properties": {"title": identity.FAMILY_TAB}}}]},
         )
         header_url = (
             f"https://sheets.googleapis.com/v4/spreadsheets/{spreadsheet_id}/values/"
@@ -63,15 +55,7 @@ def _ensure_family_tab() -> None:
             "PUT",
             header_url,
             params={"valueInputOption": "RAW"},
-            json_body={
-                "values": [[
-                    "family_code",
-                    "student_key",
-                    "label",
-                    "active",
-                    "created_at",
-                ]]
-            },
+            json_body={"values": [["family_code", "student_key", "label", "active", "created_at"]]},
         )
 
 
@@ -93,15 +77,7 @@ def _write_family_link(family_code: str, student_key: str, label: str = "") -> N
         "POST",
         url,
         params={"valueInputOption": "RAW", "insertDataOption": "INSERT_ROWS"},
-        json_body={
-            "values": [[
-                family_code,
-                student_key,
-                label,
-                "ACTIVO",
-                brain._now_lima().isoformat(),
-            ]]
-        },
+        json_body={"values": [[family_code, student_key, label, "ACTIVO", brain._now_lima().isoformat()]]},
     )
 
 
@@ -115,12 +91,10 @@ def _institutional_context() -> str:
             blocks.append("## INFORMACIÓN GENERAL E INSTITUCIONAL\n" + core)
     except Exception:
         pass
-
     try:
         for doc in brain._load_core_kb():
             name = str(doc.get("name") or "")
-            normalized = brain._norm(name)
-            if "calendar" not in normalized:
+            if "calendar" not in brain._norm(name):
                 continue
             text = str(doc.get("text") or "").strip()
             if text:
@@ -139,49 +113,65 @@ def _private_context(student_key: str):
     summary = identity._student_classroom_summary(student_key)
     lines = [
         "## CLASSROOM PRIVADO DEL USUARIO AUTENTICADO",
-        (
-            f"Estudiante: {summary['student']['display_name']} | "
-            f"{summary['student']['grade']}.º {summary['student']['section']}"
-        ),
+        f"Estudiante: {summary['student']['display_name']} | {summary['student']['grade']}.º {summary['student']['section']}",
     ]
     for item in summary.get("activities") or []:
         lines.append(
             f"- {item['title']} | límite={item['due']} | estado={item.get('state')} | "
             f"nota={item.get('grade')} / {item.get('max_points')} | tardía={item.get('late')}"
         )
-    lines.extend(
-        [
-            "## POLÍTICA DE PRIVACIDAD ACADÉMICA",
-            (
-                "Las notas exactas de Classroom sí pueden mostrarse al propio estudiante o a su familia "
-                "autenticada. Nunca reveles datos de otros estudiantes."
-            ),
-            "## POLÍTICA SIEWEB/CIEWEB",
-            (
-                "Para estudiantes y familias, cualquier información de SIEweb/CIEweb que esté disponible "
-                "debe convertirse en orientación pedagógica y no revelar la letra o nota cruda. "
-                "Para owner sí puede mostrarse el dato disponible. Si SIEweb no está en el contexto, no lo inventes."
-            ),
-        ]
-    )
+    lines.extend([
+        "## POLÍTICA DE PRIVACIDAD ACADÉMICA",
+        "Las notas exactas de Classroom sí pueden mostrarse al propio estudiante o a su familia autenticada. Nunca reveles datos de otros estudiantes.",
+        "## POLÍTICA SIEWEB/CIEWEB",
+        "Para estudiantes y familias, cualquier información de SIEweb/CIEweb disponible debe convertirse en orientación pedagógica sin revelar letra o nota cruda. Para owner sí puede mostrarse el dato disponible. Si SIEweb no está en el contexto, no lo inventes.",
+    ])
     institutional = _institutional_context()
     if institutional:
         lines.append(institutional)
     return "\n".join(lines), summary
 
 
+def _install_bootstrap_contract() -> None:
+    if getattr(mobile, "_identity_v4_bootstrap_patched", False):
+        return
+    original = mobile._bootstrap_payload
+
+    def payload():
+        data = original()
+        data["api_version"] = API_VERSION
+        data["mode"] = "verified_role_based_read_only"
+        data.setdefault("features", {}).update({
+            "verified_student_login": True,
+            "verified_family_login": True,
+            "owner_login": True,
+            "secure_chat": True,
+            "student_private_classroom": True,
+            "sieweb_raw_hidden_from_students": True,
+        })
+        data.setdefault("endpoints", {}).update({
+            "auth": "/profe-johnny/v1/auth",
+            "me": "/profe-johnny/v1/me",
+            "secure_chat": "/profe-johnny/v1/secure-chat",
+            "student_summary": "/profe-johnny/v1/student-summary",
+        })
+        return data
+
+    mobile._bootstrap_payload = payload
+    setattr(mobile, "_identity_v4_bootstrap_patched", True)
+
+
 def install(mcp: Any) -> None:
     if getattr(mcp, "_profe_johnny_identity_v4_installed", False):
         return
-
     identity.API_VERSION = API_VERSION
     identity._course_for_student = _course_for_student
     identity._write_family_link = _write_family_link
     identity._private_context = _private_context
+    _install_bootstrap_contract()
     identity.install(mcp)
-
     setattr(mcp, "_profe_johnny_identity_v4_installed", True)
     print(
-        "PROFE JOHNNY APP Identity v4: sección exacta, familias e información institucional activadas.",
+        "PROFE JOHNNY APP Identity v4: identidad verificada, sección exacta, familias e información institucional activadas.",
         flush=True,
     )
