@@ -11,8 +11,14 @@ val local = Properties().apply {
     if (file.exists()) file.inputStream().use(::load)
 }
 
+val firebase = Properties().apply {
+    val file = rootProject.file("firebase.properties")
+    if (file.exists()) file.inputStream().use(::load)
+}
+
 fun configured(name: String): String =
-    (System.getenv(name) ?: local.getProperty(name) ?: "").replace("\\", "\\\\").replace("\"", "\\\"")
+    (System.getenv(name) ?: local.getProperty(name) ?: firebase.getProperty(name) ?: "")
+        .replace("\\", "\\\\").replace("\"", "\\\"")
 
 android {
     namespace = "pe.profejohnny.mathbattle"
