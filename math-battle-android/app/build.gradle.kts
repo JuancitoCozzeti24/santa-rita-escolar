@@ -11,15 +11,18 @@ val local = Properties().apply {
     if (file.exists()) file.inputStream().use(::load)
 }
 
-val firebase = Properties().apply {
-    val file = rootProject.file("firebase.properties")
-    if (file.exists()) file.inputStream().use(::load)
-}
+val firebaseDefaults = mapOf(
+    "FIREBASE_APPLICATION_ID" to "1:562272595963:android:65d896db19bbd969f7655e",
+    "FIREBASE_API_KEY" to "AIzaSyD15VjkrpLW5sroikO8enlnRNiOIMCNFjU",
+    "FIREBASE_PROJECT_ID" to "math-battle-63367",
+    "FIREBASE_STORAGE_BUCKET" to "math-battle-63367.firebasestorage.app",
+    "WEB_CLIENT_ID" to "562272595963-vpn1oans4nl0o27ebhblkt5pgbdl4b61.apps.googleusercontent.com",
+)
 
 fun configured(name: String): String =
     (System.getenv(name).takeUnless { it.isNullOrBlank() }
         ?: local.getProperty(name).takeUnless { it.isNullOrBlank() }
-        ?: firebase.getProperty(name)
+        ?: firebaseDefaults[name]
         ?: "")
         .replace("\\", "\\\\").replace("\"", "\\\"")
 
