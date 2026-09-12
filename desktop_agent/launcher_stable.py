@@ -11,9 +11,10 @@ import launcher_v100rc3 as rc3
 import launcher_v100rc15 as rc15
 import browser_startup_rc19 as startup19
 import performance_plan_stable as stable_plan
+import classroom_visual_review as classroom_review
 
 
-APP_VERSION = "1.0.0-stable"
+APP_VERSION = "1.1.0-stable"
 _original_print = builtins.print
 
 
@@ -171,6 +172,10 @@ legacy.APP_VERSION = APP_VERSION
 legacy.map_grade_cells = rc3.map_grade_cells_normalized_rc3
 legacy.probe_grade_cells = rc1.probe_grade_cells_preview
 legacy.print_grade_cell_probe = rc15.print_grade_cell_probe_rc15
+
+# Fase Classroom 1: navegación visual autónoma y captura de evidencia, todavía sin
+# comentarios/notas/devoluciones. Se integra en el mismo ejecutable estable.
+classroom_review.install(legacy)
 
 
 if __name__ == "__main__":
