@@ -444,15 +444,17 @@ private fun GameScreen(state: UiState, viewModel: MathBattleViewModel) {
         // Orientation, rather than an arbitrary tablet width, decides the game layout.
         // This keeps every gameplay control in one screen on phones, tablets and panels.
         val landscape = maxWidth > maxHeight * 1.18f
+        val compactLandscape = landscape && maxHeight < 500.dp
         val roomy = maxWidth >= 900.dp && maxHeight >= 500.dp
         val short = maxHeight < 420.dp
         val horizontalPadding = when { roomy -> 48.dp; landscape -> 20.dp; else -> 18.dp }
         Column(Modifier.fillMaxSize().padding(horizontal = horizontalPadding, vertical = if (short) 8.dp else 14.dp)) {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text(avatarGlyph(state.profile?.avatarId.orEmpty()), fontSize = if (roomy) 40.sp else 27.sp)
-                Text(state.profile?.publicName.orEmpty(), fontSize = if (roomy) 19.sp else 14.sp, fontWeight = FontWeight.Bold, maxLines = 1, modifier = Modifier.padding(start = 8.dp).weight(1f))
-                Column(horizontalAlignment = Alignment.CenterHorizontally) { Eyebrow("NIVEL ${game.level}${if (game.level == 3) " · ∞" else ""}"); Text(rule.name, color = Color.White, fontSize = if (roomy) 19.sp else 14.sp, fontWeight = FontWeight.Bold, maxLines = 1) }
-                Column(Modifier.weight(1f), horizontalAlignment = Alignment.End) { Eyebrow("PUNTOS"); Text(game.score.toString(), color = Lime, fontSize = if (roomy) 48.sp else 34.sp, lineHeight = if (roomy) 48.sp else 34.sp, fontWeight = FontWeight.Black) }
+            Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text("PUNTAJE: ${game.score}", color = Color.White, fontFamily = BattleDisplayFont, fontSize = if (roomy) 42.sp else 27.sp, fontWeight = FontWeight.Black)
+                    Text("NIVEL ${game.level} · ${rule.name}", color = Purple, fontSize = if (roomy) 14.sp else 10.sp)
+                }
+                Text(state.profile?.publicName.orEmpty(), color = Muted, fontSize = if (roomy) 15.sp else 11.sp, maxLines = 1, modifier = Modifier.align(Alignment.CenterStart).widthIn(max = if (roomy) 250.dp else 120.dp))
             }
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text("TIEMPO RESTANTE", color = if (danger) Red.copy(alpha = pulse) else Muted, fontSize = 11.sp, modifier = Modifier.weight(1f))
@@ -478,28 +480,28 @@ private fun GameScreen(state: UiState, viewModel: MathBattleViewModel) {
                 Column(modifier, verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
                     Eyebrow(rule.skill.uppercase())
                     val questionSize = when {
-                        game.question.text.length > 55 -> if (roomy) 38.sp else 25.sp
-                        game.question.text.length > 28 -> if (roomy) 48.sp else 31.sp
-                        else -> if (roomy) 74.sp else if (landscape) 52.sp else 58.sp
+                        game.question.text.length > 55 -> if (roomy) 56.sp else 32.sp
+                        game.question.text.length > 28 -> if (roomy) 72.sp else 42.sp
+                        else -> if (roomy) 118.sp else if (compactLandscape) 72.sp else 88.sp
                     }
                     Text(game.question.text, color = Color.White, fontFamily = BattleDisplayFont, fontSize = questionSize, lineHeight = questionSize * 1.02f, fontWeight = FontWeight.Black, textAlign = TextAlign.Center)
                 }
             }
             val answers: @Composable (Modifier) -> Unit = { modifier ->
                 Row(modifier, horizontalArrangement = Arrangement.spacedBy(if (roomy) 20.dp else 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    game.question.choices.forEachIndexed { index, choice ->
-                        ArcadeAnswerButton(choice, index + 1, game.selectedChoice, game.question.answer, Modifier.weight(1f).fillMaxHeight()) { viewModel.answer(choice) }
+                    game.question.choices.forEach { choice ->
+                        ArcadeAnswerButton(choice, game.selectedChoice, game.question.answer, Modifier.weight(1f).fillMaxHeight()) { viewModel.answer(choice) }
                     }
                 }
             }
-            if (landscape) {
+            if (compactLandscape) {
                 Row(Modifier.weight(1f).fillMaxWidth().padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                    question(Modifier.weight(.82f).fillMaxHeight())
-                    answers(Modifier.weight(1.18f).fillMaxHeight().padding(start = 12.dp))
+                    question(Modifier.weight(.78f).fillMaxHeight())
+                    answers(Modifier.weight(1.22f).fillMaxHeight().padding(start = 10.dp))
                 }
             } else {
-                question(Modifier.weight(.52f).fillMaxWidth())
-                answers(Modifier.weight(.48f).fillMaxWidth())
+                question(Modifier.weight(.50f).fillMaxWidth())
+                answers(Modifier.weight(.50f).fillMaxWidth())
             }
             Row(Modifier.fillMaxWidth().padding(top = if (short) 3.dp else 8.dp), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text("✓ +${rule.gainSeconds} s  ·  ✕ −${rule.lossSeconds} s", color = Muted)
@@ -513,7 +515,6 @@ private fun GameScreen(state: UiState, viewModel: MathBattleViewModel) {
 @Composable
 private fun ArcadeAnswerButton(
     choice: String,
-    shortcut: Int,
     selectedChoice: String?,
     correctChoice: String,
     modifier: Modifier = Modifier,
@@ -528,8 +529,8 @@ private fun ArcadeAnswerButton(
         when {
             correct -> Color.White
             wrong -> Color(0xFFFF1744)
-            revealed -> Color(0xFF264130)
-            else -> Color(0xFF20EE57)
+            revealed -> Color(0xFF526579)
+            else -> Color(0xFF16BFFF)
         },
         tween(160),
         label = "arcadeColor"
@@ -541,9 +542,11 @@ private fun ArcadeAnswerButton(
             .shadow(24.dp * glow, CircleShape, ambientColor = if (wrong) Red else topColor, spotColor = if (wrong) Red else topColor)
             .graphicsLayer { translationY = travel.toPx(); scaleX = if (pressed) .94f else 1f; scaleY = if (pressed) .92f else 1f }
             .clickable(interactionSource = interaction, indication = null, enabled = selectedChoice == null, onClick = onClick), contentAlignment = Alignment.Center) {
-            Image(painterResource(R.drawable.arcade_button), null, Modifier.fillMaxSize(), contentScale = ContentScale.Fit, colorFilter = ColorFilter.tint(topColor, BlendMode.Modulate))
-            Text(choice, color = if (correct) Ink else Color.White, fontFamily = BattleDisplayFont, fontSize = when { choice.length > 8 -> 20.sp; choice.length > 4 -> 27.sp; else -> 39.sp }, fontWeight = FontWeight.Black, textAlign = TextAlign.Center, modifier = Modifier.padding(bottom = 10.dp))
-            Text(shortcut.toString(), color = Color.White.copy(alpha = .72f), fontSize = 10.sp, modifier = Modifier.align(Alignment.TopStart).padding(12.dp))
+            Image(
+                painterResource(R.drawable.arcade_button), null, Modifier.fillMaxSize(), contentScale = ContentScale.Fit,
+                colorFilter = when { correct -> ColorFilter.tint(Color.White, BlendMode.Modulate); wrong -> ColorFilter.tint(Red, BlendMode.Modulate); revealed -> ColorFilter.tint(Color(0xFF718096), BlendMode.Modulate); else -> null }
+            )
+            Text(choice, color = if (correct) Ink else Color.White, fontFamily = BattleDisplayFont, fontSize = when { choice.length > 8 -> 24.sp; choice.length > 4 -> 32.sp; else -> 48.sp }, fontWeight = FontWeight.Black, textAlign = TextAlign.Center, modifier = Modifier.padding(bottom = 4.dp))
         }
     }
 }
