@@ -17,7 +17,7 @@ service cloud.firestore {
     }
 
     match /profiles/{uid} {
-      allow read: if signedIn();
+      allow read: if signedIn() && (uid == request.auth.uid || owner());
       allow create: if signedIn()
         && uid == request.auth.uid
         && request.resource.data.uid == uid
