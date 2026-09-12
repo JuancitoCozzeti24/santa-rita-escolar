@@ -4,8 +4,6 @@ import android.app.Application
 import com.google.firebase.FirebaseApp
 import com.google.firebase.FirebaseOptions
 import com.google.firebase.appcheck.FirebaseAppCheck
-import com.google.firebase.appcheck.debug.DebugAppCheckProviderFactory
-import com.google.firebase.appcheck.playintegrity.PlayIntegrityAppCheckProviderFactory
 
 class MathBattleApplication : Application() {
     override fun onCreate() {
@@ -20,9 +18,7 @@ class MathBattleApplication : Application() {
             .build()
         if (FirebaseApp.getApps(this).isEmpty()) FirebaseApp.initializeApp(this, options)
 
-        val provider = if (BuildConfig.DEBUG) DebugAppCheckProviderFactory.getInstance()
-        else PlayIntegrityAppCheckProviderFactory.getInstance()
-        FirebaseAppCheck.getInstance().installAppCheckProviderFactory(provider)
+        FirebaseAppCheck.getInstance().installAppCheckProviderFactory(appCheckProviderFactory())
     }
 
     companion object {
