@@ -41,7 +41,7 @@ jobs:
       - name: Validate Python sources
         shell: pwsh
         run: |
-          python -m py_compile sieweb.py config.py desktop_agent/main.py desktop_agent/browser_controller.py desktop_agent/semantic_inspector.py desktop_agent/gradebook_mapper.py desktop_agent/grade_cell_mapper.py desktop_agent/grade_cell_mapper_rc2.py desktop_agent/grade_cell_mapper_rc3.py desktop_agent/grade_cell_probe.py desktop_agent/editor_open_probe.py desktop_agent/launcher_v100rc1.py desktop_agent/launcher_v100rc2.py desktop_agent/launcher_v100rc3.py desktop_agent/verified_writer_bridge.py desktop_agent/launcher_v100rc4.py desktop_agent/browser_auth_rc5.py desktop_agent/launcher_v100rc5.py desktop_agent/launcher_v100rc6.py desktop_agent/launcher_v100rc7.py desktop_agent/launcher_v100rc8.py desktop_agent/launcher_v100rc9.py desktop_agent/launcher_v100rc10.py desktop_agent/launcher_v100rc11.py desktop_agent/launcher_v100rc12.py desktop_agent/launcher_v100rc13.py desktop_agent/launcher_v100rc14.py desktop_agent/performance_plan.py desktop_agent/launcher_v100rc15.py desktop_agent/performance_plan_rc16.py desktop_agent/launcher_v100rc16.py desktop_agent/capacity_resolver_rc17.py desktop_agent/launcher_v100rc17.py desktop_agent/performance_plan_rc18.py desktop_agent/launcher_v100rc18.py desktop_agent/browser_startup_rc19.py desktop_agent/launcher_v100rc19.py desktop_agent/criteria_hierarchy_rc20.py desktop_agent/launcher_v100rc20.py
+          python -m py_compile sieweb.py config.py desktop_agent/main.py desktop_agent/browser_controller.py desktop_agent/semantic_inspector.py desktop_agent/gradebook_mapper.py desktop_agent/grade_cell_mapper.py desktop_agent/grade_cell_mapper_rc2.py desktop_agent/grade_cell_mapper_rc3.py desktop_agent/grade_cell_probe.py desktop_agent/editor_open_probe.py desktop_agent/launcher_v100rc1.py desktop_agent/launcher_v100rc2.py desktop_agent/launcher_v100rc3.py desktop_agent/verified_writer_bridge.py desktop_agent/launcher_v100rc4.py desktop_agent/browser_auth_rc5.py desktop_agent/launcher_v100rc5.py desktop_agent/launcher_v100rc6.py desktop_agent/launcher_v100rc7.py desktop_agent/launcher_v100rc8.py desktop_agent/launcher_v100rc9.py desktop_agent/launcher_v100rc10.py desktop_agent/launcher_v100rc11.py desktop_agent/launcher_v100rc12.py desktop_agent/launcher_v100rc13.py desktop_agent/launcher_v100rc14.py desktop_agent/performance_plan.py desktop_agent/launcher_v100rc15.py desktop_agent/performance_plan_rc16.py desktop_agent/launcher_v100rc16.py desktop_agent/capacity_resolver_rc17.py desktop_agent/launcher_v100rc17.py desktop_agent/performance_plan_rc18.py desktop_agent/launcher_v100rc18.py desktop_agent/browser_startup_rc19.py desktop_agent/launcher_v100rc19.py desktop_agent/criteria_hierarchy_rc20.py desktop_agent/launcher_v100rc20.py desktop_agent/criteria_raw_rc21.py desktop_agent/launcher_v100rc21.py
 
       - name: Build executable
         shell: pwsh
@@ -51,16 +51,16 @@ jobs:
             --clean `
             --onefile `
             --console `
-            --name "SIEROOM-Desktop-Agent-v1.0-RC20" `
+            --name "SIEROOM-Desktop-Agent-v1.0-RC21" `
             --paths . `
             --paths desktop_agent `
             --collect-all playwright `
-            desktop_agent/launcher_v100rc20.py
+            desktop_agent/launcher_v100rc21.py
 
       - name: Verify executable exists
         shell: pwsh
         run: |
-          $exe = "dist/SIEROOM-Desktop-Agent-v1.0-RC20.exe"
+          $exe = "dist/SIEROOM-Desktop-Agent-v1.0-RC21.exe"
           if (-not (Test-Path $exe)) {
             throw "No se generó $exe"
           }
@@ -72,29 +72,29 @@ jobs:
         shell: pwsh
         run: |
           @"
-          SIEROOM Desktop Agent v1.0 RC20 - JERARQUIA REAL DE CRITERIOS
+          SIEROOM Desktop Agent v1.0 RC21 - RESOLUCION CRUDA DE CRITERIOS
 
-          CAMBIO RC20:
-          - Conserva el arranque automático de Classroom + SIEweb de RC19.
-          - Conserva contexto dinámico, creación verificada de desempeños y escritura masiva.
-          - Corrige el caso observado donde SIEweb devuelve NIVEL=1 para competencias y capacidades.
-          - Identifica capacidades por la jerarquía real resCriterios.children: Competencia -> Capacidad -> Desempeño.
-          - La búsqueda y verificación de desempeños usa relación padre/hijo, no depende de NIVEL=2/3.
-          - Si la jerarquía es ambigua, bloquea toda escritura y muestra diagnóstico.
+          CAMBIO RC21:
+          - Conserva arranque automático Classroom + SIEweb.
+          - Deja de depender de NIVEL=2/3 y de resCriterios.children.
+          - Combina toda la respuesta cruda de dataInicialPesosCriterios con get_gradebook_summary().criteria.
+          - Localiza capacidades por descripción + ID real, igual que la lógica histórica del complemento.
+          - Localiza desempeños por descripción exacta + parent ID cuando está disponible.
+          - Si hay ambigüedad, bloquea antes de escribir.
 
           PRUEBA:
           - Mantén SIEweb en 2.º B / Matemática / 3 PERIODO / Registro de notas.
           - Conserva SIEROOM_PLAN.json en Descargas.
-          - Ejecuta RC20 y elige P.
-          - NO autorices todavía CREAR DESEMPENOS N: primero revisa la pantalla con ChatGPT.
+          - Ejecuta RC21 y elige P.
+          - Si aparece CREAR DESEMPENOS N, todavía no lo autorices: revisa primero el preflight.
           "@ | Set-Content -Encoding UTF8 dist/LEEME-PRIMERO.txt
 
       - name: Upload Windows build
         uses: actions/upload-artifact@v4
         with:
-          name: SIEROOM-Desktop-Agent-Windows-v1.0-RC20
+          name: SIEROOM-Desktop-Agent-Windows-v1.0-RC21
           path: |
-            dist/SIEROOM-Desktop-Agent-v1.0-RC20.exe
+            dist/SIEROOM-Desktop-Agent-v1.0-RC21.exe
             dist/LEEME-PRIMERO.txt
           if-no-files-found: error
           retention-days: 14
