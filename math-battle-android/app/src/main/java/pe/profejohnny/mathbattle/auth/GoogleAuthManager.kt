@@ -7,6 +7,7 @@ import com.google.android.libraries.identity.googleid.GetGoogleIdOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.GoogleAuthProvider
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.tasks.await
 import pe.profejohnny.mathbattle.BuildConfig
 
@@ -19,10 +20,12 @@ class GoogleAuthManager(private val activity: Activity) {
             .setAutoSelectEnabled(false)
             .build()
         val request = GetCredentialRequest.Builder().addCredentialOption(option).build()
-        val credential = CredentialManager.create(activity).getCredential(activity, request).credential
-        val google = GoogleIdTokenCredential.createFrom(credential.data)
-        FirebaseAuth.getInstance().signInWithCredential(
-            GoogleAuthProvider.getCredential(google.idToken, null)
-        ).await()
+        withTimeout(25_000) {
+            val credential = CredentialManager.create(activity).getCredential(activity, request).credential
+            val google = GoogleIdTokenCredential.createFrom(credential.data)
+            FirebaseAuth.getInstance().signInWithCredential(
+                GoogleAuthProvider.getCredential(google.idToken, null)
+            ).await()
+        }
     }
 }
