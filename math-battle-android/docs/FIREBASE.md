@@ -6,8 +6,7 @@
 2. Registrar la app Android `pe.profejohnny.mathbattle` con SHA-1 y SHA-256 del keystore oficial.
 3. Activar Authentication → Google.
 4. Crear Firestore en ubicación cercana a Perú (según disponibilidad del proyecto).
-5. Habilitar App Check para Android con Play Integrity. Durante pruebas, registrar únicamente los tokens debug autorizados. Como la primera distribución será por APK lateral y no por Google Play, las funciones aceptan temporalmente solicitudes sin atestación, pero siguen exigiendo Google Auth verificado. Activa `enforceAppCheck: true` al publicar mediante Play Console.
-6. Habilitar Cloud Functions y vincular una cuenta de facturación si Firebase lo solicita.
+5. Mantener el plan Spark. La aplicación trabaja directamente con Firestore y sus reglas de seguridad.
 
 ## Despliegue
 
@@ -17,20 +16,25 @@ Desde la raíz del proyecto:
 npm install -g firebase-tools
 firebase login
 firebase use <PROJECT_ID>
-cd functions && npm ci && npm run build && cd ..
-firebase deploy --only functions,firestore
+firebase deploy --only firestore
 ```
 
 ## Importación de matrícula
 
-El CSV debe usar las columnas `externalCode,fullName,publicName,section,email`. Nunca se debe almacenar en Git.
+El CSV usa las columnas `externalCode,fullName,publicName,section`. Puede contener una columna `email`, pero el importador no la sube a Firestore. Nunca se debe almacenar el CSV real en Git.
 
 ```bash
 export GOOGLE_APPLICATION_CREDENTIALS=/ruta/segura/firebase-admin-key.json
 node scripts/import-roster.mjs private/roster.csv
 ```
 
-Antes de importar, verifica que todos los correos correspondan a cuentas institucionales y que haya exactamente 107 estudiantes activos: 28 en 2A, 28 en 2B, 25 en 5A y 26 en 5B.
+Antes de importar, verifica que haya exactamente 107 estudiantes activos: 28 en 2A, 28 en 2B, 25 en 5A y 26 en 5B.
+
+## Administración del ranking
+
+La cuenta `profejohnnyb@gmail.com` es la propietaria. Cuando ingresa a la app puede eliminar un participante o reiniciar el ranking del aula seleccionada. Estas acciones requieren confirmación.
+
+El ranking conserva el mejor puntaje de cada estudiante. Si dos resultados tienen el mismo puntaje, queda primero el de menor duración. También almacena la hora de inicio, la hora final y el tiempo transcurrido informado por Android.
 
 ## Secretos de GitHub Actions
 
