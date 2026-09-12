@@ -1,0 +1,12 @@
+*.iml
+.gradle/
+/local.properties
+/.idea/
+/build/
+**/build/
+*.jks
+*.keystore
+firebase-admin-key.json
+functions/lib/
+functions/node_modules/
+private/

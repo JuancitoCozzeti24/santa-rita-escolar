@@ -1,0 +1,57 @@
+name: Build Math Battle Android
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.11.1"
+      - name: Restore release keystore
+        if: ${{ secrets.MATH_BATTLE_KEYSTORE_BASE64 != '' }}
+        env:
+          KEYSTORE_BASE64: ${{ secrets.MATH_BATTLE_KEYSTORE_BASE64 }}
+        run: echo "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/math-battle-release.jks"
+      - name: Test and build debug APK
+        env:
+          FIREBASE_APPLICATION_ID: ${{ secrets.FIREBASE_APPLICATION_ID }}
+          FIREBASE_API_KEY: ${{ secrets.FIREBASE_API_KEY }}
+          FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
+          FIREBASE_STORAGE_BUCKET: ${{ secrets.FIREBASE_STORAGE_BUCKET }}
+          WEB_CLIENT_ID: ${{ secrets.WEB_CLIENT_ID }}
+        run: gradle :app:testDebugUnitTest :app:assembleDebug --stacktrace
+      - name: Build signed release APK
+        if: ${{ secrets.MATH_BATTLE_KEYSTORE_BASE64 != '' }}
+        env:
+          FIREBASE_APPLICATION_ID: ${{ secrets.FIREBASE_APPLICATION_ID }}
+          FIREBASE_API_KEY: ${{ secrets.FIREBASE_API_KEY }}
+          FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
+          FIREBASE_STORAGE_BUCKET: ${{ secrets.FIREBASE_STORAGE_BUCKET }}
+          WEB_CLIENT_ID: ${{ secrets.WEB_CLIENT_ID }}
+          MATH_BATTLE_KEYSTORE: ${{ runner.temp }}/math-battle-release.jks
+          MATH_BATTLE_STORE_PASSWORD: ${{ secrets.MATH_BATTLE_STORE_PASSWORD }}
+          MATH_BATTLE_KEY_ALIAS: ${{ secrets.MATH_BATTLE_KEY_ALIAS }}
+          MATH_BATTLE_KEY_PASSWORD: ${{ secrets.MATH_BATTLE_KEY_PASSWORD }}
+        run: gradle :app:assembleRelease --stacktrace
+      - uses: actions/upload-artifact@v4
+        with:
+          name: math-battle-debug
+          path: app/build/outputs/apk/debug/app-debug.apk
+      - uses: actions/upload-artifact@v4
+        if: ${{ secrets.MATH_BATTLE_KEYSTORE_BASE64 != '' }}
+        with:
+          name: math-battle-release
+          path: app/build/outputs/apk/release/app-release.apk

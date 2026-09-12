@@ -1,0 +1,28 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+
+    match /profiles/{uid} {
+      allow read: if signedIn();
+      allow write: if false;
+    }
+
+    match /leaderboard/{uid} {
+      allow read: if signedIn();
+      allow write: if false;
+    }
+
+    match /roster/{studentId} {
+      allow read, write: if false;
+    }
+
+    match /scoreSubmissions/{submissionId} {
+      allow read, write: if false;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
