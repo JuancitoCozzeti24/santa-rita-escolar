@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import builtins
+import re
 from datetime import datetime
 from pathlib import Path
 
@@ -20,12 +21,7 @@ def _stable_print(*args, **kwargs):
     patched = []
     for arg in args:
         if isinstance(arg, str):
-            text = arg
-            for label in (
-                "RC21", "RC20", "RC19", "RC18", "RC17", "RC16", "RC15",
-                "rc21", "rc20", "rc19", "rc18", "rc17", "rc16", "rc15",
-            ):
-                text = text.replace(label, "SIEROOM")
+            text = re.sub(r"\bRC\d+\b", "SIEROOM", arg, flags=re.IGNORECASE)
             patched.append(text)
         else:
             patched.append(arg)
@@ -147,9 +143,10 @@ def _apply_plan_stable(probe, plan_path: Path) -> None:
             rc15.rc9._collect_batch = original_collect
         return
 
-    print("\nEl plan no contiene calificaciones todavía.")
-    print("Los criterios ya están listos; puedes usar el lote manual rápido si lo necesitas.")
-    rc15.rc9._batch_preflight_and_execute(new_probe)
+    print("\n✅ FASE DE CRITERIOS TERMINADA.")
+    print("El plan actual no contiene calificaciones, por lo que SIEROOM no abrirá un lote manual.")
+    print("Esto evita escribir por accidente sobre las 4 columnas generales de competencia.")
+    print("Puedes cerrar esta ventana. Cuando el plan incluya notas, SIEROOM exigirá primero asociarlas a los desempeños precisados.")
 
 
 # Mantener el arranque automático con dos pestañas: Classroom + SIEweb.
@@ -162,6 +159,13 @@ rc15.preview_plan = stable_plan.preview_plan
 rc15.create_missing_performances = stable_plan.create_missing_performances
 rc15.print = _stable_print
 rc15.APP_VERSION = APP_VERSION
+
+# El canal estable no debe volver a mostrar nombres internos RC al usuario.
+for _module in (rc15.rc9, rc15.rc13, rc1, rc3):
+    try:
+        _module.print = _stable_print
+    except Exception:
+        pass
 
 legacy.APP_VERSION = APP_VERSION
 legacy.map_grade_cells = rc3.map_grade_cells_normalized_rc3
