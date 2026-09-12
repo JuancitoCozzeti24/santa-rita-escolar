@@ -4,12 +4,23 @@ import android.app.Activity
 import android.media.MediaPlayer
 import android.net.Uri
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.FlowRow
@@ -50,8 +61,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
@@ -112,32 +125,34 @@ fun MathBattleApp(viewModel: MathBattleViewModel) {
 private fun BootScreen(onEnter: () -> Unit) {
     val activity = LocalContext.current as? Activity
     val context = LocalContext.current
-    Box(
+    BoxWithConstraints(
         Modifier.fillMaxSize().background(
             Brush.radialGradient(listOf(Color(0xFF321B3D), Ink), radius = 1100f)
-        ).padding(horizontal = 42.dp, vertical = 24.dp)
+        ).padding(horizontal = if (maxWidth > 900.dp) 72.dp else 32.dp, vertical = 24.dp)
     ) {
+        val titleSize = if (maxWidth > 900.dp) 72.sp else 48.sp
+        val actionWidth = if (maxWidth > 900.dp) .68f else .82f
         Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
             Eyebrow("MATH BATTLE")
-            Text("DEMUESTRA QUE\nPUEDES LUCHAR!!", color = Color.White, fontSize = 48.sp, lineHeight = 48.sp, fontWeight = FontWeight.Black, textAlign = TextAlign.Center)
-            Text("¿O te quedarás ahí demostrando qué serás en el futuro?", color = Muted, fontSize = 16.sp, modifier = Modifier.padding(12.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(22.dp), modifier = Modifier.padding(top = 18.dp)) {
-                ImageAction(R.drawable.enter_battle, "Entraré a la batalla") {
+            Text("DEMUESTRA QUE\nPUEDES LUCHAR!!", color = Color.White, fontSize = titleSize, lineHeight = titleSize, fontWeight = FontWeight.Black, textAlign = TextAlign.Center)
+            Text("¿O te quedarás ahí demostrando qué serás en el futuro?", color = Muted, fontSize = if (maxWidth > 900.dp) 22.sp else 16.sp, modifier = Modifier.padding(12.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(22.dp), modifier = Modifier.fillMaxWidth(actionWidth).padding(top = 18.dp)) {
+                ImageAction(R.drawable.enter_battle, "Entraré a la batalla", Modifier.weight(1f)) {
                     MediaPlayer.create(context, R.raw.evil_laugh)?.apply {
                         setOnCompletionListener { it.release() }
                         start()
                     }
                     onEnter()
                 }
-                ImageAction(R.drawable.leave_battle, "Tengo miedo, me voy") { activity?.finish() }
+                ImageAction(R.drawable.leave_battle, "Tengo miedo, me voy", Modifier.weight(1f)) { activity?.finish() }
             }
         }
     }
 }
 
 @Composable
-private fun ImageAction(resource: Int, label: String, action: () -> Unit) {
-    Image(painterResource(resource), label, Modifier.width(270.dp).clickable(onClick = action), contentScale = ContentScale.FillWidth)
+private fun ImageAction(resource: Int, label: String, modifier: Modifier = Modifier, action: () -> Unit) {
+    Image(painterResource(resource), label, modifier.clickable(onClick = action), contentScale = ContentScale.FillWidth)
 }
 
 @Composable
@@ -283,35 +298,116 @@ private fun CountdownScreen(state: UiState) {
 private fun GameScreen(state: UiState, viewModel: MathBattleViewModel) {
     val game = state.game
     val rule = GameEngine.levels[game.level - 1]
+    val danger = game.remaining < rule.capSeconds * .3
+    val pulse = rememberInfiniteTransition(label = "neonTimer").animateFloat(
+        initialValue = .35f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(280), RepeatMode.Reverse),
+        label = "dangerPulse"
+    ).value
     BackHandler { viewModel.finishBattle() }
-    Column(Modifier.fillMaxSize().padding(horizontal = 38.dp, vertical = 22.dp)) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text(avatarGlyph(state.profile?.avatarId.orEmpty()), fontSize = 36.sp)
-            Text(state.profile?.publicName.orEmpty(), fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 10.dp).weight(1f))
-            Column(horizontalAlignment = Alignment.CenterHorizontally) { Eyebrow("NIVEL ${game.level}${if (game.level == 3) " · ∞" else ""}"); Text(rule.name, fontWeight = FontWeight.Bold) }
-            Column(Modifier.weight(1f), horizontalAlignment = Alignment.End) { Eyebrow("PUNTOS"); Text(game.score.toString(), color = Lime, fontSize = 48.sp, fontWeight = FontWeight.Black) }
-        }
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) { Text("TIEMPO RESTANTE", color = Muted, fontSize = 11.sp, modifier = Modifier.weight(1f)); Text("%.1f s".format(game.remaining), color = if (game.remaining < rule.capSeconds * .3) Red else Color.White, fontWeight = FontWeight.Bold) }
-        Box(Modifier.fillMaxWidth().height(11.dp).clip(CircleShape).background(Panel2)) { Box(Modifier.fillMaxWidth((game.remaining / rule.capSeconds).toFloat().coerceIn(0f, 1f)).fillMaxHeight().background(if (game.remaining < rule.capSeconds * .3) Red else Lime)) }
-        Column(Modifier.weight(1f).fillMaxWidth(), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
-            Eyebrow(rule.skill.uppercase())
-            Text(game.question.text, fontSize = 72.sp, fontWeight = FontWeight.Black)
-        }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(18.dp)) {
-            game.question.choices.forEachIndexed { index, choice ->
-                val selected = game.selectedChoice == choice
-                val isAnswer = game.question.answer == choice
-                val color = when { game.selectedChoice == null -> Panel2; isAnswer -> Color(0xFF344B24); selected -> Color(0xFF542433); else -> Panel2 }
-                Box(Modifier.weight(1f).height(118.dp).clip(RoundedCornerShape(18.dp)).background(color).border(2.dp, if (game.selectedChoice != null && isAnswer) Lime else if (selected) Red else Color(0xFF40445E), RoundedCornerShape(18.dp)).clickable(enabled = game.selectedChoice == null) { viewModel.answer(choice) }, contentAlignment = Alignment.Center) {
-                    Text(choice.toString(), fontSize = 56.sp, fontWeight = FontWeight.Black)
-                    Text("${index + 1}", color = Muted, fontSize = 11.sp, modifier = Modifier.align(Alignment.TopStart).padding(10.dp))
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val wide = maxWidth > 900.dp
+        val horizontalPadding = if (wide) 64.dp else 30.dp
+        val answerHeight = if (wide) (maxHeight * .27f).coerceAtMost(190.dp) else 118.dp
+        Column(Modifier.fillMaxSize().padding(horizontal = horizontalPadding, vertical = 18.dp)) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text(avatarGlyph(state.profile?.avatarId.orEmpty()), fontSize = if (wide) 48.sp else 36.sp)
+                Text(state.profile?.publicName.orEmpty(), fontSize = if (wide) 22.sp else 16.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 10.dp).weight(1f))
+                Column(horizontalAlignment = Alignment.CenterHorizontally) { Eyebrow("NIVEL ${game.level}${if (game.level == 3) " · ∞" else ""}"); Text(rule.name, fontSize = if (wide) 22.sp else 16.sp, fontWeight = FontWeight.Bold) }
+                Column(Modifier.weight(1f), horizontalAlignment = Alignment.End) { Eyebrow("PUNTOS"); Text(game.score.toString(), color = Lime, fontSize = if (wide) 64.sp else 48.sp, fontWeight = FontWeight.Black) }
+            }
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text("TIEMPO RESTANTE", color = if (danger) Red.copy(alpha = pulse) else Muted, fontSize = 11.sp, modifier = Modifier.weight(1f))
+                Text("%.1f s".format(game.remaining), color = if (danger) Red.copy(alpha = pulse) else Color.White, fontSize = if (wide) 22.sp else 16.sp, fontWeight = FontWeight.Bold)
+            }
+            Box(
+                Modifier.fillMaxWidth().height(if (wide) 18.dp else 13.dp)
+                    .shadow(if (danger) (18.dp * pulse) else 4.dp, CircleShape, ambientColor = if (danger) Red else Lime, spotColor = if (danger) Red else Lime)
+                    .clip(CircleShape).background(if (danger) Red.copy(alpha = .18f + .28f * pulse) else Panel2)
+            ) {
+                Box(
+                    Modifier.fillMaxWidth((game.remaining / rule.capSeconds).toFloat().coerceIn(0f, 1f))
+                        .fillMaxHeight()
+                        .background(
+                            Brush.horizontalGradient(
+                                if (danger) listOf(Color(0xFFFF1744), Color.White.copy(alpha = pulse), Color(0xFFFF1744))
+                                else listOf(Color(0xFF67FF54), Lime, Color.White)
+                            )
+                        )
+                )
+            }
+            Column(Modifier.weight(1f).fillMaxWidth(), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
+                Eyebrow(rule.skill.uppercase())
+                Text(game.question.text, fontSize = if (wide) 96.sp else 72.sp, fontWeight = FontWeight.Black)
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(if (wide) 34.dp else 16.dp)) {
+                game.question.choices.forEachIndexed { index, choice ->
+                    ArcadeAnswerButton(
+                        choice = choice,
+                        shortcut = index + 1,
+                        selectedChoice = game.selectedChoice,
+                        correctChoice = game.question.answer,
+                        modifier = Modifier.weight(1f).height(answerHeight)
+                    ) { viewModel.answer(choice) }
                 }
             }
+            Row(Modifier.fillMaxWidth().padding(top = 12.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("✓ +${rule.gainSeconds} s  ·  ✕ −${rule.lossSeconds} s", color = Muted)
+                Text(if (game.streak >= 3) "⚡ ${game.streak} aciertos seguidos" else "⚡ Cada acierto cuenta", color = Purple)
+                Text("Terminar partida", color = Purple, modifier = Modifier.clickable { viewModel.finishBattle() })
+            }
         }
-        Row(Modifier.fillMaxWidth().padding(top = 16.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text("✓ +${rule.gainSeconds} s  ·  ✕ −${rule.lossSeconds} s", color = Muted)
-            Text(if (game.streak >= 3) "⚡ ${game.streak} aciertos seguidos" else "⚡ Cada acierto cuenta", color = Purple)
-            Text("Terminar partida", color = Purple, modifier = Modifier.clickable { viewModel.finishBattle() })
+    }
+}
+
+@Composable
+private fun ArcadeAnswerButton(
+    choice: Int,
+    shortcut: Int,
+    selectedChoice: Int?,
+    correctChoice: Int,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val revealed = selectedChoice != null
+    val correct = revealed && choice == correctChoice
+    val wrong = revealed && selectedChoice == choice && choice != correctChoice
+    val topColor by animateColorAsState(
+        when {
+            correct -> Color.White
+            wrong -> Color(0xFFFF1744)
+            revealed -> Color(0xFF264130)
+            else -> Color(0xFF16E650)
+        },
+        tween(160),
+        label = "arcadeColor"
+    )
+    val glow by animateFloatAsState(if (correct || wrong) 1f else if (pressed) .7f else .18f, tween(120), label = "arcadeGlow")
+    val travel by animateDpAsState(if (pressed) 10.dp else 1.dp, tween(70), label = "arcadeTravel")
+    Box(modifier, contentAlignment = Alignment.Center) {
+        Box(
+            Modifier.fillMaxHeight(.88f).aspectRatio(1f)
+                .shadow(22.dp * glow, CircleShape, ambientColor = if (wrong) Red else Color.White, spotColor = if (wrong) Red else Lime)
+                .clip(CircleShape)
+                .background(Color(0xFF063B1B))
+                .border(4.dp, Color(0xFF061B10), CircleShape)
+        )
+        Box(
+            Modifier.fillMaxHeight(.78f).aspectRatio(1f)
+                .graphicsLayer { translationY = travel.toPx(); scaleX = if (pressed) .96f else 1f; scaleY = if (pressed) .96f else 1f }
+                .shadow(12.dp, CircleShape)
+                .clip(CircleShape)
+                .background(Brush.radialGradient(listOf(topColor.copy(alpha = 1f), topColor.copy(alpha = .68f), Color(0xFF054C20))))
+                .border(3.dp, if (correct) Color.White else topColor.copy(alpha = .9f), CircleShape)
+                .clickable(interactionSource = interaction, indication = null, enabled = selectedChoice == null, onClick = onClick),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(choice.toString(), color = if (correct) Ink else Color.White, fontSize = 48.sp, fontWeight = FontWeight.Black)
+            Text(shortcut.toString(), color = Color.White.copy(alpha = .7f), fontSize = 11.sp, modifier = Modifier.align(Alignment.TopStart).padding(13.dp))
+            Box(Modifier.align(Alignment.TopStart).padding(18.dp).size(22.dp).clip(CircleShape).background(Color.White.copy(alpha = .42f)))
         }
     }
 }
@@ -373,7 +469,7 @@ private fun RankingScreen(state: UiState, viewModel: MathBattleViewModel) {
             }
         }
         state.message?.let { Message(it) }
-        LazyColumn(Modifier.width(760.dp).weight(1f).clip(RoundedCornerShape(18.dp)).background(Panel).padding(12.dp)) {
+        LazyColumn(Modifier.fillMaxWidth().weight(1f).clip(RoundedCornerShape(18.dp)).background(Panel).padding(12.dp)) {
             items(state.ranking) { entry ->
                 Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text("${state.ranking.indexOf(entry) + 1}", color = Muted, modifier = Modifier.width(40.dp))
@@ -436,9 +532,27 @@ private fun formatClock(milliseconds: Long): String =
 private fun formatDateTime(milliseconds: Long): String =
     if (milliseconds <= 0) "--/-- --:--:--" else SimpleDateFormat("dd/MM HH:mm:ss", Locale.getDefault()).format(Date(milliseconds))
 
+@Suppress("UNUSED_PARAMETER")
 @Composable private fun CenterCard(width: androidx.compose.ui.unit.Dp = 620.dp, content: @Composable ColumnScope.() -> Unit) {
-    Box(Modifier.fillMaxSize().background(Brush.radialGradient(listOf(Color(0xFF29203C), Ink), radius = 1200f)), contentAlignment = Alignment.Center) {
-        Column(Modifier.width(width).clip(RoundedCornerShape(24.dp)).background(Panel.copy(alpha = .94f)).border(1.dp, Purple.copy(alpha = .35f), RoundedCornerShape(24.dp)).padding(34.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp), content = content)
+    BoxWithConstraints(
+        Modifier.fillMaxSize().background(Brush.radialGradient(listOf(Color(0xFF29203C), Ink), radius = 1600f)),
+        contentAlignment = Alignment.Center
+    ) {
+        val tablet = maxWidth >= 700.dp
+        val outerHorizontal = if (tablet) 44.dp else 16.dp
+        val outerVertical = if (maxHeight >= 650.dp) 30.dp else 10.dp
+        val innerPadding = if (tablet) 42.dp else 24.dp
+        Column(
+            Modifier.fillMaxSize()
+                .padding(horizontal = outerHorizontal, vertical = outerVertical)
+                .clip(RoundedCornerShape(if (tablet) 30.dp else 22.dp))
+                .background(Panel.copy(alpha = .94f))
+                .border(1.dp, Purple.copy(alpha = .35f), RoundedCornerShape(if (tablet) 30.dp else 22.dp))
+                .padding(innerPadding),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(if (tablet) 14.dp else 9.dp, Alignment.CenterVertically),
+            content = content
+        )
     }
 }
 
