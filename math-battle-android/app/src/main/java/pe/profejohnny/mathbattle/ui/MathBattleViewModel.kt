@@ -67,9 +67,10 @@ class MathBattleViewModel(private val firebaseReady: Boolean) : ViewModel() {
                 return@launch
             }
             val profile = runCatching { repository?.loadMyProfile() }.getOrNull()
+            val resolvedProfile = profile ?: if (repository?.isAdmin == true) adminProfile() else null
             _state.value = _state.value.copy(
-                screen = if (profile == null) Screen.SIGN_IN else Screen.LOBBY,
-                profile = profile,
+                screen = if (resolvedProfile == null) Screen.SIGN_IN else Screen.LOBBY,
+                profile = resolvedProfile,
                 isAdmin = repository?.isAdmin == true
             )
         }
@@ -79,12 +80,13 @@ class MathBattleViewModel(private val firebaseReady: Boolean) : ViewModel() {
         viewModelScope.launch {
             _state.value = _state.value.copy(loading = true, message = null)
             val profile = runCatching { repository?.loadMyProfile() }.getOrNull()
+            val resolvedProfile = profile ?: if (repository?.isAdmin == true) adminProfile() else null
             _state.value = _state.value.copy(
                 loading = false,
-                profile = profile,
+                profile = resolvedProfile,
                 isAdmin = repository?.isAdmin == true,
-                screen = if (profile == null) Screen.SECTION else Screen.LOBBY,
-                message = if (profile == null) "Cuenta Google verificada. Ahora elige tu aula." else null
+                screen = if (resolvedProfile == null) Screen.SECTION else Screen.LOBBY,
+                message = if (resolvedProfile == null) "Cuenta Google verificada. Ahora elige tu aula." else null
             )
         }
     }
@@ -236,6 +238,13 @@ class MathBattleViewModel(private val firebaseReady: Boolean) : ViewModel() {
     fun signOut() { timer?.cancel(); repository?.signOut(); _state.value = UiState(screen = Screen.SIGN_IN, firebaseReady = firebaseReady) }
     fun clearMessage() { _state.value = _state.value.copy(message = null) }
     fun onAppPaused() { if (_state.value.screen == Screen.GAME) finishBattle() }
+
+    private fun adminProfile() = StudentProfile(
+        uid = repository?.currentUid.orEmpty(),
+        publicName = "Profe Johnny",
+        section = "2A",
+        avatarId = "lightning"
+    )
 
     private fun friendly(error: Throwable): String = when {
         error.message?.contains("email", true) == true -> "Ese nombre no corresponde al correo Google con el que ingresaste."
