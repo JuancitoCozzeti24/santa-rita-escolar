@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
@@ -216,6 +217,7 @@ private fun StudentScreen(state: UiState, viewModel: MathBattleViewModel) {
 }
 
 @Composable
+@OptIn(ExperimentalLayoutApi::class)
 private fun AvatarScreen(state: UiState, viewModel: MathBattleViewModel) {
     CenterCard(width = 760.dp) {
         Eyebrow("ÚLTIMO PASO")
