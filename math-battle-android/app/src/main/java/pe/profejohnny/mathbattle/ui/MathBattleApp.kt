@@ -598,6 +598,7 @@ private fun ResultScreen(state: UiState, viewModel: MathBattleViewModel) {
 @Composable private fun ResultStat(value: String, label: String) { Column(horizontalAlignment = Alignment.CenterHorizontally) { Text(value, color = Lime, fontSize = 30.sp, fontWeight = FontWeight.Black); Text(label, color = Muted, fontSize = 10.sp) } }
 
 @Composable
+@OptIn(ExperimentalLayoutApi::class)
 private fun RankingScreen(state: UiState, viewModel: MathBattleViewModel) {
     var pendingDelete by remember { mutableStateOf<String?>(null) }
     var confirmClear by remember { mutableStateOf(false) }
