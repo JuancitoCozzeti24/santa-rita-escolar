@@ -31,7 +31,7 @@ data class GameState(
     val level: Int = 1,
     val remaining: Double = 10.0,
     val startedAt: Long = 0,
-    val selectedChoice: Int? = null,
+    val selectedChoice: String? = null,
     val lastCorrect: Boolean? = null,
     val sessionId: String = UUID.randomUUID().toString()
 )
@@ -47,6 +47,7 @@ data class UiState(
     val ranking: List<RankingEntry> = emptyList(),
     val game: GameState = GameState(),
     val countdown: Int = 3,
+    val countdownLabel: String = "UN RETADOR ENTRA A LA BATALLA",
     val sectionRank: Int? = null,
     val isAdmin: Boolean = false,
     val lastDurationMs: Long = 0,
@@ -123,7 +124,7 @@ class MathBattleViewModel(private val firebaseReady: Boolean) : ViewModel() {
 
     fun startBattle() {
         viewModelScope.launch {
-            _state.value = _state.value.copy(screen = Screen.COUNTDOWN, countdown = 3, sectionRank = null)
+            _state.value = _state.value.copy(screen = Screen.COUNTDOWN, countdown = 3, countdownLabel = "UN RETADOR ENTRA A LA BATALLA", sectionRank = null)
             for (n in 3 downTo 1) { _state.value = _state.value.copy(countdown = n); delay(800) }
             val initial = GameState(startedAt = System.currentTimeMillis())
             _state.value = _state.value.copy(screen = Screen.GAME, game = initial)
@@ -148,7 +149,7 @@ class MathBattleViewModel(private val firebaseReady: Boolean) : ViewModel() {
         }
     }
 
-    fun answer(choice: Int) {
+    fun answer(choice: String) {
         val current = _state.value
         if (current.screen != Screen.GAME || current.game.selectedChoice != null) return
         timer?.cancel()
@@ -171,7 +172,7 @@ class MathBattleViewModel(private val firebaseReady: Boolean) : ViewModel() {
         viewModelScope.launch {
             delay(if (correct) 280 else 450)
             if (updated.remaining <= 0) { finishBattle(); return@launch }
-            if (nextLevel > game.level) {
+            if (correct && GameEngine.milestoneFor(newScore) != null) {
                 _state.value = _state.value.copy(screen = Screen.LEVEL_UP)
             } else {
                 _state.value = _state.value.copy(game = updated.copy(question = GameEngine.question(newScore), selectedChoice = null, lastCorrect = null))
@@ -181,15 +182,25 @@ class MathBattleViewModel(private val firebaseReady: Boolean) : ViewModel() {
     }
 
     fun continueLevel() {
-        val game = _state.value.game
-        val cap = GameEngine.levels[game.level - 1].capSeconds
-        _state.value = _state.value.copy(screen = Screen.GAME, game = game.copy(question = GameEngine.question(game.score), remaining = cap, selectedChoice = null, lastCorrect = null))
-        startTimer()
+        timer?.cancel()
+        viewModelScope.launch {
+            val game = _state.value.game
+            val milestone = GameEngine.milestoneFor(game.score) ?: return@launch
+            _state.value = _state.value.copy(screen = Screen.COUNTDOWN, countdown = 3, countdownLabel = milestone.countdownLabel)
+            for (n in 3 downTo 1) { _state.value = _state.value.copy(countdown = n); delay(800) }
+            if (milestone.final) {
+                finishBattle()
+            } else {
+                val cap = GameEngine.levels[game.level - 1].capSeconds
+                _state.value = _state.value.copy(screen = Screen.GAME, game = game.copy(question = GameEngine.question(game.score), remaining = cap, selectedChoice = null, lastCorrect = null))
+                startTimer()
+            }
+        }
     }
 
     fun finishBattle() {
         val current = _state.value
-        if (current.screen !in listOf(Screen.GAME, Screen.LEVEL_UP)) return
+        if (current.screen !in listOf(Screen.GAME, Screen.LEVEL_UP, Screen.COUNTDOWN)) return
         timer?.cancel()
         val endedAt = System.currentTimeMillis()
         val duration = (endedAt - current.game.startedAt).coerceAtLeast(0)
