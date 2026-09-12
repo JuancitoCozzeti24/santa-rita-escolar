@@ -34,8 +34,8 @@ android {
         applicationId = "pe.profejohnny.mathbattle"
         minSdk = 26
         targetSdk = 35
-        versionCode = 3
-        versionName = "1.0.2"
+        versionCode = 4
+        versionName = "1.0.3"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
@@ -64,8 +64,10 @@ android {
             versionNameSuffix = "-debug"
         }
         release {
-            isMinifyEnabled = true
-            isShrinkResources = true
+            // Esta app se distribuye directamente por APK. Mantener Credential Manager
+            // sin ofuscación evita diferencias entre la compilación de prueba y la final.
+            isMinifyEnabled = false
+            isShrinkResources = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             if (!System.getenv("MATH_BATTLE_KEYSTORE").isNullOrBlank()) signingConfig = signingConfigs.getByName("release")
         }
