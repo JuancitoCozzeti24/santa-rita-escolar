@@ -40,7 +40,7 @@ jobs:
       - name: Validate Python sources
         shell: pwsh
         run: |
-          python -m py_compile sieweb.py config.py desktop_agent/main.py desktop_agent/browser_controller.py desktop_agent/semantic_inspector.py desktop_agent/gradebook_mapper.py desktop_agent/grade_cell_mapper.py desktop_agent/grade_cell_mapper_rc2.py desktop_agent/grade_cell_mapper_rc3.py desktop_agent/grade_cell_probe.py desktop_agent/editor_open_probe.py desktop_agent/launcher_v100rc1.py desktop_agent/launcher_v100rc2.py desktop_agent/launcher_v100rc3.py desktop_agent/verified_writer_bridge.py desktop_agent/launcher_v100rc4.py desktop_agent/browser_auth_rc5.py desktop_agent/launcher_v100rc5.py desktop_agent/launcher_v100rc6.py desktop_agent/launcher_v100rc7.py desktop_agent/launcher_v100rc8.py desktop_agent/launcher_v100rc9.py desktop_agent/launcher_v100rc10.py desktop_agent/launcher_v100rc11.py desktop_agent/launcher_v100rc12.py desktop_agent/launcher_v100rc13.py
+          python -m py_compile sieweb.py config.py desktop_agent/main.py desktop_agent/browser_controller.py desktop_agent/semantic_inspector.py desktop_agent/gradebook_mapper.py desktop_agent/grade_cell_mapper.py desktop_agent/grade_cell_mapper_rc2.py desktop_agent/grade_cell_mapper_rc3.py desktop_agent/grade_cell_probe.py desktop_agent/editor_open_probe.py desktop_agent/launcher_v100rc1.py desktop_agent/launcher_v100rc2.py desktop_agent/launcher_v100rc3.py desktop_agent/verified_writer_bridge.py desktop_agent/launcher_v100rc4.py desktop_agent/browser_auth_rc5.py desktop_agent/launcher_v100rc5.py desktop_agent/launcher_v100rc6.py desktop_agent/launcher_v100rc7.py desktop_agent/launcher_v100rc8.py desktop_agent/launcher_v100rc9.py desktop_agent/launcher_v100rc10.py desktop_agent/launcher_v100rc11.py desktop_agent/launcher_v100rc12.py desktop_agent/launcher_v100rc13.py desktop_agent/launcher_v100rc14.py
 
       - name: Build executable
         shell: pwsh
@@ -50,16 +50,16 @@ jobs:
             --clean `
             --onefile `
             --console `
-            --name "SIEROOM-Desktop-Agent-v1.0-RC13" `
+            --name "SIEROOM-Desktop-Agent-v1.0-RC14" `
             --paths . `
             --paths desktop_agent `
             --collect-all playwright `
-            desktop_agent/launcher_v100rc13.py
+            desktop_agent/launcher_v100rc14.py
 
       - name: Verify executable exists
         shell: pwsh
         run: |
-          $exe = "dist/SIEROOM-Desktop-Agent-v1.0-RC13.exe"
+          $exe = "dist/SIEROOM-Desktop-Agent-v1.0-RC14.exe"
           if (-not (Test-Path $exe)) {
             throw "No se generó $exe"
           }
@@ -71,30 +71,29 @@ jobs:
         shell: pwsh
         run: |
           @"
-          SIEROOM Desktop Agent v1.0 RC13 - GUARDADO RAPIDO REAL
+          SIEROOM Desktop Agent v1.0 RC14 - GUARDADO RAPIDO + VERIFICACION VISUAL ESTABLE
 
-          OBJETIVO RC13:
-          - Corrige el hallazgo de RC12: escribir en el editor nativo con Tab cambiaba el DOM, pero no persistia la nota en SIEweb.
-          - Hace un unico preflight de la libreta.
-          - Agrupa las notas por competencia/cabecera y usa la sesion autenticada del navegador para persistir varias notas sin recargar entre alumnos.
-          - No deja valores temporales sin guardar en la pestaña.
-          - Al terminar hace una verificacion API global.
-          - Solo despues de confirmar el servidor actualiza UNA vez la misma libreta, conservando Salon, Curso y Periodo, y verifica la pantalla.
+          OBJETIVO RC14:
+          - Mantiene el guardado real agrupado y rápido de RC13.
+          - No recarga ni reselecciona entre alumnos.
+          - Corrige la falsa alarma visual de RC13 cuando la API ya confirmó el lote pero la SPA tarda en repintar.
+          - Después de la única actualización final, espera hasta 8 segundos y relee el DOM sin volver a guardar nada.
+          - Solo declara verificación visual cuando todas las celdas muestran exactamente la nota esperada.
           - Admite hasta 28 celdas por lote.
 
           PRUEBA SUGERIDA:
           - Mantener abierta la libreta correcta de SIEweb.
-          - Usar 2 celdas vacias de prueba.
+          - Usar 2 celdas vacías de prueba.
           - Autorizar con GUARDAR RAPIDO 2.
-          - Debe guardar ambas sin recargar entre estudiantes y actualizar la libreta una sola vez al final.
+          - Debe persistir el lote y terminar con API + pantalla confirmadas, sin recargas por alumno.
           "@ | Set-Content -Encoding UTF8 dist/LEEME-PRIMERO.txt
 
       - name: Upload Windows build
         uses: actions/upload-artifact@v4
         with:
-          name: SIEROOM-Desktop-Agent-Windows-v1.0-RC13
+          name: SIEROOM-Desktop-Agent-Windows-v1.0-RC14
           path: |
-            dist/SIEROOM-Desktop-Agent-v1.0-RC13.exe
+            dist/SIEROOM-Desktop-Agent-v1.0-RC14.exe
             dist/LEEME-PRIMERO.txt
           if-no-files-found: error
           retention-days: 14
