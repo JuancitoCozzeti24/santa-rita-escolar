@@ -2,6 +2,7 @@ package pe.profejohnny.mathbattle.model
 
 data class StudentProfile(
     val uid: String = "",
+    val rosterId: String = "",
     val publicName: String = "",
     val section: String = "",
     val avatarId: String = "ninja",
@@ -18,7 +19,10 @@ data class RankingEntry(
     val avatarId: String = "ninja",
     val bestScore: Int = 0,
     val bestLevel: Int = 1,
-    val bestAccuracy: Int = 0
+    val bestAccuracy: Int = 0,
+    val durationMs: Long = 0,
+    val startedAtMs: Long = 0,
+    val endedAtMs: Long = 0
 )
 
 data class BattleResult(
@@ -28,6 +32,8 @@ data class BattleResult(
     val wrong: Int,
     val bestStreak: Int,
     val durationMs: Long,
+    val startedAtMs: Long,
+    val endedAtMs: Long,
     val sessionId: String
 ) {
     val accuracy: Int get() = (correct * 100 / (correct + wrong).coerceAtLeast(1))
