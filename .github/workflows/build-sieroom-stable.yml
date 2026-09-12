@@ -7,7 +7,11 @@ on:
       - sieroom-desktop-agent-v0.1
     paths:
       - "desktop_agent/performance_plan_stable.py"
+      - "desktop_agent/classroom_visual_review.py"
       - "desktop_agent/launcher_stable.py"
+      - "desktop_agent/browser_startup_rc19.py"
+      - "desktop_agent/semantic_inspector.py"
+      - "desktop_agent/browser_controller.py"
       - "sieweb.py"
       - "config.py"
       - ".github/workflows/build-sieroom-stable.yml"
@@ -46,6 +50,8 @@ jobs:
             config.py `
             desktop_agent/main.py `
             desktop_agent/browser_controller.py `
+            desktop_agent/semantic_inspector.py `
+            desktop_agent/classroom_visual_review.py `
             desktop_agent/grade_cell_mapper_rc3.py `
             desktop_agent/launcher_v100rc1.py `
             desktop_agent/launcher_v100rc3.py `
@@ -90,20 +96,25 @@ jobs:
 
           Este ejecutable mantiene el mismo nombre en futuras mejoras.
 
-          MOTOR DE CRITERIOS:
+          CLASSROOM - FASE VISUAL 1:
           - Abre Classroom + SIEweb automáticamente.
-          - Lee el contexto real de la libreta abierta.
-          - Si una capacidad CNEB base aún no está materializada en SIEweb, la prepara primero bajo su competencia real.
-          - Después prepara el desempeño precisado bajo esa capacidad.
-          - Usa ID_PROGRAMA y relación padre/hijo, no depende de NIVEL defectuoso.
-          - No escribe notas hasta verificar que los criterios quedaron persistidos.
-          - Si cualquier relación es ambigua, bloquea la escritura.
+          - En Classroom, tras inspeccionar la pestaña, ofrece R = revisión visual.
+          - Busca curso y tarea por texto visible.
+          - Abre la vista docente y detecta enlaces individuales de estudiantes.
+          - Recorre entregas y abre adjuntos enlazados en pestañas temporales.
+          - Guarda captura + JSON por estudiante y adjunto.
+          - Esta fase es SOLO LECTURA: no comenta, no califica y no devuelve.
 
-          PRUEBA ACTUAL:
-          - 2.º B / Matemática / 3 PERIODO / Registro de notas.
-          - SIEROOM_PLAN.json puede permanecer en Descargas o una subcarpeta de Descargas si el agente ya lo detecta allí.
-          - Elige P.
-          - Revisa el preflight y autoriza únicamente la frase exacta mostrada por SIEROOM.
+          SIEWEB:
+          - Mantiene el motor estable de criterios y notas ya validado.
+          - No escribe notas hasta verificar criterios y destino.
+
+          PRUEBA CLASSROOM:
+          1) Selecciona la pestaña Classroom en la consola.
+          2) Tras el reporte semántico, escribe R.
+          3) Escribe curso/sección y parte exacta del título de la tarea.
+          4) Para la primera prueba inspecciona 1 o 2 entregas.
+          5) Revisa el resumen final; no se habrá publicado nada.
           "@ | Set-Content -Encoding UTF8 dist/LEEME-PRIMERO.txt
 
       - name: Upload stable Windows build
