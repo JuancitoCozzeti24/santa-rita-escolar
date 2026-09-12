@@ -288,7 +288,7 @@ private fun LobbyScreen(state: UiState, viewModel: MathBattleViewModel) {
 @Composable
 private fun CountdownScreen(state: UiState) {
     CenterCard {
-        Eyebrow("UN RETADOR ENTRA A LA BATALLA")
+        Eyebrow(state.countdownLabel)
         Text(avatarGlyph(state.profile?.avatarId.orEmpty()), fontSize = 68.sp)
         Text("¡Bienvenido, ${state.profile?.publicName.orEmpty()}!", fontSize = 34.sp, fontWeight = FontWeight.Black)
         Text(state.countdown.toString(), color = Lime, fontSize = 112.sp, fontWeight = FontWeight.Black)
@@ -340,7 +340,13 @@ private fun GameScreen(state: UiState, viewModel: MathBattleViewModel) {
             }
             Column(Modifier.weight(1f).fillMaxWidth(), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
                 Eyebrow(rule.skill.uppercase())
-                Text(game.question.text, fontSize = if (wide) 96.sp else 72.sp, fontWeight = FontWeight.Black)
+                val questionSize = when {
+                    game.question.text.length > 55 -> if (wide) 42.sp else 28.sp
+                    game.question.text.length > 28 -> if (wide) 56.sp else 38.sp
+                    game.question.text.contains('\n') -> if (wide) 64.sp else 44.sp
+                    else -> if (wide) 96.sp else 72.sp
+                }
+                Text(game.question.text, fontSize = questionSize, lineHeight = questionSize * 1.08f, fontWeight = FontWeight.Black, textAlign = TextAlign.Center)
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(if (wide) 34.dp else 16.dp)) {
                 game.question.choices.forEachIndexed { index, choice ->
@@ -364,10 +370,10 @@ private fun GameScreen(state: UiState, viewModel: MathBattleViewModel) {
 
 @Composable
 private fun ArcadeAnswerButton(
-    choice: Int,
+    choice: String,
     shortcut: Int,
-    selectedChoice: Int?,
-    correctChoice: Int,
+    selectedChoice: String?,
+    correctChoice: String,
     modifier: Modifier = Modifier,
     onClick: () -> Unit
 ) {
@@ -406,7 +412,7 @@ private fun ArcadeAnswerButton(
                 .clickable(interactionSource = interaction, indication = null, enabled = selectedChoice == null, onClick = onClick),
             contentAlignment = Alignment.Center
         ) {
-            Text(choice.toString(), color = if (correct) Ink else Color.White, fontSize = 48.sp, fontWeight = FontWeight.Black)
+            Text(choice, color = if (correct) Ink else Color.White, fontSize = if (choice.length > 8) 25.sp else if (choice.length > 4) 34.sp else 48.sp, fontWeight = FontWeight.Black, textAlign = TextAlign.Center)
             Text(shortcut.toString(), color = Color.White.copy(alpha = .7f), fontSize = 11.sp, modifier = Modifier.align(Alignment.TopStart).padding(13.dp))
             Box(Modifier.align(Alignment.TopStart).padding(18.dp).size(22.dp).clip(CircleShape).background(Color.White.copy(alpha = .42f)))
         }
@@ -415,14 +421,13 @@ private fun ArcadeAnswerButton(
 
 @Composable
 private fun LevelUpScreen(state: UiState, viewModel: MathBattleViewModel) {
-    val level = state.game.level
-    val rule = GameEngine.levels[level - 1]
+    val milestone = GameEngine.milestoneFor(state.game.score) ?: return
     CenterCard {
         Image(painterResource(R.drawable.rival), null, Modifier.size(170.dp).clip(CircleShape), contentScale = ContentScale.Crop)
-        Eyebrow("NIVEL ${level - 1} SUPERADO")
-        Text(rule.name, fontSize = 46.sp, fontWeight = FontWeight.Black)
-        Text(if (level == 2) "Has vencido al nivel uno. Ahora empieza el verdadero desafío." else "Has llegado a la batalla infinita. ¿Cuántos puntos podrás conseguir?", color = Muted)
-        BattleButton("¡ESTOY LISTO! ↗", viewModel::continueLevel)
+        Eyebrow(milestone.eyebrow)
+        Text(milestone.title, fontSize = 46.sp, fontWeight = FontWeight.Black, textAlign = TextAlign.Center)
+        Text(milestone.message, color = Muted, textAlign = TextAlign.Center)
+        BattleButton("${milestone.button} ↗", viewModel::continueLevel)
     }
 }
 
