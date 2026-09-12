@@ -7,17 +7,16 @@ Aplicación Android nativa en Kotlin/Jetpack Compose para las competencias de c�
 1. Pulsa **Entraré a la batalla** y mira la introducción.
 2. Inicia sesión con su cuenta Google institucional.
 3. Selecciona `2A`, `2B`, `5A` o `5B` y luego su nombre oficial.
-4. Firebase solo permite vincular el nombre cuyo correo coincide con la cuenta autenticada.
+4. Cada nombre puede vincularse una sola vez a una cuenta Google.
 5. Elige avatar y juega.
-6. El mejor resultado se guarda en el ranking de su sección.
+6. El mejor resultado se guarda con hora de inicio, hora final y duración. Los empates se ordenan por menor tiempo.
 
 No se muestran correos, códigos internos ni apellidos completos en el ranking.
 
 ## Componentes
 
 - `app/`: aplicación Android nativa.
-- `functions/`: Cloud Functions que protegen identidad y puntajes.
-- `firestore.rules`: los clientes no pueden alterar matrícula ni ranking.
+- `firestore.rules`: permisos para trabajar directamente con Firestore en el plan Spark.
 - `scripts/import-roster.mjs`: importador administrativo de matrícula (el CSV real nunca se sube a Git).
 - `docs/INSTALL.md`: instalación y futuras actualizaciones.
 - `docs/FIREBASE.md`: configuración y despliegue.
@@ -52,4 +51,8 @@ La firma de producción nunca se versiona. Para compilar `release`, define `MATH
 
 ## Privacidad
 
-El CSV de matrícula, las claves administrativas y el keystore están incluidos en `.gitignore`. Las funciones exigen usuario Google verificado y reciben App Check; su enforcement queda pospuesto hasta distribuir por Google Play porque la primera versión será instalada lateralmente. El sitio público consume únicamente documentos sanitizados de `leaderboard`.
+El CSV de matrícula, las claves administrativas y el keystore están incluidos en `.gitignore`. La app exige inicio de sesión con Google. La matrícula publicada en Firestore contiene únicamente el nombre visible, la sección y el estado de vinculación; no contiene correos, códigos internos ni nombres completos.
+
+## Alcance de seguridad
+
+Esta edición está diseñada para práctica escolar y usa el plan Spark sin Cloud Functions. Las reglas impiden que un estudiante elimine registros ajenos y reservan la limpieza del ranking a la cuenta propietaria. Al ejecutarse la lógica de puntaje en el dispositivo, un usuario con conocimientos técnicos podría manipular su propio resultado; la validación final se realiza presencialmente en el aula.
