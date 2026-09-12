@@ -41,7 +41,7 @@ jobs:
       - name: Validate Python sources
         shell: pwsh
         run: |
-          python -m py_compile sieweb.py config.py desktop_agent/main.py desktop_agent/browser_controller.py desktop_agent/semantic_inspector.py desktop_agent/gradebook_mapper.py desktop_agent/grade_cell_mapper.py desktop_agent/grade_cell_mapper_rc2.py desktop_agent/grade_cell_mapper_rc3.py desktop_agent/grade_cell_probe.py desktop_agent/editor_open_probe.py desktop_agent/launcher_v100rc1.py desktop_agent/launcher_v100rc2.py desktop_agent/launcher_v100rc3.py desktop_agent/verified_writer_bridge.py desktop_agent/launcher_v100rc4.py desktop_agent/browser_auth_rc5.py desktop_agent/launcher_v100rc5.py desktop_agent/launcher_v100rc6.py desktop_agent/launcher_v100rc7.py desktop_agent/launcher_v100rc8.py desktop_agent/launcher_v100rc9.py desktop_agent/launcher_v100rc10.py desktop_agent/launcher_v100rc11.py desktop_agent/launcher_v100rc12.py desktop_agent/launcher_v100rc13.py desktop_agent/launcher_v100rc14.py desktop_agent/performance_plan.py desktop_agent/launcher_v100rc15.py
+          python -m py_compile sieweb.py config.py desktop_agent/main.py desktop_agent/browser_controller.py desktop_agent/semantic_inspector.py desktop_agent/gradebook_mapper.py desktop_agent/grade_cell_mapper.py desktop_agent/grade_cell_mapper_rc2.py desktop_agent/grade_cell_mapper_rc3.py desktop_agent/grade_cell_probe.py desktop_agent/editor_open_probe.py desktop_agent/launcher_v100rc1.py desktop_agent/launcher_v100rc2.py desktop_agent/launcher_v100rc3.py desktop_agent/verified_writer_bridge.py desktop_agent/launcher_v100rc4.py desktop_agent/browser_auth_rc5.py desktop_agent/launcher_v100rc5.py desktop_agent/launcher_v100rc6.py desktop_agent/launcher_v100rc7.py desktop_agent/launcher_v100rc8.py desktop_agent/launcher_v100rc9.py desktop_agent/launcher_v100rc10.py desktop_agent/launcher_v100rc11.py desktop_agent/launcher_v100rc12.py desktop_agent/launcher_v100rc13.py desktop_agent/launcher_v100rc14.py desktop_agent/performance_plan.py desktop_agent/launcher_v100rc15.py desktop_agent/performance_plan_rc16.py desktop_agent/launcher_v100rc16.py
 
       - name: Build executable
         shell: pwsh
@@ -51,16 +51,16 @@ jobs:
             --clean `
             --onefile `
             --console `
-            --name "SIEROOM-Desktop-Agent-v1.0-RC15" `
+            --name "SIEROOM-Desktop-Agent-v1.0-RC16" `
             --paths . `
             --paths desktop_agent `
             --collect-all playwright `
-            desktop_agent/launcher_v100rc15.py
+            desktop_agent/launcher_v100rc16.py
 
       - name: Verify executable exists
         shell: pwsh
         run: |
-          $exe = "dist/SIEROOM-Desktop-Agent-v1.0-RC15.exe"
+          $exe = "dist/SIEROOM-Desktop-Agent-v1.0-RC16.exe"
           if (-not (Test-Path $exe)) {
             throw "No se generó $exe"
           }
@@ -72,31 +72,28 @@ jobs:
         shell: pwsh
         run: |
           @"
-          SIEROOM Desktop Agent v1.0 RC15 - PLAN DOCENTE + DESEMPENOS + NOTAS MASIVAS
+          SIEROOM Desktop Agent v1.0 RC16 - PLAN DOCENTE CON CONTEXTO DINAMICO
 
-          OBJETIVO RC15:
-          - Conserva el guardado rápido verificado de RC14.
-          - Añade SIEROOM_PLAN.json como contrato entre ChatGPT/Skill docente y el agente Windows.
-          - Antes de registrar notas, valida la libreta visible y crea SOLO los desempeños precisados faltantes.
-          - Reutiliza desempeños que ya existan exactamente una vez y bloquea duplicados/ambigüedades.
-          - Actualiza la misma libreta una sola vez después de crear desempeños.
-          - Si el plan contiene grades, prepara hasta 112 celdas y las guarda por lotes agrupados, sin recargar por alumno.
-          - Si el plan no contiene grades, permite continuar con el lote manual rápido.
-          - Exige confirmación separada para crear desempeños y para guardar calificaciones.
+          OBJETIVO RC16:
+          - Conserva el plan docente, creación/verificación de desempeños y notas masivas de RC15.
+          - Corrige el bloqueo de secciones B: ya no usa la tabla histórica S2A/S5A para el plan.
+          - Captura los IDs reales de la petición obtRegistroNotas de la pestaña visible, igual que el motor dinámico probado desde RC11.
+          - Valida sección, curso, período, matrícula y contexto API antes de crear desempeños.
+          - Puede trabajar con S2A, S2B, S5A, S5B y cualquier sección que SIEweb exponga correctamente en la libreta visible.
+          - No crea desempeños ni escribe notas si el contexto no puede resolverse de forma inequívoca.
 
-          PRUEBA SEGURA:
-          - Abre Registro de notas en la sección/curso/período correctos.
-          - Ejecuta RC15 y elige P.
-          - Si no existe SIEROOM_PLAN.json, RC15 creará una plantilla en Descargas SIN modificar SIEweb.
-          - El plan final será generado por ChatGPT/Skill docente; no debes inventar ni redactar desempeños manualmente.
+          PRUEBA:
+          - Mantén abierto 2.º B / Matemática / 3 PERIODO / Registro de notas.
+          - Deja SIEROOM_PLAN.json junto al EXE o en Descargas.
+          - Ejecuta RC16, elige P y revisa el preflight de desempeños.
           "@ | Set-Content -Encoding UTF8 dist/LEEME-PRIMERO.txt
 
       - name: Upload Windows build
         uses: actions/upload-artifact@v4
         with:
-          name: SIEROOM-Desktop-Agent-Windows-v1.0-RC15
+          name: SIEROOM-Desktop-Agent-Windows-v1.0-RC16
           path: |
-            dist/SIEROOM-Desktop-Agent-v1.0-RC15.exe
+            dist/SIEROOM-Desktop-Agent-v1.0-RC16.exe
             dist/LEEME-PRIMERO.txt
           if-no-files-found: error
           retention-days: 14
