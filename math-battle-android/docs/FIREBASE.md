@@ -6,7 +6,7 @@
 2. Registrar la app Android `pe.profejohnny.mathbattle` con SHA-1 y SHA-256 del keystore oficial.
 3. Activar Authentication → Google.
 4. Crear Firestore en ubicación cercana a Perú (según disponibilidad del proyecto).
-5. Habilitar App Check para Android con Play Integrity. Durante pruebas, registrar únicamente los tokens debug autorizados.
+5. Habilitar App Check para Android con Play Integrity. Durante pruebas, registrar únicamente los tokens debug autorizados. Como la primera distribución será por APK lateral y no por Google Play, las funciones aceptan temporalmente solicitudes sin atestación, pero siguen exigiendo Google Auth verificado. Activa `enforceAppCheck: true` al publicar mediante Play Console.
 6. Habilitar Cloud Functions y vincular una cuenta de facturación si Firebase lo solicita.
 
 ## Despliegue

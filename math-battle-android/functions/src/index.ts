@@ -15,7 +15,7 @@ function requireUser(request: {auth?: {uid: string; token: Record<string, unknow
   return {uid: request.auth.uid, email};
 }
 
-export const listRoster = onCall({region: regions, enforceAppCheck: true}, async (request) => {
+export const listRoster = onCall({region: regions, enforceAppCheck: false}, async (request) => {
   requireUser(request);
   const section = String(request.data?.section || "").toUpperCase();
   if (!sections.has(section)) throw new HttpsError("invalid-argument", "Sección no válida.");
@@ -27,7 +27,7 @@ export const listRoster = onCall({region: regions, enforceAppCheck: true}, async
   }))};
 });
 
-export const claimStudent = onCall({region: regions, enforceAppCheck: true}, async (request) => {
+export const claimStudent = onCall({region: regions, enforceAppCheck: false}, async (request) => {
   const {uid, email} = requireUser(request);
   const studentId = String(request.data?.studentId || "");
   if (!/^[A-Za-z0-9_-]{4,100}$/.test(studentId)) throw new HttpsError("invalid-argument", "Estudiante no válido.");
@@ -58,7 +58,7 @@ export const claimStudent = onCall({region: regions, enforceAppCheck: true}, asy
   return {ok: true};
 });
 
-export const updateAvatar = onCall({region: regions, enforceAppCheck: true}, async (request) => {
+export const updateAvatar = onCall({region: regions, enforceAppCheck: false}, async (request) => {
   const {uid} = requireUser(request);
   const avatarId = String(request.data?.avatarId || "");
   if (!avatars.has(avatarId)) throw new HttpsError("invalid-argument", "Avatar no válido.");
@@ -67,7 +67,7 @@ export const updateAvatar = onCall({region: regions, enforceAppCheck: true}, asy
   return {ok: true};
 });
 
-export const submitScore = onCall({region: regions, enforceAppCheck: true}, async (request) => {
+export const submitScore = onCall({region: regions, enforceAppCheck: false}, async (request) => {
   const {uid} = requireUser(request);
   const score = Number(request.data?.score);
   const correct = Number(request.data?.correct);

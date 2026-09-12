@@ -1,6 +1,15 @@
 {
   "indexes": [
     {
+      "collectionGroup": "roster",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "section", "order": "ASCENDING" },
+        { "fieldPath": "active", "order": "ASCENDING" },
+        { "fieldPath": "sortName", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "leaderboard",
       "queryScope": "COLLECTION",
       "fields": [

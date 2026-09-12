@@ -52,4 +52,4 @@ La firma de producción nunca se versiona. Para compilar `release`, define `MATH
 
 ## Privacidad
 
-El CSV de matrícula, las claves administrativas y el keystore están incluidos en `.gitignore`. Las funciones exigen usuario Google verificado y App Check. El sitio público consume únicamente documentos sanitizados de `leaderboard`.
+El CSV de matrícula, las claves administrativas y el keystore están incluidos en `.gitignore`. Las funciones exigen usuario Google verificado y reciben App Check; su enforcement queda pospuesto hasta distribuir por Google Play porque la primera versión será instalada lateralmente. El sitio público consume únicamente documentos sanitizados de `leaderboard`.
