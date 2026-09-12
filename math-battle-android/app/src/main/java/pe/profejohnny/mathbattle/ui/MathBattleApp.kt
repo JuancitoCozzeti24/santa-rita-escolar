@@ -30,19 +30,23 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -61,6 +65,9 @@ import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import kotlinx.coroutines.launch
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import pe.profejohnny.mathbattle.R
 import pe.profejohnny.mathbattle.auth.GoogleAuthManager
 import pe.profejohnny.mathbattle.game.GameEngine
@@ -336,6 +343,10 @@ private fun ResultScreen(state: UiState, viewModel: MathBattleViewModel) {
             ResultStat("$accuracy%", "PRECISIÓN")
             ResultStat(g.bestStreak.toString(), "MEJOR RACHA")
         }
+        Text(
+            "${formatDuration(state.lastDurationMs)} · ${formatClock(g.startedAt)}–${formatClock(state.lastEndedAtMs)}",
+            color = Muted
+        )
         Text(state.sectionRank?.let { "Puesto en tu sección: $it" } ?: "Guardando posición…", color = Purple)
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             BattleButton("¡UNA MÁS!", viewModel::startBattle)
@@ -349,25 +360,81 @@ private fun ResultScreen(state: UiState, viewModel: MathBattleViewModel) {
 
 @Composable
 private fun RankingScreen(state: UiState, viewModel: MathBattleViewModel) {
+    var pendingDelete by remember { mutableStateOf<String?>(null) }
+    var confirmClear by remember { mutableStateOf(false) }
     BackHandler { viewModel.goLobby() }
     Column(Modifier.fillMaxSize().padding(30.dp), horizontalAlignment = Alignment.CenterHorizontally) {
         Eyebrow("CLASIFICACIÓN ONLINE")
         Text("Ranking en vivo", fontSize = 42.sp, fontWeight = FontWeight.Black)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(12.dp)) { listOf("2A", "2B", "5A", "5B").forEach { section -> OutlinedButton(onClick = { viewModel.showRanking(section) }, colors = ButtonDefaults.outlinedButtonColors(contentColor = if (section == state.section) Lime else Color.White)) { Text(section) } } }
+        if (state.isAdmin) {
+            OutlinedButton(onClick = { confirmClear = true }, colors = ButtonDefaults.outlinedButtonColors(contentColor = Red)) {
+                Text("REINICIAR RANKING ${state.section}")
+            }
+        }
         state.message?.let { Message(it) }
         LazyColumn(Modifier.width(760.dp).weight(1f).clip(RoundedCornerShape(18.dp)).background(Panel).padding(12.dp)) {
             items(state.ranking) { entry ->
                 Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text("${state.ranking.indexOf(entry) + 1}", color = Muted, modifier = Modifier.width(40.dp))
                     Text(avatarGlyph(entry.avatarId), fontSize = 30.sp)
-                    Column(Modifier.padding(start = 12.dp).weight(1f)) { Text(entry.publicName, fontWeight = FontWeight.Bold); Text(entry.section, color = Muted, fontSize = 11.sp) }
-                    Text(entry.bestScore.toString(), color = Lime, fontSize = 30.sp, fontWeight = FontWeight.Black)
+                    Column(Modifier.padding(start = 12.dp).weight(1f)) {
+                        Text(entry.publicName, fontWeight = FontWeight.Bold)
+                        Text(
+                            "${entry.section} · ${formatDuration(entry.durationMs)} · ${formatDateTime(entry.startedAtMs)}–${formatClock(entry.endedAtMs)}",
+                            color = Muted,
+                            fontSize = 11.sp
+                        )
+                    }
+                    Text("${entry.bestScore} pts", color = Lime, fontSize = 25.sp, fontWeight = FontWeight.Black)
+                    if (state.isAdmin) {
+                        TextButton(onClick = { pendingDelete = entry.uid }) { Text("ELIMINAR", color = Red) }
+                    }
                 }
             }
         }
         OutlinedButton(onClick = viewModel::goLobby, modifier = Modifier.padding(top = 10.dp)) { Text("VOLVER AL JUEGO") }
     }
+    pendingDelete?.let { uid ->
+        AlertDialog(
+            onDismissRequest = { pendingDelete = null },
+            title = { Text("Eliminar participante") },
+            text = { Text("Se eliminará este resultado del ranking ${state.section}.") },
+            confirmButton = {
+                TextButton(onClick = { pendingDelete = null; viewModel.deleteRankingEntry(uid) }) {
+                    Text("ELIMINAR", color = Red)
+                }
+            },
+            dismissButton = { TextButton(onClick = { pendingDelete = null }) { Text("CANCELAR") } }
+        )
+    }
+    if (confirmClear) {
+        AlertDialog(
+            onDismissRequest = { confirmClear = false },
+            title = { Text("Reiniciar ranking ${state.section}") },
+            text = { Text("Se borrarán todos los resultados visibles de esta aula. Los estudiantes podrán volver a jugar y aparecer nuevamente.") },
+            confirmButton = {
+                TextButton(onClick = { confirmClear = false; viewModel.clearRanking() }) {
+                    Text("REINICIAR", color = Red)
+                }
+            },
+            dismissButton = { TextButton(onClick = { confirmClear = false }) { Text("CANCELAR") } }
+        )
+    }
 }
+
+private fun formatDuration(milliseconds: Long): String {
+    val totalSeconds = (milliseconds.coerceAtLeast(0) + 500) / 1000
+    val minutes = totalSeconds / 60
+    val seconds = totalSeconds % 60
+    return if (minutes == 0L) "${seconds} s" else "${minutes} min ${seconds.toString().padStart(2, '0')} s"
+}
+
+private fun formatClock(milliseconds: Long): String =
+    if (milliseconds <= 0) "--:--:--" else SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(milliseconds))
+
+private fun formatDateTime(milliseconds: Long): String =
+    if (milliseconds <= 0) "--/-- --:--:--" else SimpleDateFormat("dd/MM HH:mm:ss", Locale.getDefault()).format(Date(milliseconds))
 
 @Composable private fun CenterCard(width: androidx.compose.ui.unit.Dp = 620.dp, content: @Composable ColumnScope.() -> Unit) {
     Box(Modifier.fillMaxSize().background(Brush.radialGradient(listOf(Color(0xFF29203C), Ink), radius = 1200f)), contentAlignment = Alignment.Center) {
