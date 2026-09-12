@@ -41,7 +41,7 @@ jobs:
       - name: Validate Python sources
         shell: pwsh
         run: |
-          python -m py_compile sieweb.py config.py desktop_agent/main.py desktop_agent/browser_controller.py desktop_agent/semantic_inspector.py desktop_agent/gradebook_mapper.py desktop_agent/grade_cell_mapper.py desktop_agent/grade_cell_mapper_rc2.py desktop_agent/grade_cell_mapper_rc3.py desktop_agent/grade_cell_probe.py desktop_agent/editor_open_probe.py desktop_agent/launcher_v100rc1.py desktop_agent/launcher_v100rc2.py desktop_agent/launcher_v100rc3.py desktop_agent/verified_writer_bridge.py desktop_agent/launcher_v100rc4.py desktop_agent/browser_auth_rc5.py desktop_agent/launcher_v100rc5.py desktop_agent/launcher_v100rc6.py desktop_agent/launcher_v100rc7.py desktop_agent/launcher_v100rc8.py desktop_agent/launcher_v100rc9.py desktop_agent/launcher_v100rc10.py desktop_agent/launcher_v100rc11.py desktop_agent/launcher_v100rc12.py desktop_agent/launcher_v100rc13.py desktop_agent/launcher_v100rc14.py desktop_agent/performance_plan.py desktop_agent/launcher_v100rc15.py desktop_agent/performance_plan_rc16.py desktop_agent/launcher_v100rc16.py desktop_agent/capacity_resolver_rc17.py desktop_agent/launcher_v100rc17.py desktop_agent/performance_plan_rc18.py desktop_agent/launcher_v100rc18.py
+          python -m py_compile sieweb.py config.py desktop_agent/main.py desktop_agent/browser_controller.py desktop_agent/semantic_inspector.py desktop_agent/gradebook_mapper.py desktop_agent/grade_cell_mapper.py desktop_agent/grade_cell_mapper_rc2.py desktop_agent/grade_cell_mapper_rc3.py desktop_agent/grade_cell_probe.py desktop_agent/editor_open_probe.py desktop_agent/launcher_v100rc1.py desktop_agent/launcher_v100rc2.py desktop_agent/launcher_v100rc3.py desktop_agent/verified_writer_bridge.py desktop_agent/launcher_v100rc4.py desktop_agent/browser_auth_rc5.py desktop_agent/launcher_v100rc5.py desktop_agent/launcher_v100rc6.py desktop_agent/launcher_v100rc7.py desktop_agent/launcher_v100rc8.py desktop_agent/launcher_v100rc9.py desktop_agent/launcher_v100rc10.py desktop_agent/launcher_v100rc11.py desktop_agent/launcher_v100rc12.py desktop_agent/launcher_v100rc13.py desktop_agent/launcher_v100rc14.py desktop_agent/performance_plan.py desktop_agent/launcher_v100rc15.py desktop_agent/performance_plan_rc16.py desktop_agent/launcher_v100rc16.py desktop_agent/capacity_resolver_rc17.py desktop_agent/launcher_v100rc17.py desktop_agent/performance_plan_rc18.py desktop_agent/launcher_v100rc18.py desktop_agent/browser_startup_rc19.py desktop_agent/launcher_v100rc19.py
 
       - name: Build executable
         shell: pwsh
@@ -51,16 +51,16 @@ jobs:
             --clean `
             --onefile `
             --console `
-            --name "SIEROOM-Desktop-Agent-v1.0-RC18" `
+            --name "SIEROOM-Desktop-Agent-v1.0-RC19" `
             --paths . `
             --paths desktop_agent `
             --collect-all playwright `
-            desktop_agent/launcher_v100rc18.py
+            desktop_agent/launcher_v100rc19.py
 
       - name: Verify executable exists
         shell: pwsh
         run: |
-          $exe = "dist/SIEROOM-Desktop-Agent-v1.0-RC18.exe"
+          $exe = "dist/SIEROOM-Desktop-Agent-v1.0-RC19.exe"
           if (-not (Test-Path $exe)) {
             throw "No se generó $exe"
           }
@@ -72,29 +72,29 @@ jobs:
         shell: pwsh
         run: |
           @"
-          SIEROOM Desktop Agent v1.0 RC18 - ARBOL REAL DE CRITERIOS
+          SIEROOM Desktop Agent v1.0 RC19 - CLASSROOM + SIEWEB AUTOMATICOS
 
-          OBJETIVO RC18:
-          - Conserva contexto dinámico, escritura rápida por lote y verificación del navegador.
-          - Corrige el bloqueo de RC17 que buscaba capacidades dentro del resumen de la libreta.
-          - Ahora lee el mismo árbol que usa el modal de SIEweb: Competencia -> Capacidad -> Desempeño.
-          - Resuelve las capacidades desde dataInicialPesosCriterios/json.resCriterios.
-          - Verifica los desempeños creados contra ese mismo árbol real antes de cargar notas.
-          - Si el árbol es ambiguo o no contiene la capacidad solicitada, bloquea toda escritura y muestra diagnóstico.
+          CAMBIO RC19:
+          - Conserva el motor RC18 de criterios/desempeños y escritura masiva.
+          - Al abrir el EXE, el navegador dedicado deja abiertas automáticamente SOLO dos pestañas de trabajo: Classroom y SIEweb.
+          - Classroom abre en la aplicación real (/u/0/h), no en la página informativa.
+          - SIEweb abre automáticamente y queda visible al frente.
+          - Si ya existía una pestaña válida de Classroom o SIEweb, la reutiliza para no perder el contexto actual.
+          - Cierra pestañas ajenas al flujo para que el agente no tenga que preguntar cuál controlar.
+          - La navegación inicial usa wait_until=commit para no congelar el agente esperando que una SPA lenta termine de cargar todos sus recursos.
 
           PRUEBA:
-          - Mantén abierto 2.º B / Matemática / 3 PERIODO / Registro de notas.
-          - Conserva SIEROOM_PLAN.json en Descargas.
-          - Ejecuta RC18 y elige P.
-          - NO autorices todavía CREAR DESEMPENOS N: primero revisa la pantalla con ChatGPT.
+          - Ejecuta RC19.
+          - Debes ver únicamente Classroom y SIEweb en el navegador dedicado.
+          - No debería ser necesario presionar ENTER para que aparezcan esas dos pestañas.
           "@ | Set-Content -Encoding UTF8 dist/LEEME-PRIMERO.txt
 
       - name: Upload Windows build
         uses: actions/upload-artifact@v4
         with:
-          name: SIEROOM-Desktop-Agent-Windows-v1.0-RC18
+          name: SIEROOM-Desktop-Agent-Windows-v1.0-RC19
           path: |
-            dist/SIEROOM-Desktop-Agent-v1.0-RC18.exe
+            dist/SIEROOM-Desktop-Agent-v1.0-RC19.exe
             dist/LEEME-PRIMERO.txt
           if-no-files-found: error
           retention-days: 14
