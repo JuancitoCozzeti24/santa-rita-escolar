@@ -47,7 +47,10 @@ data class UiState(
     val ranking: List<RankingEntry> = emptyList(),
     val game: GameState = GameState(),
     val countdown: Int = 3,
-    val sectionRank: Int? = null
+    val sectionRank: Int? = null,
+    val isAdmin: Boolean = false,
+    val lastDurationMs: Long = 0,
+    val lastEndedAtMs: Long = 0
 )
 
 class MathBattleViewModel(private val firebaseReady: Boolean) : ViewModel() {
@@ -64,7 +67,11 @@ class MathBattleViewModel(private val firebaseReady: Boolean) : ViewModel() {
                 return@launch
             }
             val profile = runCatching { repository?.loadMyProfile() }.getOrNull()
-            _state.value = _state.value.copy(screen = if (profile == null) Screen.SIGN_IN else Screen.LOBBY, profile = profile)
+            _state.value = _state.value.copy(
+                screen = if (profile == null) Screen.SIGN_IN else Screen.LOBBY,
+                profile = profile,
+                isAdmin = repository?.isAdmin == true
+            )
         }
     }
 
@@ -75,6 +82,7 @@ class MathBattleViewModel(private val firebaseReady: Boolean) : ViewModel() {
             _state.value = _state.value.copy(
                 loading = false,
                 profile = profile,
+                isAdmin = repository?.isAdmin == true,
                 screen = if (profile == null) Screen.SECTION else Screen.LOBBY,
                 message = if (profile == null) "Cuenta Google verificada. Ahora elige tu aula." else null
             )
@@ -181,10 +189,19 @@ class MathBattleViewModel(private val firebaseReady: Boolean) : ViewModel() {
         val current = _state.value
         if (current.screen !in listOf(Screen.GAME, Screen.LEVEL_UP)) return
         timer?.cancel()
-        _state.value = current.copy(screen = Screen.RESULT)
+        val endedAt = System.currentTimeMillis()
+        val duration = (endedAt - current.game.startedAt).coerceAtLeast(0)
+        _state.value = current.copy(
+            screen = Screen.RESULT,
+            lastDurationMs = duration,
+            lastEndedAtMs = endedAt
+        )
         val g = current.game
         viewModelScope.launch {
-            val result = BattleResult(g.score, g.level, g.correct, g.wrong, g.bestStreak, System.currentTimeMillis() - g.startedAt, g.sessionId)
+            val result = BattleResult(
+                g.score, g.level, g.correct, g.wrong, g.bestStreak,
+                duration, g.startedAt, endedAt, g.sessionId
+            )
             runCatching { repository?.submit(result) }.onSuccess { rank -> _state.value = _state.value.copy(sectionRank = rank) }
         }
     }
@@ -199,6 +216,22 @@ class MathBattleViewModel(private val firebaseReady: Boolean) : ViewModel() {
     }
 
     fun goLobby() { timer?.cancel(); _state.value = _state.value.copy(screen = Screen.LOBBY, message = null) }
+    fun deleteRankingEntry(uid: String) {
+        viewModelScope.launch {
+            _state.value = _state.value.copy(loading = true, message = null)
+            runCatching { requireNotNull(repository).deleteRankingEntry(uid) }
+                .onSuccess { showRanking(_state.value.section) }
+                .onFailure { _state.value = _state.value.copy(loading = false, message = friendly(it)) }
+        }
+    }
+    fun clearRanking() {
+        viewModelScope.launch {
+            _state.value = _state.value.copy(loading = true, message = null)
+            runCatching { requireNotNull(repository).clearRanking(_state.value.section) }
+                .onSuccess { showRanking(_state.value.section) }
+                .onFailure { _state.value = _state.value.copy(loading = false, message = friendly(it)) }
+        }
+    }
     fun goSections() { _state.value = _state.value.copy(screen = Screen.SECTION, message = null) }
     fun signOut() { timer?.cancel(); repository?.signOut(); _state.value = UiState(screen = Screen.SIGN_IN, firebaseReady = firebaseReady) }
     fun clearMessage() { _state.value = _state.value.copy(message = null) }
