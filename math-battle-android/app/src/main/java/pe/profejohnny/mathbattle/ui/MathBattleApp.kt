@@ -1,7 +1,9 @@
 package pe.profejohnny.mathbattle.ui
 
 import android.app.Activity
+import android.media.AudioManager
 import android.media.MediaPlayer
+import android.media.ToneGenerator
 import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.animateColorAsState
@@ -13,6 +15,7 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -32,11 +35,15 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
@@ -48,6 +55,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -64,15 +72,21 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.font.Font
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import kotlinx.coroutines.TimeoutCancellationException
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
@@ -95,12 +109,33 @@ private val Lime = Color(0xFFB5F75B)
 private val Purple = Color(0xFFA982E8)
 private val Muted = Color(0xFF9AA0B5)
 private val Red = Color(0xFFFF607D)
+private val ElectricBlue = Color(0xFF8EFFF6)
+private val BattleDisplayFont = FontFamily(Font(R.font.barlow_condensed_bold, FontWeight.Bold))
+private val BattleBodyFont = FontFamily(Font(R.font.manrope))
+private val baseTypography = Typography()
+private val BattleTypography = baseTypography.copy(
+    displayLarge = baseTypography.displayLarge.copy(fontFamily = BattleDisplayFont),
+    displayMedium = baseTypography.displayMedium.copy(fontFamily = BattleDisplayFont),
+    displaySmall = baseTypography.displaySmall.copy(fontFamily = BattleDisplayFont),
+    headlineLarge = baseTypography.headlineLarge.copy(fontFamily = BattleDisplayFont),
+    headlineMedium = baseTypography.headlineMedium.copy(fontFamily = BattleDisplayFont),
+    headlineSmall = baseTypography.headlineSmall.copy(fontFamily = BattleDisplayFont),
+    titleLarge = baseTypography.titleLarge.copy(fontFamily = BattleDisplayFont),
+    titleMedium = baseTypography.titleMedium.copy(fontFamily = BattleBodyFont),
+    titleSmall = baseTypography.titleSmall.copy(fontFamily = BattleBodyFont),
+    bodyLarge = baseTypography.bodyLarge.copy(fontFamily = BattleBodyFont),
+    bodyMedium = baseTypography.bodyMedium.copy(fontFamily = BattleBodyFont),
+    bodySmall = baseTypography.bodySmall.copy(fontFamily = BattleBodyFont),
+    labelLarge = baseTypography.labelLarge.copy(fontFamily = BattleBodyFont),
+    labelMedium = baseTypography.labelMedium.copy(fontFamily = BattleBodyFont),
+    labelSmall = baseTypography.labelSmall.copy(fontFamily = BattleBodyFont)
+)
 
 @Composable
 fun MathBattleApp(viewModel: MathBattleViewModel) {
     val state by viewModel.state.collectAsState()
     BattleAudio(state)
-    MaterialTheme(colorScheme = darkColorScheme(primary = Lime, secondary = Purple, background = Ink, surface = Panel)) {
+    MaterialTheme(colorScheme = darkColorScheme(primary = Lime, secondary = Purple, background = Ink, surface = Panel), typography = BattleTypography) {
         Surface(Modifier.fillMaxSize(), color = Ink) {
             when (state.screen) {
                 Screen.BOOT -> BootScreen(viewModel::enterBattle)
@@ -125,35 +160,95 @@ fun MathBattleApp(viewModel: MathBattleViewModel) {
 private fun BootScreen(onEnter: () -> Unit) {
     val activity = LocalContext.current as? Activity
     val context = LocalContext.current
+    val flicker = rememberInfiniteTransition(label = "neonTitle").animateFloat(
+        initialValue = .58f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(170), RepeatMode.Reverse),
+        label = "neonFlicker"
+    ).value
+    val electricity = remember { ToneGenerator(AudioManager.STREAM_MUSIC, 16) }
+    DisposableEffect(Unit) { onDispose { electricity.release() } }
+    LaunchedEffect(Unit) {
+        while (true) {
+            kotlinx.coroutines.delay(2100)
+            electricity.startTone(ToneGenerator.TONE_PROP_BEEP2, 55)
+            kotlinx.coroutines.delay(95)
+            electricity.startTone(ToneGenerator.TONE_PROP_BEEP, 35)
+        }
+    }
     BoxWithConstraints(
         Modifier.fillMaxSize().background(
             Brush.radialGradient(listOf(Color(0xFF321B3D), Ink), radius = 1100f)
-        ).padding(horizontal = 32.dp, vertical = 24.dp)
+        )
     ) {
         val screenWidth = maxWidth
-        val titleSize = if (screenWidth > 900.dp) 72.sp else 48.sp
-        val actionWidth = if (screenWidth > 900.dp) .68f else .82f
-        Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
+        val screenHeight = maxHeight
+        val short = screenHeight < 500.dp
+        val portrait = screenHeight > screenWidth
+        val phone = screenWidth < 700.dp
+        val titleSize = when {
+            short -> 31.sp
+            portrait -> 30.sp
+            phone -> 34.sp
+            screenWidth > 1400.dp -> 58.sp
+            else -> 46.sp
+        }
+        val actionWidth = if (screenWidth > 1100.dp) .62f else if (phone) .94f else .78f
+        ElectricSparks(flicker, Modifier.fillMaxSize())
+        Column(
+            Modifier.align(Alignment.Center).fillMaxWidth().padding(horizontal = if (short) 14.dp else 26.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(if (short) 3.dp else 8.dp)
+        ) {
             Eyebrow("MATH BATTLE")
-            Text("DEMUESTRA QUE\nPUEDES LUCHAR!!", color = Color.White, fontSize = titleSize, lineHeight = titleSize, fontWeight = FontWeight.Black, textAlign = TextAlign.Center)
-            Text("¿O te quedarás ahí demostrando qué serás en el futuro?", color = Muted, fontSize = if (screenWidth > 900.dp) 22.sp else 16.sp, modifier = Modifier.padding(12.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(22.dp), modifier = Modifier.fillMaxWidth(actionWidth).padding(top = 18.dp)) {
-                ImageAction(R.drawable.enter_battle, "Entraré a la batalla", Modifier.weight(1f)) {
+            Text(
+                "DEMUESTRA QUE PUEDES LUCHAR",
+                color = ElectricBlue.copy(alpha = .78f + .22f * flicker),
+                fontFamily = BattleDisplayFont,
+                fontSize = titleSize,
+                lineHeight = titleSize,
+                fontWeight = FontWeight.Bold,
+                maxLines = if (portrait) 2 else 1,
+                textAlign = TextAlign.Center,
+                style = TextStyle(shadow = Shadow(ElectricBlue.copy(alpha = flicker), Offset.Zero, 18f + 16f * flicker))
+            )
+            Text(
+                "¿O te quedarás ahí demostrando qué serás en el futuro?",
+                color = Color.White.copy(alpha = .76f),
+                fontSize = if (short) 10.sp else if (screenWidth > 900.dp) 15.sp else 12.sp,
+                maxLines = 1,
+                modifier = Modifier.padding(vertical = if (short) 2.dp else 6.dp)
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(if (short) 10.dp else 18.dp), modifier = Modifier.fillMaxWidth(actionWidth)) {
+                ImageAction(R.drawable.enter_battle, "Entraré a la batalla", Modifier.weight(1f), if (short) 88.dp else 150.dp) {
                     MediaPlayer.create(context, R.raw.evil_laugh)?.apply {
                         setOnCompletionListener { it.release() }
                         start()
                     }
                     onEnter()
                 }
-                ImageAction(R.drawable.leave_battle, "Tengo miedo, me voy", Modifier.weight(1f)) { activity?.finish() }
+                ImageAction(R.drawable.leave_battle, "Tengo miedo, me voy", Modifier.weight(1f), if (short) 88.dp else 150.dp) { activity?.finish() }
             }
         }
     }
 }
 
 @Composable
-private fun ImageAction(resource: Int, label: String, modifier: Modifier = Modifier, action: () -> Unit) {
-    Image(painterResource(resource), label, modifier.clickable(onClick = action), contentScale = ContentScale.FillWidth)
+private fun ElectricSparks(intensity: Float, modifier: Modifier = Modifier) {
+    Canvas(modifier) {
+        val sparks = listOf(.10f to .24f, .18f to .72f, .32f to .14f, .65f to .18f, .82f to .68f, .91f to .31f)
+        sparks.forEachIndexed { index, (x, y) ->
+            val start = Offset(size.width * x, size.height * y)
+            val direction = if (index % 2 == 0) 1f else -1f
+            drawLine(ElectricBlue.copy(alpha = (.12f + .38f * intensity)), start, start + Offset(18f * direction, 15f), strokeWidth = 2.4f)
+            drawCircle(Color.White.copy(alpha = .18f + .55f * intensity), 2.5f + intensity * 2f, start)
+        }
+    }
+}
+
+@Composable
+private fun ImageAction(resource: Int, label: String, modifier: Modifier = Modifier, maxHeight: androidx.compose.ui.unit.Dp, action: () -> Unit) {
+    Image(painterResource(resource), label, modifier.heightIn(max = maxHeight).clickable(onClick = action), contentScale = ContentScale.Fit)
 }
 
 @Composable
@@ -194,9 +289,16 @@ private fun SignInScreen(state: UiState, viewModel: MathBattleViewModel) {
                 scope.launch {
                     GoogleAuthManager(activity).signIn()
                         .onSuccess { viewModel.signedIn() }
-                        .onFailure { viewModel.authFailed("No se pudo iniciar sesión con Google. Inténtalo nuevamente.") }
+                        .onFailure { error ->
+                            viewModel.authFailed(
+                                if (error is TimeoutCancellationException) "Google tardó demasiado en responder. Revisa Internet y vuelve a intentarlo."
+                                else "No se pudo abrir el acceso de Google. Verifica que el dispositivo tenga una cuenta Google activa e inténtalo nuevamente."
+                            )
+                        }
                 }
-            }) { Text("CONTINUAR CON GOOGLE", fontWeight = FontWeight.Bold) }
+            }, modifier = Modifier.fillMaxWidth(.82f).heightIn(min = 48.dp)) {
+                Text("CONTINUAR CON GOOGLE", fontWeight = FontWeight.Bold, fontSize = 13.sp, maxLines = 1)
+            }
         }
         state.message?.let { Message(it) }
     }
@@ -208,9 +310,11 @@ private fun SectionScreen(state: UiState, viewModel: MathBattleViewModel) {
         Eyebrow("CUENTA GOOGLE VERIFICADA")
         Text("¿A qué aula perteneces?", style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.Black)
         Text("Selecciona tu grado y sección.", color = Muted)
-        Row(horizontalArrangement = Arrangement.spacedBy(14.dp), modifier = Modifier.padding(top = 20.dp)) {
-            listOf("2A", "2B", "5A", "5B").forEach { section ->
-                BattleButton(section.replace("A", ".º A").replace("B", ".º B")) { viewModel.chooseSection(section) }
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.padding(top = 14.dp)) {
+            listOf(listOf("2A", "2B"), listOf("5A", "5B")).forEach { pair ->
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    pair.forEach { section -> BattleButton(section.replace("A", ".º A").replace("B", ".º B")) { viewModel.chooseSection(section) } }
+                }
             }
         }
         state.message?.let { Message(it) }
@@ -260,28 +364,49 @@ private fun AvatarScreen(state: UiState, viewModel: MathBattleViewModel) {
 @Composable
 private fun LobbyScreen(state: UiState, viewModel: MathBattleViewModel) {
     val profile = state.profile ?: return
-    Row(Modifier.fillMaxSize().padding(32.dp), horizontalArrangement = Arrangement.spacedBy(24.dp)) {
-        Box(Modifier.weight(1.35f).fillMaxHeight().clip(RoundedCornerShape(24.dp)).background(Brush.horizontalGradient(listOf(Color(0xFF312345), Color(0xFF171523))))) {
-            Image(painterResource(R.drawable.rival), null, Modifier.align(Alignment.CenterEnd).fillMaxHeight().fillMaxWidth(.56f), contentScale = ContentScale.Crop)
-            Column(Modifier.fillMaxHeight().padding(34.dp), verticalArrangement = Arrangement.Center) {
-                Eyebrow("CÁLCULO MENTAL · CONTRARRELOJ")
-                Text("TU MENTE.\nTU MEJOR\n", color = Color.White, fontSize = 50.sp, lineHeight = 47.sp, fontWeight = FontWeight.Black)
-                Text("BATALLA.", color = Lime, fontSize = 50.sp, lineHeight = 47.sp, fontWeight = FontWeight.Black)
-                Text("Tres respuestas. Una oportunidad.\n¿Hasta dónde puedes llegar?", color = Muted, modifier = Modifier.padding(vertical = 15.dp))
-                Button(onClick = viewModel::startBattle) { Text("¡A LA BATALLA!  ↗", fontWeight = FontWeight.Black) }
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val portrait = maxHeight > maxWidth
+        val compact = maxHeight < 540.dp
+        val padding = if (compact) 12.dp else 22.dp
+        if (portrait) {
+            Column(Modifier.fillMaxSize().padding(padding), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                LobbyHero(viewModel, Modifier.fillMaxWidth().weight(1.05f), compact = false)
+                LobbyProfile(profile, viewModel, Modifier.fillMaxWidth().weight(.95f), compact = true)
+            }
+        } else {
+            Row(Modifier.fillMaxSize().padding(padding), horizontalArrangement = Arrangement.spacedBy(if (compact) 12.dp else 22.dp)) {
+                LobbyHero(viewModel, Modifier.fillMaxHeight().weight(1.35f), compact)
+                LobbyProfile(profile, viewModel, Modifier.fillMaxHeight().weight(.8f), compact)
             }
         }
-        Column(Modifier.weight(.8f).fillMaxHeight().clip(RoundedCornerShape(24.dp)).background(Panel).padding(26.dp)) {
-            Text(avatarGlyph(profile.avatarId), fontSize = 54.sp)
-            Text(profile.publicName, fontSize = 30.sp, fontWeight = FontWeight.Black)
-            Text("${profile.section} · ${profile.bestScore} pts", color = Lime)
-            Spacer(Modifier.height(22.dp))
-            Button(onClick = { viewModel.showRanking() }, modifier = Modifier.fillMaxWidth()) { Text("🏆 VER RANKING") }
-            OutlinedButton(onClick = { viewModel.goSections() }, modifier = Modifier.fillMaxWidth()) { Text("CAMBIAR AULA") }
-            OutlinedButton(onClick = viewModel::signOut, modifier = Modifier.fillMaxWidth()) { Text("CERRAR SESIÓN") }
-            Spacer(Modifier.weight(1f))
-            Text("NIVEL 01  Sumas y restas\nNIVEL 02  Potencias de 2\nNIVEL 03  Operaciones combinadas", color = Muted, lineHeight = 24.sp)
+    }
+}
+
+@Composable
+private fun LobbyHero(viewModel: MathBattleViewModel, modifier: Modifier, compact: Boolean) {
+    Box(modifier.clip(RoundedCornerShape(22.dp)).background(Brush.horizontalGradient(listOf(Color(0xFF312345), Color(0xFF171523))))) {
+        Image(painterResource(R.drawable.rival), null, Modifier.align(Alignment.CenterEnd).fillMaxHeight().fillMaxWidth(.56f), contentScale = ContentScale.Crop)
+        val size = if (compact) 31.sp else 43.sp
+        Column(Modifier.fillMaxHeight().fillMaxWidth(.67f).padding(if (compact) 16.dp else 26.dp), verticalArrangement = Arrangement.Center) {
+            Eyebrow("CÁLCULO MENTAL · CONTRARRELOJ")
+            Text("TU MENTE.\nTU MEJOR", color = Color.White, fontFamily = BattleDisplayFont, fontSize = size, lineHeight = size * .94f, fontWeight = FontWeight.Bold)
+            Text("BATALLA.", color = Lime, fontFamily = BattleDisplayFont, fontSize = size, lineHeight = size, fontWeight = FontWeight.Bold)
+            Text("Tres respuestas. Una oportunidad.", color = Muted, fontSize = if (compact) 10.sp else 12.sp, maxLines = 1, modifier = Modifier.padding(vertical = if (compact) 6.dp else 10.dp))
+            Button(onClick = viewModel::startBattle, modifier = Modifier.heightIn(min = 42.dp)) { Text("¡A LA BATALLA! ↗", fontWeight = FontWeight.Black, fontSize = if (compact) 11.sp else 13.sp, maxLines = 1) }
         }
+    }
+}
+
+@Composable
+private fun LobbyProfile(profile: StudentProfile, viewModel: MathBattleViewModel, modifier: Modifier, compact: Boolean) {
+    Column(modifier.clip(RoundedCornerShape(22.dp)).background(Panel).padding(if (compact) 14.dp else 24.dp), verticalArrangement = Arrangement.spacedBy(if (compact) 3.dp else 7.dp)) {
+        Text(avatarGlyph(profile.avatarId), fontSize = if (compact) 32.sp else 46.sp)
+        Text(profile.publicName, fontFamily = BattleDisplayFont, fontSize = if (compact) 22.sp else 29.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+        Text("${profile.section} · ${profile.bestScore} pts", color = Lime, fontSize = if (compact) 11.sp else 14.sp)
+        Button(onClick = { viewModel.showRanking() }, modifier = Modifier.fillMaxWidth().heightIn(min = 40.dp)) { Text("🏆 VER RANKING", fontSize = 11.sp, maxLines = 1) }
+        OutlinedButton(onClick = { viewModel.goSections() }, modifier = Modifier.fillMaxWidth().heightIn(min = 40.dp)) { Text("CAMBIAR AULA", fontSize = 11.sp, maxLines = 1) }
+        OutlinedButton(onClick = viewModel::signOut, modifier = Modifier.fillMaxWidth().heightIn(min = 40.dp)) { Text("CERRAR SESIÓN", fontSize = 11.sp, maxLines = 1) }
+        if (!compact) Text("11 niveles · Primera fase hasta 120 puntos", color = Muted, fontSize = 11.sp)
     }
 }
 
@@ -432,6 +557,7 @@ private fun LevelUpScreen(state: UiState, viewModel: MathBattleViewModel) {
 }
 
 @Composable
+@OptIn(ExperimentalLayoutApi::class)
 private fun ResultScreen(state: UiState, viewModel: MathBattleViewModel) {
     val g = state.game
     val accuracy = g.correct * 100 / (g.correct + g.wrong).coerceAtLeast(1)
@@ -450,7 +576,7 @@ private fun ResultScreen(state: UiState, viewModel: MathBattleViewModel) {
             color = Muted
         )
         Text(state.sectionRank?.let { "Puesto en tu sección: $it" } ?: "Guardando posición…", color = Purple)
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             BattleButton("¡UNA MÁS!", viewModel::startBattle)
             OutlinedButton(onClick = viewModel::goLobby) { Text("VOLVER") }
             OutlinedButton(onClick = { viewModel.showRanking() }) { Text("🏆 RANKING") }
@@ -545,18 +671,20 @@ private fun formatDateTime(milliseconds: Long): String =
         contentAlignment = Alignment.Center
     ) {
         val tablet = maxWidth >= 700.dp
+        val compactHeight = maxHeight < 520.dp
         val outerHorizontal = if (tablet) 44.dp else 16.dp
-        val outerVertical = if (maxHeight >= 650.dp) 30.dp else 10.dp
-        val innerPadding = if (tablet) 42.dp else 24.dp
+        val outerVertical = if (maxHeight >= 650.dp) 30.dp else 6.dp
+        val innerPadding = if (compactHeight) 14.dp else if (tablet) 34.dp else 20.dp
         Column(
             Modifier.fillMaxSize()
                 .padding(horizontal = outerHorizontal, vertical = outerVertical)
                 .clip(RoundedCornerShape(if (tablet) 30.dp else 22.dp))
                 .background(Panel.copy(alpha = .94f))
                 .border(1.dp, Purple.copy(alpha = .35f), RoundedCornerShape(if (tablet) 30.dp else 22.dp))
-                .padding(innerPadding),
+                .padding(innerPadding)
+                .verticalScroll(rememberScrollState()),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(if (tablet) 14.dp else 9.dp, Alignment.CenterVertically),
+            verticalArrangement = Arrangement.spacedBy(if (compactHeight) 6.dp else if (tablet) 12.dp else 9.dp, if (compactHeight) Alignment.Top else Alignment.CenterVertically),
             content = content
         )
     }
