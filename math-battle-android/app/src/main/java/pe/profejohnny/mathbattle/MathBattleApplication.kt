@@ -3,7 +3,6 @@ package pe.profejohnny.mathbattle
 import android.app.Application
 import com.google.firebase.FirebaseApp
 import com.google.firebase.FirebaseOptions
-import com.google.firebase.appcheck.FirebaseAppCheck
 
 class MathBattleApplication : Application() {
     override fun onCreate() {
@@ -18,7 +17,6 @@ class MathBattleApplication : Application() {
             .build()
         if (FirebaseApp.getApps(this).isEmpty()) FirebaseApp.initializeApp(this, options)
 
-        FirebaseAppCheck.getInstance().installAppCheckProviderFactory(appCheckProviderFactory())
     }
 
     companion object {
