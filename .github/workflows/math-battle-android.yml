@@ -35,7 +35,7 @@ jobs:
           FIREBASE_STORAGE_BUCKET: ${{ secrets.FIREBASE_STORAGE_BUCKET }}
           WEB_CLIENT_ID: ${{ secrets.WEB_CLIENT_ID }}
         working-directory: math-battle-android
-        run: gradle :app:testDebugUnitTest :app:assembleDebug --stacktrace
+        run: gradle :app:testDebugUnitTest :app:assembleDebug :app:assembleRelease --stacktrace
       - name: Build signed release APK
         if: ${{ env.HAS_RELEASE_KEY != '' }}
         env:
@@ -54,6 +54,10 @@ jobs:
         with:
           name: math-battle-debug
           path: math-battle-android/app/build/outputs/apk/debug/app-debug.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: math-battle-release-unsigned
+          path: math-battle-android/app/build/outputs/apk/release/app-release-unsigned.apk
       - uses: actions/upload-artifact@v4
         if: ${{ env.HAS_RELEASE_KEY != '' }}
         with:
