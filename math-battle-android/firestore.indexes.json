@@ -15,6 +15,7 @@
       "fields": [
         { "fieldPath": "section", "order": "ASCENDING" },
         { "fieldPath": "bestScore", "order": "DESCENDING" },
+        { "fieldPath": "durationMs", "order": "ASCENDING" },
         { "fieldPath": "achievedAt", "order": "ASCENDING" }
       ]
     }
