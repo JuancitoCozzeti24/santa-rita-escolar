@@ -26,7 +26,7 @@ class MathBattleRepository(
     }
 
     suspend fun listRoster(section: String): List<RosterChoice> {
-        val result = functions.getHttpsCallable("listRoster").call(mapOf("section" to section)).await().data
+        val result = functions.getHttpsCallable("listRoster").call(mapOf("section" to section)).await().getData()
         @Suppress("UNCHECKED_CAST") val rows = (result as? Map<*, *>)?.get("students") as? List<Map<String, Any?>> ?: emptyList()
         return rows.mapNotNull {
             val id = it["studentId"] as? String ?: return@mapNotNull null
@@ -57,7 +57,7 @@ class MathBattleRepository(
                 "sessionId" to result.sessionId,
                 "clientVersion" to BuildConfig.VERSION_NAME
             )
-        ).await().data
+        ).await().getData()
         return ((data as? Map<*, *>)?.get("sectionRank") as? Number)?.toInt()
     }
 
