@@ -1,30 +1,39 @@
 package pe.profejohnny.mathbattle.auth
 
 import android.app.Activity
-import androidx.credentials.CredentialManager
-import androidx.credentials.GetCredentialRequest
-import com.google.android.libraries.identity.googleid.GetGoogleIdOption
-import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
+import android.content.Intent
+import com.google.android.gms.auth.api.signin.GoogleSignIn
+import com.google.android.gms.auth.api.signin.GoogleSignInOptions
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.GoogleAuthProvider
-import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.withTimeout
 import pe.profejohnny.mathbattle.BuildConfig
 
+/**
+ * Explicit Google account flow for APKs distributed outside Google Play.
+ * It launches Google's own account picker instead of waiting for a credential provider.
+ */
 class GoogleAuthManager(private val activity: Activity) {
-    suspend fun signIn(): Result<Unit> = runCatching {
-        require(BuildConfig.WEB_CLIENT_ID.isNotBlank()) { "Firebase todavía no está configurado" }
-        val option = GetGoogleIdOption.Builder()
-            .setFilterByAuthorizedAccounts(false)
-            .setServerClientId(BuildConfig.WEB_CLIENT_ID)
-            .setAutoSelectEnabled(false)
+    private val client by lazy {
+        val options = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
+            .requestIdToken(BuildConfig.WEB_CLIENT_ID)
+            .requestEmail()
             .build()
-        val request = GetCredentialRequest.Builder().addCredentialOption(option).build()
-        withTimeout(25_000) {
-            val credential = CredentialManager.create(activity).getCredential(activity, request).credential
-            val google = GoogleIdTokenCredential.createFrom(credential.data)
+        GoogleSignIn.getClient(activity, options)
+    }
+
+    fun signInIntent(): Intent = client.signInIntent
+
+    suspend fun completeSignIn(data: Intent?): Result<Unit> = runCatching {
+        require(BuildConfig.WEB_CLIENT_ID.isNotBlank()) { "Firebase todavía no está configurado" }
+        val account = withTimeout(15_000) {
+            GoogleSignIn.getSignedInAccountFromIntent(data).await()
+        }
+        val token = requireNotNull(account.idToken) { "Google no devolvió una credencial válida" }
+        withTimeout(15_000) {
             FirebaseAuth.getInstance().signInWithCredential(
-                GoogleAuthProvider.getCredential(google.idToken, null)
+                GoogleAuthProvider.getCredential(token, null)
             ).await()
         }
     }
