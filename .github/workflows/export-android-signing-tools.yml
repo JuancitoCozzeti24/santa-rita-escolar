@@ -1,0 +1,32 @@
+name: Export Android signing tools
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/export-android-signing-tools.yml
+  workflow_dispatch:
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Pack apksigner and zipalign
+        shell: bash
+        run: |
+          BUILD_TOOLS_DIR="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)"
+          test -x "$BUILD_TOOLS_DIR/apksigner"
+          test -x "$BUILD_TOOLS_DIR/zipalign"
+          mkdir -p "$RUNNER_TEMP/android-signing-tools/lib"
+          cp "$BUILD_TOOLS_DIR/apksigner" "$BUILD_TOOLS_DIR/zipalign" "$RUNNER_TEMP/android-signing-tools/"
+          cp -R "$BUILD_TOOLS_DIR/lib/." "$RUNNER_TEMP/android-signing-tools/lib/"
+          chmod +x "$RUNNER_TEMP/android-signing-tools/apksigner" "$RUNNER_TEMP/android-signing-tools/zipalign"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-signing-tools
+          path: ${{ runner.temp }}/android-signing-tools
+          retention-days: 1
