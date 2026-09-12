@@ -73,7 +73,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.geometry.Offset
@@ -439,22 +441,25 @@ private fun GameScreen(state: UiState, viewModel: MathBattleViewModel) {
     ).value
     BackHandler { viewModel.finishBattle() }
     BoxWithConstraints(Modifier.fillMaxSize()) {
-        val wide = maxWidth > 900.dp
-        val horizontalPadding = if (wide) 64.dp else 30.dp
-        val answerHeight = if (wide) (maxHeight * .27f).coerceAtMost(190.dp) else 118.dp
-        Column(Modifier.fillMaxSize().padding(horizontal = horizontalPadding, vertical = 18.dp)) {
+        // Orientation, rather than an arbitrary tablet width, decides the game layout.
+        // This keeps every gameplay control in one screen on phones, tablets and panels.
+        val landscape = maxWidth > maxHeight * 1.18f
+        val roomy = maxWidth >= 900.dp && maxHeight >= 500.dp
+        val short = maxHeight < 420.dp
+        val horizontalPadding = when { roomy -> 48.dp; landscape -> 20.dp; else -> 18.dp }
+        Column(Modifier.fillMaxSize().padding(horizontal = horizontalPadding, vertical = if (short) 8.dp else 14.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text(avatarGlyph(state.profile?.avatarId.orEmpty()), fontSize = if (wide) 48.sp else 36.sp)
-                Text(state.profile?.publicName.orEmpty(), fontSize = if (wide) 22.sp else 16.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 10.dp).weight(1f))
-                Column(horizontalAlignment = Alignment.CenterHorizontally) { Eyebrow("NIVEL ${game.level}${if (game.level == 3) " · ∞" else ""}"); Text(rule.name, fontSize = if (wide) 22.sp else 16.sp, fontWeight = FontWeight.Bold) }
-                Column(Modifier.weight(1f), horizontalAlignment = Alignment.End) { Eyebrow("PUNTOS"); Text(game.score.toString(), color = Lime, fontSize = if (wide) 64.sp else 48.sp, fontWeight = FontWeight.Black) }
+                Text(avatarGlyph(state.profile?.avatarId.orEmpty()), fontSize = if (roomy) 40.sp else 27.sp)
+                Text(state.profile?.publicName.orEmpty(), fontSize = if (roomy) 19.sp else 14.sp, fontWeight = FontWeight.Bold, maxLines = 1, modifier = Modifier.padding(start = 8.dp).weight(1f))
+                Column(horizontalAlignment = Alignment.CenterHorizontally) { Eyebrow("NIVEL ${game.level}${if (game.level == 3) " · ∞" else ""}"); Text(rule.name, color = Color.White, fontSize = if (roomy) 19.sp else 14.sp, fontWeight = FontWeight.Bold, maxLines = 1) }
+                Column(Modifier.weight(1f), horizontalAlignment = Alignment.End) { Eyebrow("PUNTOS"); Text(game.score.toString(), color = Lime, fontSize = if (roomy) 48.sp else 34.sp, lineHeight = if (roomy) 48.sp else 34.sp, fontWeight = FontWeight.Black) }
             }
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text("TIEMPO RESTANTE", color = if (danger) Red.copy(alpha = pulse) else Muted, fontSize = 11.sp, modifier = Modifier.weight(1f))
-                Text("%.1f s".format(game.remaining), color = if (danger) Red.copy(alpha = pulse) else Color.White, fontSize = if (wide) 22.sp else 16.sp, fontWeight = FontWeight.Bold)
+                Text("%.1f s".format(game.remaining), color = if (danger) Red.copy(alpha = pulse) else Color.White, fontSize = if (roomy) 19.sp else 14.sp, fontWeight = FontWeight.Bold)
             }
             Box(
-                Modifier.fillMaxWidth().height(if (wide) 18.dp else 13.dp)
+                Modifier.fillMaxWidth().height(if (roomy) 16.dp else 10.dp)
                     .shadow(if (danger) (18.dp * pulse) else 4.dp, CircleShape, ambientColor = if (danger) Red else Lime, spotColor = if (danger) Red else Lime)
                     .clip(CircleShape).background(if (danger) Red.copy(alpha = .18f + .28f * pulse) else Panel2)
             ) {
@@ -469,30 +474,36 @@ private fun GameScreen(state: UiState, viewModel: MathBattleViewModel) {
                         )
                 )
             }
-            Column(Modifier.weight(1f).fillMaxWidth(), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
-                Eyebrow(rule.skill.uppercase())
-                val questionSize = when {
-                    game.question.text.length > 55 -> if (wide) 42.sp else 28.sp
-                    game.question.text.length > 28 -> if (wide) 56.sp else 38.sp
-                    game.question.text.contains('\n') -> if (wide) 64.sp else 44.sp
-                    else -> if (wide) 96.sp else 72.sp
-                }
-                Text(game.question.text, fontSize = questionSize, lineHeight = questionSize * 1.08f, fontWeight = FontWeight.Black, textAlign = TextAlign.Center)
-            }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(if (wide) 34.dp else 16.dp)) {
-                game.question.choices.forEachIndexed { index, choice ->
-                    ArcadeAnswerButton(
-                        choice = choice,
-                        shortcut = index + 1,
-                        selectedChoice = game.selectedChoice,
-                        correctChoice = game.question.answer,
-                        modifier = Modifier.weight(1f).height(answerHeight)
-                    ) { viewModel.answer(choice) }
+            val question: @Composable (Modifier) -> Unit = { modifier ->
+                Column(modifier, verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
+                    Eyebrow(rule.skill.uppercase())
+                    val questionSize = when {
+                        game.question.text.length > 55 -> if (roomy) 38.sp else 25.sp
+                        game.question.text.length > 28 -> if (roomy) 48.sp else 31.sp
+                        else -> if (roomy) 74.sp else if (landscape) 52.sp else 58.sp
+                    }
+                    Text(game.question.text, color = Color.White, fontFamily = BattleDisplayFont, fontSize = questionSize, lineHeight = questionSize * 1.02f, fontWeight = FontWeight.Black, textAlign = TextAlign.Center)
                 }
             }
-            Row(Modifier.fillMaxWidth().padding(top = 12.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+            val answers: @Composable (Modifier) -> Unit = { modifier ->
+                Row(modifier, horizontalArrangement = Arrangement.spacedBy(if (roomy) 20.dp else 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    game.question.choices.forEachIndexed { index, choice ->
+                        ArcadeAnswerButton(choice, index + 1, game.selectedChoice, game.question.answer, Modifier.weight(1f).fillMaxHeight()) { viewModel.answer(choice) }
+                    }
+                }
+            }
+            if (landscape) {
+                Row(Modifier.weight(1f).fillMaxWidth().padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    question(Modifier.weight(.82f).fillMaxHeight())
+                    answers(Modifier.weight(1.18f).fillMaxHeight().padding(start = 12.dp))
+                }
+            } else {
+                question(Modifier.weight(.52f).fillMaxWidth())
+                answers(Modifier.weight(.48f).fillMaxWidth())
+            }
+            Row(Modifier.fillMaxWidth().padding(top = if (short) 3.dp else 8.dp), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text("✓ +${rule.gainSeconds} s  ·  ✕ −${rule.lossSeconds} s", color = Muted)
-                Text(if (game.streak >= 3) "⚡ ${game.streak} aciertos seguidos" else "⚡ Cada acierto cuenta", color = Purple)
+                if (!short) Text(if (game.streak >= 3) "⚡ ${game.streak} aciertos seguidos" else "⚡ Cada acierto cuenta", color = Purple)
                 Text("Terminar partida", color = Purple, modifier = Modifier.clickable { viewModel.finishBattle() })
             }
         }
@@ -518,7 +529,7 @@ private fun ArcadeAnswerButton(
             correct -> Color.White
             wrong -> Color(0xFFFF1744)
             revealed -> Color(0xFF264130)
-            else -> Color(0xFF16E650)
+            else -> Color(0xFF20EE57)
         },
         tween(160),
         label = "arcadeColor"
@@ -526,26 +537,13 @@ private fun ArcadeAnswerButton(
     val glow by animateFloatAsState(if (correct || wrong) 1f else if (pressed) .7f else .18f, tween(120), label = "arcadeGlow")
     val travel by animateDpAsState(if (pressed) 10.dp else 1.dp, tween(70), label = "arcadeTravel")
     Box(modifier, contentAlignment = Alignment.Center) {
-        Box(
-            Modifier.fillMaxHeight(.88f).aspectRatio(1f)
-                .shadow(22.dp * glow, CircleShape, ambientColor = if (wrong) Red else Color.White, spotColor = if (wrong) Red else Lime)
-                .clip(CircleShape)
-                .background(Color(0xFF063B1B))
-                .border(4.dp, Color(0xFF061B10), CircleShape)
-        )
-        Box(
-            Modifier.fillMaxHeight(.78f).aspectRatio(1f)
-                .graphicsLayer { translationY = travel.toPx(); scaleX = if (pressed) .96f else 1f; scaleY = if (pressed) .96f else 1f }
-                .shadow(12.dp, CircleShape)
-                .clip(CircleShape)
-                .background(Brush.radialGradient(listOf(topColor.copy(alpha = 1f), topColor.copy(alpha = .68f), Color(0xFF054C20))))
-                .border(3.dp, if (correct) Color.White else topColor.copy(alpha = .9f), CircleShape)
-                .clickable(interactionSource = interaction, indication = null, enabled = selectedChoice == null, onClick = onClick),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(choice, color = if (correct) Ink else Color.White, fontSize = if (choice.length > 8) 25.sp else if (choice.length > 4) 34.sp else 48.sp, fontWeight = FontWeight.Black, textAlign = TextAlign.Center)
-            Text(shortcut.toString(), color = Color.White.copy(alpha = .7f), fontSize = 11.sp, modifier = Modifier.align(Alignment.TopStart).padding(13.dp))
-            Box(Modifier.align(Alignment.TopStart).padding(18.dp).size(22.dp).clip(CircleShape).background(Color.White.copy(alpha = .42f)))
+        Box(Modifier.fillMaxHeight(.96f).aspectRatio(1f)
+            .shadow(24.dp * glow, CircleShape, ambientColor = if (wrong) Red else topColor, spotColor = if (wrong) Red else topColor)
+            .graphicsLayer { translationY = travel.toPx(); scaleX = if (pressed) .94f else 1f; scaleY = if (pressed) .92f else 1f }
+            .clickable(interactionSource = interaction, indication = null, enabled = selectedChoice == null, onClick = onClick), contentAlignment = Alignment.Center) {
+            Image(painterResource(R.drawable.arcade_button), null, Modifier.fillMaxSize(), contentScale = ContentScale.Fit, colorFilter = ColorFilter.tint(topColor, BlendMode.Modulate))
+            Text(choice, color = if (correct) Ink else Color.White, fontFamily = BattleDisplayFont, fontSize = when { choice.length > 8 -> 20.sp; choice.length > 4 -> 27.sp; else -> 39.sp }, fontWeight = FontWeight.Black, textAlign = TextAlign.Center, modifier = Modifier.padding(bottom = 10.dp))
+            Text(shortcut.toString(), color = Color.White.copy(alpha = .72f), fontSize = 10.sp, modifier = Modifier.align(Alignment.TopStart).padding(12.dp))
         }
     }
 }
