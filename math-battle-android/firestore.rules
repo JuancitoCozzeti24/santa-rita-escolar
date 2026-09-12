@@ -31,7 +31,7 @@ service cloud.firestore {
     }
 
     match /leaderboard/{uid} {
-      allow read: if true;
+      allow read: if signedIn();
       allow create, update: if signedIn()
         && uid == request.auth.uid
         && request.resource.data.uid == uid
