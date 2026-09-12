@@ -1,0 +1,117 @@
+name: Build SIEROOM Stable EXE
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - sieroom-desktop-agent-v0.1
+    paths:
+      - "desktop_agent/performance_plan_stable.py"
+      - "desktop_agent/launcher_stable.py"
+      - "sieweb.py"
+      - "config.py"
+      - ".github/workflows/build-sieroom-stable.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: "pip"
+          cache-dependency-path: desktop_agent/requirements.txt
+
+      - name: Install dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r desktop_agent/requirements.txt
+          python -m pip install "pyinstaller>=6.15,<7"
+
+      - name: Validate stable sources
+        shell: pwsh
+        run: |
+          python -m py_compile `
+            sieweb.py `
+            config.py `
+            desktop_agent/main.py `
+            desktop_agent/browser_controller.py `
+            desktop_agent/grade_cell_mapper_rc3.py `
+            desktop_agent/launcher_v100rc1.py `
+            desktop_agent/launcher_v100rc3.py `
+            desktop_agent/launcher_v100rc9.py `
+            desktop_agent/launcher_v100rc13.py `
+            desktop_agent/launcher_v100rc15.py `
+            desktop_agent/browser_startup_rc19.py `
+            desktop_agent/performance_plan.py `
+            desktop_agent/performance_plan_rc16.py `
+            desktop_agent/performance_plan_rc18.py `
+            desktop_agent/performance_plan_stable.py `
+            desktop_agent/launcher_stable.py
+
+      - name: Build stable executable
+        shell: pwsh
+        run: |
+          pyinstaller `
+            --noconfirm `
+            --clean `
+            --onefile `
+            --console `
+            --name "SIEROOM-Desktop-Agent" `
+            --paths . `
+            --paths desktop_agent `
+            --collect-all playwright `
+            desktop_agent/launcher_stable.py
+
+      - name: Verify executable
+        shell: pwsh
+        run: |
+          $exe = "dist/SIEROOM-Desktop-Agent.exe"
+          if (-not (Test-Path $exe)) { throw "No se generó $exe" }
+          $item = Get-Item $exe
+          Write-Host "EXE estable generado: $($item.FullName)"
+          Write-Host "Tamaño: $($item.Length) bytes"
+
+      - name: Add quick-start file
+        shell: pwsh
+        run: |
+          @"
+          SIEROOM DESKTOP AGENT - CANAL ESTABLE
+
+          Este ejecutable mantiene el mismo nombre en futuras mejoras.
+
+          MOTOR DE CRITERIOS:
+          - Abre Classroom + SIEweb automáticamente.
+          - Lee el contexto real de la libreta abierta.
+          - Si una capacidad CNEB base aún no está materializada en SIEweb, la prepara primero bajo su competencia real.
+          - Después prepara el desempeño precisado bajo esa capacidad.
+          - Usa ID_PROGRAMA y relación padre/hijo, no depende de NIVEL defectuoso.
+          - No escribe notas hasta verificar que los criterios quedaron persistidos.
+          - Si cualquier relación es ambigua, bloquea la escritura.
+
+          PRUEBA ACTUAL:
+          - 2.º B / Matemática / 3 PERIODO / Registro de notas.
+          - SIEROOM_PLAN.json puede permanecer en Descargas o una subcarpeta de Descargas si el agente ya lo detecta allí.
+          - Elige P.
+          - Revisa el preflight y autoriza únicamente la frase exacta mostrada por SIEROOM.
+          "@ | Set-Content -Encoding UTF8 dist/LEEME-PRIMERO.txt
+
+      - name: Upload stable Windows build
+        uses: actions/upload-artifact@v4
+        with:
+          name: SIEROOM-Desktop-Agent-Stable
+          path: |
+            dist/SIEROOM-Desktop-Agent.exe
+            dist/LEEME-PRIMERO.txt
+          if-no-files-found: error
+          retention-days: 14
