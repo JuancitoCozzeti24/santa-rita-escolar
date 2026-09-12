@@ -128,14 +128,15 @@ private fun BootScreen(onEnter: () -> Unit) {
     BoxWithConstraints(
         Modifier.fillMaxSize().background(
             Brush.radialGradient(listOf(Color(0xFF321B3D), Ink), radius = 1100f)
-        ).padding(horizontal = if (maxWidth > 900.dp) 72.dp else 32.dp, vertical = 24.dp)
+        ).padding(horizontal = 32.dp, vertical = 24.dp)
     ) {
-        val titleSize = if (maxWidth > 900.dp) 72.sp else 48.sp
-        val actionWidth = if (maxWidth > 900.dp) .68f else .82f
+        val screenWidth = maxWidth
+        val titleSize = if (screenWidth > 900.dp) 72.sp else 48.sp
+        val actionWidth = if (screenWidth > 900.dp) .68f else .82f
         Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
             Eyebrow("MATH BATTLE")
             Text("DEMUESTRA QUE\nPUEDES LUCHAR!!", color = Color.White, fontSize = titleSize, lineHeight = titleSize, fontWeight = FontWeight.Black, textAlign = TextAlign.Center)
-            Text("¿O te quedarás ahí demostrando qué serás en el futuro?", color = Muted, fontSize = if (maxWidth > 900.dp) 22.sp else 16.sp, modifier = Modifier.padding(12.dp))
+            Text("¿O te quedarás ahí demostrando qué serás en el futuro?", color = Muted, fontSize = if (screenWidth > 900.dp) 22.sp else 16.sp, modifier = Modifier.padding(12.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(22.dp), modifier = Modifier.fillMaxWidth(actionWidth).padding(top = 18.dp)) {
                 ImageAction(R.drawable.enter_battle, "Entraré a la batalla", Modifier.weight(1f)) {
                     MediaPlayer.create(context, R.raw.evil_laugh)?.apply {
