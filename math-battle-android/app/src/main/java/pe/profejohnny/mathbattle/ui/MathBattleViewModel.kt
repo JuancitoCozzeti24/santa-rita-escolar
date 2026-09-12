@@ -49,6 +49,7 @@ data class UiState(
     val countdown: Int = 3,
     val countdownLabel: String = "UN RETADOR ENTRA A LA BATALLA",
     val sectionRank: Int? = null,
+    val rankingSaving: Boolean = false,
     val isAdmin: Boolean = false,
     val lastDurationMs: Long = 0,
     val lastEndedAtMs: Long = 0
@@ -113,6 +114,15 @@ class MathBattleViewModel(private val firebaseReady: Boolean) : ViewModel() {
         }
     }
 
+    fun choosePublicBattle() {
+        viewModelScope.launch {
+            _state.value = _state.value.copy(section = "LIBRE", loading = true, message = null)
+            runCatching { requireNotNull(repository).createPublicProfile() }
+                .onSuccess { _state.value = _state.value.copy(profile = it, section = "LIBRE", loading = false, screen = Screen.AVATAR) }
+                .onFailure { _state.value = _state.value.copy(loading = false, message = friendly(it)) }
+        }
+    }
+
     fun chooseAvatar(avatarId: String) {
         viewModelScope.launch {
             _state.value = _state.value.copy(loading = true, message = null)
@@ -124,7 +134,8 @@ class MathBattleViewModel(private val firebaseReady: Boolean) : ViewModel() {
 
     fun startBattle() {
         viewModelScope.launch {
-            _state.value = _state.value.copy(screen = Screen.COUNTDOWN, countdown = 3, countdownLabel = "UN RETADOR ENTRA A LA BATALLA", sectionRank = null)
+            _state.value = _state.value.copy(screen = Screen.COUNTDOWN, countdown = 0, countdownLabel = "¿ESTÁS LISTO PARA LA BATALLA?", sectionRank = null, rankingSaving = false)
+            delay(1500)
             for (n in 3 downTo 1) { _state.value = _state.value.copy(countdown = n); delay(800) }
             val initial = GameState(startedAt = System.currentTimeMillis())
             _state.value = _state.value.copy(screen = Screen.GAME, game = initial)
@@ -207,7 +218,9 @@ class MathBattleViewModel(private val firebaseReady: Boolean) : ViewModel() {
         _state.value = current.copy(
             screen = Screen.RESULT,
             lastDurationMs = duration,
-            lastEndedAtMs = endedAt
+            lastEndedAtMs = endedAt,
+            rankingSaving = true,
+            message = null
         )
         val g = current.game
         viewModelScope.launch {
@@ -215,7 +228,9 @@ class MathBattleViewModel(private val firebaseReady: Boolean) : ViewModel() {
                 g.score, g.level, g.correct, g.wrong, g.bestStreak,
                 duration, g.startedAt, endedAt, g.sessionId
             )
-            runCatching { repository?.submit(result) }.onSuccess { rank -> _state.value = _state.value.copy(sectionRank = rank) }
+            runCatching { requireNotNull(repository).submit(result) }
+                .onSuccess { rank -> _state.value = _state.value.copy(sectionRank = rank, rankingSaving = false, message = if (rank == null) "El resultado fue recibido, pero todavía no aparece en el ranking." else null) }
+                .onFailure { _state.value = _state.value.copy(rankingSaving = false, message = "No se pudo guardar el resultado: ${friendly(it)}") }
         }
     }
 

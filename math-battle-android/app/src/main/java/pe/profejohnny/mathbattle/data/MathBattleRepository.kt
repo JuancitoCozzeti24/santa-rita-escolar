@@ -21,6 +21,7 @@ class MathBattleRepository(
 ) {
     val currentUid: String? get() = auth.currentUser?.uid
     val currentEmail: String? get() = auth.currentUser?.email
+    val isSignedIn: Boolean get() = auth.currentUser != null
     val isAdmin: Boolean get() = currentEmail.equals(OWNER_EMAIL, ignoreCase = true)
 
     suspend fun loadMyProfile(): StudentProfile? {
@@ -56,6 +57,26 @@ class MathBattleRepository(
             null
         }.await()
         return requireNotNull(loadMyProfile()) { "No se creó el perfil." }
+    }
+
+    suspend fun createPublicProfile(): StudentProfile {
+        val user = requireNotNull(auth.currentUser) { "Debes iniciar sesión." }
+        val uid = user.uid
+        val profileRef = firestore.collection("profiles").document(uid)
+        val existing = profileRef.get().await()
+        if (!existing.exists()) {
+            val googleName = user.displayName?.trim()?.take(40)
+            val publicName = googleName?.takeIf { it.isNotBlank() }
+                ?: user.email?.substringBefore('@')?.take(40)
+                ?: "Jugador"
+            profileRef.set(mapOf(
+                "uid" to uid, "rosterId" to "PUBLIC", "publicName" to publicName,
+                "section" to "LIBRE", "avatarId" to "ninja",
+                "bestScore" to 0, "bestLevel" to 1, "bestAccuracy" to 0, "plays" to 0,
+                "createdAt" to FieldValue.serverTimestamp(), "updatedAt" to FieldValue.serverTimestamp()
+            )).await()
+        }
+        return requireNotNull(loadMyProfile()) { "No se creó el perfil de Batalla Libre." }
     }
 
     suspend fun updateAvatar(avatarId: String): StudentProfile {

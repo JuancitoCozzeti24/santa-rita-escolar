@@ -5,6 +5,7 @@ import android.media.AudioManager
 import android.media.MediaPlayer
 import android.media.ToneGenerator
 import android.net.Uri
+import android.speech.tts.TextToSpeech
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -324,7 +325,9 @@ private fun SectionScreen(state: UiState, viewModel: MathBattleViewModel) {
                     pair.forEach { section -> BattleButton(section.replace("A", ".º A").replace("B", ".º B")) { viewModel.chooseSection(section) } }
                 }
             }
+            BattleButton("🌍 BATALLA LIBRE") { viewModel.choosePublicBattle() }
         }
+        Text("Para familiares y participantes que no pertenecen a un aula. Se usará el nombre de su cuenta de Google.", color = Muted, fontSize = 11.sp, textAlign = TextAlign.Center)
         state.message?.let { Message(it) }
     }
 }
@@ -424,7 +427,7 @@ private fun CountdownScreen(state: UiState) {
         Eyebrow(state.countdownLabel)
         Text(avatarGlyph(state.profile?.avatarId.orEmpty()), fontSize = 68.sp)
         Text("¡Bienvenido, ${state.profile?.publicName.orEmpty()}!", fontSize = 34.sp, fontWeight = FontWeight.Black)
-        Text(state.countdown.toString(), color = Lime, fontSize = 112.sp, fontWeight = FontWeight.Black)
+        Text(if (state.countdown == 0) "⚡" else state.countdown.toString(), color = Lime, fontSize = 112.sp, fontWeight = FontWeight.Black)
     }
 }
 
@@ -582,7 +585,8 @@ private fun ResultScreen(state: UiState, viewModel: MathBattleViewModel) {
             "${formatDuration(state.lastDurationMs)} · ${formatClock(g.startedAt)}–${formatClock(state.lastEndedAtMs)}",
             color = Muted
         )
-        Text(state.sectionRank?.let { "Puesto en tu sección: $it" } ?: "Guardando posición…", color = Purple)
+        Text(when { state.rankingSaving -> "Guardando posición…"; state.sectionRank != null -> "Puesto en ${if (state.profile?.section == "LIBRE") "Batalla Libre" else "tu sección"}: ${state.sectionRank}"; else -> "Resultado no incorporado al ranking" }, color = Purple)
+        state.message?.let { Message(it) }
         FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             BattleButton("¡UNA MÁS!", viewModel::startBattle)
             OutlinedButton(onClick = viewModel::goLobby) { Text("VOLVER") }
@@ -601,7 +605,7 @@ private fun RankingScreen(state: UiState, viewModel: MathBattleViewModel) {
     Column(Modifier.fillMaxSize().padding(30.dp), horizontalAlignment = Alignment.CenterHorizontally) {
         Eyebrow("CLASIFICACIÓN ONLINE")
         Text("Ranking en vivo", fontSize = 42.sp, fontWeight = FontWeight.Black)
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(12.dp)) { listOf("2A", "2B", "5A", "5B").forEach { section -> OutlinedButton(onClick = { viewModel.showRanking(section) }, colors = ButtonDefaults.outlinedButtonColors(contentColor = if (section == state.section) Lime else Color.White)) { Text(section) } } }
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(12.dp)) { listOf("2A", "2B", "5A", "5B", "LIBRE").forEach { section -> OutlinedButton(onClick = { viewModel.showRanking(section) }, colors = ButtonDefaults.outlinedButtonColors(contentColor = if (section == state.section) Lime else Color.White)) { Text(if (section == "LIBRE") "BATALLA LIBRE" else section) } } }
         if (state.isAdmin) {
             OutlinedButton(onClick = { confirmClear = true }, colors = ButtonDefaults.outlinedButtonColors(contentColor = Red)) {
                 Text("REINICIAR RANKING ${state.section}")
@@ -705,6 +709,23 @@ private fun formatDateTime(milliseconds: Long): String =
 @Composable
 private fun BattleAudio(state: UiState) {
     val context = LocalContext.current
+    var speech by remember { mutableStateOf<TextToSpeech?>(null) }
+    DisposableEffect(context) {
+        var engine: TextToSpeech? = null
+        engine = TextToSpeech(context) { status ->
+            if (status == TextToSpeech.SUCCESS) {
+                engine?.language = Locale("es", "PE")
+                engine?.setSpeechRate(1.02f)
+                speech = engine
+            }
+        }
+        onDispose { engine?.stop(); engine?.shutdown(); speech = null }
+    }
+    LaunchedEffect(state.screen, speech) {
+        if (state.screen == Screen.COUNTDOWN && state.countdownLabel.startsWith("¿ESTÁS LISTO")) {
+            speech?.speak("¿Estás listo para la batalla? En tres, dos, uno.", TextToSpeech.QUEUE_FLUSH, null, "battle-countdown")
+        }
+    }
     DisposableEffect(state.screen) {
         val music = if (state.screen == Screen.GAME) MediaPlayer.create(context, R.raw.suspenso_10min)?.apply {
             isLooping = true
@@ -715,8 +736,7 @@ private fun BattleAudio(state: UiState) {
     }
     LaunchedEffect(state.game.selectedChoice) {
         val selected = state.game.selectedChoice ?: return@LaunchedEffect
-        val sound = if (selected == state.game.question.answer) R.raw.buena else R.raw.no
-        MediaPlayer.create(context, sound)?.apply {
+        MediaPlayer.create(context, R.raw.coin)?.apply {
             setOnCompletionListener { it.release() }
             start()
         }

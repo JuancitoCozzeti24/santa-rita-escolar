@@ -23,9 +23,17 @@ service cloud.firestore {
         && request.resource.data.uid == uid
         && request.resource.data.bestScore == 0
         && request.resource.data.plays == 0
-        && getAfter(/databases/$(database)/documents/roster/$(request.resource.data.rosterId)).data.claimedUid == uid
-        && request.resource.data.publicName == getAfter(/databases/$(database)/documents/roster/$(request.resource.data.rosterId)).data.publicName
-        && request.resource.data.section == getAfter(/databases/$(database)/documents/roster/$(request.resource.data.rosterId)).data.section;
+        && (
+          (request.resource.data.rosterId == "PUBLIC"
+            && request.resource.data.section == "LIBRE"
+            && request.resource.data.publicName is string
+            && request.resource.data.publicName.size() > 0
+            && request.resource.data.publicName.size() <= 40)
+          ||
+          (getAfter(/databases/$(database)/documents/roster/$(request.resource.data.rosterId)).data.claimedUid == uid
+            && request.resource.data.publicName == getAfter(/databases/$(database)/documents/roster/$(request.resource.data.rosterId)).data.publicName
+            && request.resource.data.section == getAfter(/databases/$(database)/documents/roster/$(request.resource.data.rosterId)).data.section)
+        );
       allow update: if signedIn() && uid == request.auth.uid;
       allow delete: if owner();
     }
