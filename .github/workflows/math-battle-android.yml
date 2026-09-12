@@ -10,7 +10,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
     env:
       HAS_RELEASE_KEY: ${{ secrets.MATH_BATTLE_KEYSTORE_BASE64 }}
     steps:
@@ -58,6 +58,16 @@ jobs:
         with:
           name: math-battle-release-unsigned
           path: math-battle-android/app/build/outputs/apk/release/app-release-unsigned.apk
+      - name: Publish downloadable preview APKs
+        if: ${{ github.event_name == 'push' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp math-battle-android/app/build/outputs/apk/debug/app-debug.apk /tmp/Math-Battle-v1.0.0-debug.apk
+          cp math-battle-android/app/build/outputs/apk/release/app-release-unsigned.apk /tmp/Math-Battle-v1.0.0-release-unsigned.apk
+          gh release view math-battle-preview >/dev/null 2>&1 && \
+            gh release upload math-battle-preview /tmp/Math-Battle-v1.0.0-debug.apk /tmp/Math-Battle-v1.0.0-release-unsigned.apk --clobber || \
+            gh release create math-battle-preview /tmp/Math-Battle-v1.0.0-debug.apk /tmp/Math-Battle-v1.0.0-release-unsigned.apk --prerelease --target "$GITHUB_SHA" --title "Math Battle · versión preliminar" --notes "Compilación técnica para pruebas. Firebase todavía debe configurarse antes de distribuirla a estudiantes."
       - uses: actions/upload-artifact@v4
         if: ${{ env.HAS_RELEASE_KEY != '' }}
         with:
