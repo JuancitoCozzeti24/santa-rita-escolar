@@ -17,7 +17,10 @@ val firebase = Properties().apply {
 }
 
 fun configured(name: String): String =
-    (System.getenv(name) ?: local.getProperty(name) ?: firebase.getProperty(name) ?: "")
+    (System.getenv(name).takeUnless { it.isNullOrBlank() }
+        ?: local.getProperty(name).takeUnless { it.isNullOrBlank() }
+        ?: firebase.getProperty(name)
+        ?: "")
         .replace("\\", "\\\\").replace("\"", "\\\"")
 
 android {
