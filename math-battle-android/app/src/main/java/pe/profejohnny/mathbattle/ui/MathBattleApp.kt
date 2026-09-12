@@ -6,6 +6,8 @@ import android.media.MediaPlayer
 import android.media.ToneGenerator
 import android.net.Uri
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateDpAsState
@@ -276,6 +278,19 @@ private fun SignInScreen(state: UiState, viewModel: MathBattleViewModel) {
     val context = LocalContext.current
     val activity = context as Activity
     val scope = rememberCoroutineScope()
+    val auth = remember(activity) { GoogleAuthManager(activity) }
+    val googleLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        scope.launch {
+            auth.completeSignIn(result.data)
+                .onSuccess { viewModel.signedIn() }
+                .onFailure { error ->
+                    viewModel.authFailed(
+                        if (error is TimeoutCancellationException) "Google tardó demasiado en responder. Revisa Internet y vuelve a intentarlo."
+                        else "No se pudo completar el acceso de Google. Selecciona una cuenta e inténtalo nuevamente."
+                    )
+                }
+        }
+    }
     CenterCard {
         Eyebrow("IDENTIDAD SEGURA")
         Text("Entra con Google", style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.Black)
@@ -286,16 +301,7 @@ private fun SignInScreen(state: UiState, viewModel: MathBattleViewModel) {
         } else {
             Button(onClick = {
                 viewModel.setLoading()
-                scope.launch {
-                    GoogleAuthManager(activity).signIn()
-                        .onSuccess { viewModel.signedIn() }
-                        .onFailure { error ->
-                            viewModel.authFailed(
-                                if (error is TimeoutCancellationException) "Google tardó demasiado en responder. Revisa Internet y vuelve a intentarlo."
-                                else "No se pudo abrir el acceso de Google. Verifica que el dispositivo tenga una cuenta Google activa e inténtalo nuevamente."
-                            )
-                        }
-                }
+                googleLauncher.launch(auth.signInIntent())
             }, modifier = Modifier.fillMaxWidth(.82f).heightIn(min = 48.dp)) {
                 Text("CONTINUAR CON GOOGLE", fontWeight = FontWeight.Bold, fontSize = 13.sp, maxLines = 1)
             }
