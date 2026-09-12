@@ -1,0 +1,100 @@
+name: Build SIEROOM Desktop Agent EXE
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - sieroom-desktop-agent-v0.1
+      - sieroom-desktop-agent-v0.1-rc15-code
+    paths:
+      - "desktop_agent/**"
+      - "sieweb.py"
+      - "config.py"
+      - ".github/workflows/build-sieroom-desktop-agent.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: "pip"
+          cache-dependency-path: desktop_agent/requirements.txt
+
+      - name: Install build dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r desktop_agent/requirements.txt
+          python -m pip install "pyinstaller>=6.15,<7"
+
+      - name: Validate Python sources
+        shell: pwsh
+        run: |
+          python -m py_compile sieweb.py config.py desktop_agent/main.py desktop_agent/browser_controller.py desktop_agent/semantic_inspector.py desktop_agent/gradebook_mapper.py desktop_agent/grade_cell_mapper.py desktop_agent/grade_cell_mapper_rc2.py desktop_agent/grade_cell_mapper_rc3.py desktop_agent/grade_cell_probe.py desktop_agent/editor_open_probe.py desktop_agent/launcher_v100rc1.py desktop_agent/launcher_v100rc2.py desktop_agent/launcher_v100rc3.py desktop_agent/verified_writer_bridge.py desktop_agent/launcher_v100rc4.py desktop_agent/browser_auth_rc5.py desktop_agent/launcher_v100rc5.py desktop_agent/launcher_v100rc6.py desktop_agent/launcher_v100rc7.py desktop_agent/launcher_v100rc8.py desktop_agent/launcher_v100rc9.py desktop_agent/launcher_v100rc10.py desktop_agent/launcher_v100rc11.py desktop_agent/launcher_v100rc12.py desktop_agent/launcher_v100rc13.py desktop_agent/launcher_v100rc14.py desktop_agent/performance_plan.py desktop_agent/launcher_v100rc15.py desktop_agent/performance_plan_rc16.py desktop_agent/launcher_v100rc16.py desktop_agent/capacity_resolver_rc17.py desktop_agent/launcher_v100rc17.py desktop_agent/performance_plan_rc18.py desktop_agent/launcher_v100rc18.py desktop_agent/browser_startup_rc19.py desktop_agent/launcher_v100rc19.py desktop_agent/criteria_hierarchy_rc20.py desktop_agent/launcher_v100rc20.py desktop_agent/criteria_raw_rc21.py desktop_agent/launcher_v100rc21.py
+
+      - name: Build executable
+        shell: pwsh
+        run: |
+          pyinstaller `
+            --noconfirm `
+            --clean `
+            --onefile `
+            --console `
+            --name "SIEROOM-Desktop-Agent-v1.0-RC21" `
+            --paths . `
+            --paths desktop_agent `
+            --collect-all playwright `
+            desktop_agent/launcher_v100rc21.py
+
+      - name: Verify executable exists
+        shell: pwsh
+        run: |
+          $exe = "dist/SIEROOM-Desktop-Agent-v1.0-RC21.exe"
+          if (-not (Test-Path $exe)) {
+            throw "No se generó $exe"
+          }
+          $item = Get-Item $exe
+          Write-Host "EXE generado: $($item.FullName)"
+          Write-Host "Tamaño: $($item.Length) bytes"
+
+      - name: Add quick-start file
+        shell: pwsh
+        run: |
+          @"
+          SIEROOM Desktop Agent v1.0 RC21 - RESOLUCION CRUDA DE CRITERIOS
+
+          CAMBIO RC21:
+          - Conserva arranque automático Classroom + SIEweb.
+          - Deja de depender de NIVEL=2/3 y de resCriterios.children.
+          - Combina toda la respuesta cruda de dataInicialPesosCriterios con get_gradebook_summary().criteria.
+          - Localiza capacidades por descripción + ID real, igual que la lógica histórica del complemento.
+          - Localiza desempeños por descripción exacta + parent ID cuando está disponible.
+          - Si hay ambigüedad, bloquea antes de escribir.
+
+          PRUEBA:
+          - Mantén SIEweb en 2.º B / Matemática / 3 PERIODO / Registro de notas.
+          - Conserva SIEROOM_PLAN.json en Descargas.
+          - Ejecuta RC21 y elige P.
+          - Si aparece CREAR DESEMPENOS N, todavía no lo autorices: revisa primero el preflight.
+          "@ | Set-Content -Encoding UTF8 dist/LEEME-PRIMERO.txt
+
+      - name: Upload Windows build
+        uses: actions/upload-artifact@v4
+        with:
+          name: SIEROOM-Desktop-Agent-Windows-v1.0-RC21
+          path: |
+            dist/SIEROOM-Desktop-Agent-v1.0-RC21.exe
+            dist/LEEME-PRIMERO.txt
+          if-no-files-found: error
+          retention-days: 14
