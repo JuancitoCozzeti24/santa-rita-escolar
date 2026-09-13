@@ -60,6 +60,7 @@ class MathBattleViewModel(private val firebaseReady: Boolean) : ViewModel() {
     private val _state = MutableStateFlow(UiState(firebaseReady = firebaseReady))
     val state: StateFlow<UiState> = _state.asStateFlow()
     private var timer: Job? = null
+    private var rankingRefresh: Job? = null
 
     fun enterBattle() { _state.value = _state.value.copy(screen = Screen.INTRO) }
     fun introFinished() {
@@ -245,15 +246,19 @@ class MathBattleViewModel(private val firebaseReady: Boolean) : ViewModel() {
     }
 
     fun showRanking(section: String = _state.value.profile?.section ?: _state.value.section) {
-        viewModelScope.launch {
+        rankingRefresh?.cancel()
+        rankingRefresh = viewModelScope.launch {
             _state.value = _state.value.copy(screen = Screen.RANKING, section = section, loading = true, message = null)
-            runCatching { requireNotNull(repository).ranking(section) }
-                .onSuccess { _state.value = _state.value.copy(ranking = it, loading = false) }
-                .onFailure { _state.value = _state.value.copy(loading = false, message = friendly(it)) }
+            while (isActive && _state.value.screen == Screen.RANKING && _state.value.section == section) {
+                runCatching { requireNotNull(repository).ranking(section) }
+                    .onSuccess { _state.value = _state.value.copy(ranking = it, loading = false, message = null) }
+                    .onFailure { _state.value = _state.value.copy(loading = false, message = friendly(it)) }
+                delay(2_000)
+            }
         }
     }
 
-    fun goLobby() { timer?.cancel(); _state.value = _state.value.copy(screen = Screen.LOBBY, message = null) }
+    fun goLobby() { timer?.cancel(); rankingRefresh?.cancel(); _state.value = _state.value.copy(screen = Screen.LOBBY, message = null) }
     fun deleteRankingEntry(uid: String) {
         viewModelScope.launch {
             _state.value = _state.value.copy(loading = true, message = null)
@@ -270,8 +275,8 @@ class MathBattleViewModel(private val firebaseReady: Boolean) : ViewModel() {
                 .onFailure { _state.value = _state.value.copy(loading = false, message = friendly(it)) }
         }
     }
-    fun goSections() { _state.value = _state.value.copy(screen = Screen.SECTION, message = null) }
-    fun signOut() { timer?.cancel(); repository?.signOut(); _state.value = UiState(screen = Screen.SIGN_IN, firebaseReady = firebaseReady) }
+    fun goSections() { rankingRefresh?.cancel(); _state.value = _state.value.copy(screen = Screen.SECTION, message = null) }
+    fun signOut() { timer?.cancel(); rankingRefresh?.cancel(); repository?.signOut(); _state.value = UiState(screen = Screen.SIGN_IN, firebaseReady = firebaseReady) }
     fun clearMessage() { _state.value = _state.value.copy(message = null) }
     fun onAppPaused() { if (_state.value.screen == Screen.GAME) finishBattle() }
 

@@ -435,7 +435,7 @@ private fun CountdownScreen(state: UiState) {
 private fun GameScreen(state: UiState, viewModel: MathBattleViewModel) {
     val game = state.game
     val rule = GameEngine.levels[game.level - 1]
-    val danger = game.remaining < rule.capSeconds * .3
+    val danger = game.remaining <= rule.capSeconds * .1
     val pulse = rememberInfiniteTransition(label = "neonTimer").animateFloat(
         initialValue = .35f,
         targetValue = 1f,
@@ -734,6 +734,30 @@ private fun BattleAudio(state: UiState) {
             start()
         } else null
         onDispose { music?.stop(); music?.release() }
+    }
+    LaunchedEffect(state.screen, state.game.sessionId) {
+        if (state.screen != Screen.GAME) return@LaunchedEffect
+        while (true) {
+            kotlinx.coroutines.delay(10_000)
+            MediaPlayer.create(context, R.raw.oneup)?.apply {
+                setOnCompletionListener { it.release() }
+                start()
+            }
+        }
+    }
+    val danger = state.screen == Screen.GAME &&
+        state.game.remaining <= GameEngine.levels[state.game.level - 1].capSeconds * .1
+    LaunchedEffect(danger, state.game.sessionId) {
+        if (!danger) return@LaunchedEffect
+        val tick = ToneGenerator(AudioManager.STREAM_MUSIC, 45)
+        try {
+            while (true) {
+                tick.startTone(ToneGenerator.TONE_PROP_BEEP, 45)
+                kotlinx.coroutines.delay(210)
+            }
+        } finally {
+            tick.release()
+        }
     }
     LaunchedEffect(state.game.selectedChoice) {
         val selected = state.game.selectedChoice ?: return@LaunchedEffect

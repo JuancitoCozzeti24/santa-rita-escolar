@@ -18,8 +18,7 @@ service cloud.firestore {
 
     match /profiles/{uid} {
       allow read: if signedIn() && (uid == request.auth.uid || owner());
-      allow create: if signedIn()
-        && uid == request.auth.uid
+      allow create: if signedIn() && uid == request.auth.uid
         && request.resource.data.uid == uid
         && request.resource.data.bestScore == 0
         && request.resource.data.plays == 0
@@ -47,9 +46,7 @@ service cloud.firestore {
       allow read: if signedIn();
       allow create, update: if signedIn()
         && uid == request.auth.uid
-        && request.resource.data.uid == uid
-        && request.resource.data.publicName == get(/databases/$(database)/documents/profiles/$(uid)).data.publicName
-        && request.resource.data.section == get(/databases/$(database)/documents/profiles/$(uid)).data.section;
+        && request.resource.data.uid == request.auth.uid;
       allow delete: if owner();
     }
 
