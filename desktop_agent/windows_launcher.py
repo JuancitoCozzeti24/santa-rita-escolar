@@ -132,7 +132,7 @@ def main() -> None:
     load_dotenv(app_dir / ".env")
     load_dotenv()
     print("=" * 62)
-    print("SIEROOM DESKTOP AGENT v0.3 — CLASSROOM")
+    print("SIEROOM DESKTOP AGENT v0.4 — CLASSROOM")
     print("=" * 62)
     print("Esta versión primero revisa y NO escribe nada sin tu autorización.")
     if not _configured(app_dir):
