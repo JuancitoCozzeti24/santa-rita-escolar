@@ -55,6 +55,7 @@ class VisionPlanner:
                             "title": observation.title,
                             "viewport": observation.viewport,
                             "recent_history": history[-8:],
+                            "output_format": "Responde exclusivamente con un objeto JSON válido.",
                         }, ensure_ascii=False)},
                         {"type": "input_image", "image_url": f"data:image/jpeg;base64,{observation.screenshot_b64}"},
                     ],

@@ -92,6 +92,7 @@ class SubmissionReviewer:
                 },
                 "teacher_criteria_or_expected_work": criteria,
                 "important": "Si falta evidencia o algo es ilegible, decláralo; no lo reconstruyas.",
+                "output_format": "Responde exclusivamente con un objeto JSON válido.",
             }, ensure_ascii=False),
         }]
         self._append_assignment_materials(content, coursework, max_pages_per_file)

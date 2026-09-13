@@ -106,6 +106,9 @@ def main() -> None:
             except Exception as exc:
                 journal.transition(cached.key, "failed", {"error": str(exc)})
                 print(f"ERROR de revisión: {student.student_name}: {exc}")
+                if "OpenAI HTTP 4" in str(exc) or "desktop_unauthorized" in str(exc):
+                    print("Error general del servicio. Se detuvo el lote para no repetir el mismo fallo.")
+                    break
                 continue
             journal.transition(cached.key, "completed", review.public())
             print(f"REVISADO: {student.student_name} — {review.score}/20 ({review.level})")
