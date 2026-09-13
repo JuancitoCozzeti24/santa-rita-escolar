@@ -67,7 +67,17 @@ def main() -> None:
     flow = ClassroomFlow(classroom, journal)
     batch = flow.prepare(args.course, args.task)
     summary = flow.batch_summary(batch)
-    print(json.dumps({k: v for k, v in summary.items() if k != "students"}, ensure_ascii=False, indent=2))
+    print("\n" + "=" * 62)
+    print(f"CURSO: {batch.course.get('name') or ''} — {batch.course.get('section') or ''}")
+    print(f"TAREA: {batch.coursework.get('title') or ''}")
+    print(f"ESTUDIANTES EN EL PADRÓN: {summary['roster_count']}")
+    print(f"ENTREGAS CON ARCHIVO: {summary['with_attachments']}")
+    print(f"REGISTROS SIN ARCHIVO: {len(summary['without_attachments'])}")
+    print(f"SIN REGISTRO EN CLASSROOM: {len(summary['without_submission'])}")
+    print("=" * 62)
+    if summary["with_attachments"] == 0:
+        print("No hay archivos entregados para revisar en esta tarea. No se modificó Classroom.")
+        return
 
     criteria = Path(args.criteria_file).read_text(encoding="utf-8") if args.criteria_file else ""
     reviews: list[tuple[StudentWork, StudentReview]] = []

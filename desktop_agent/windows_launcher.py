@@ -150,17 +150,9 @@ def main() -> None:
         print(f"No se pudieron cargar los cursos y tareas: {exc}")
         _pause()
         return
-    criteria = input("Ruta del solucionario/criterios TXT (opcional): ").strip().strip('"')
-    if criteria and not Path(criteria).is_file():
-        print(f"No se encontró el archivo de criterios: {criteria}")
-        _pause()
-        return
-
     from desktop_agent.classroom_cli import main as classroom_main
 
     command = ["sieroom-classroom", "--course", course, "--task", task]
-    if criteria:
-        command.extend(["--criteria-file", criteria])
     try:
         sys.argv = command
         classroom_main()

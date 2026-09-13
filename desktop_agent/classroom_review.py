@@ -4,6 +4,7 @@ from dataclasses import dataclass, asdict
 from typing import Any, TYPE_CHECKING
 import base64
 import json
+from io import BytesIO
 
 from .settings import DesktopSettings
 
@@ -46,6 +47,7 @@ class StudentReview:
 
 
 REVIEW_INSTRUCTIONS = """Actúa como docente peruano de Matemática y evalúa únicamente la evidencia visible.
+Resuelve por ti mismo los ejercicios del enunciado original antes de contrastar la respuesta del estudiante.
 Revisa ejercicio por ejercicio: planteamiento, procedimiento, operaciones, unidades, representación,
 justificación y respuesta. Da crédito parcial a procedimientos pertinentes. Distingue error conceptual,
 procedimental, aritmético, notación, incompleto o falta de evidencia. No inventes contenido ilegible.
@@ -92,6 +94,7 @@ class SubmissionReviewer:
                 "important": "Si falta evidencia o algo es ilegible, decláralo; no lo reconstruyas.",
             }, ensure_ascii=False),
         }]
+        self._append_assignment_materials(content, coursework, max_pages_per_file)
         evidence_files: list[str] = []
         for row in attachments["attachments"]:
             index = int(row["index"])
@@ -140,6 +143,64 @@ class SubmissionReviewer:
             raise RuntimeError(f"OpenAI HTTP {response.status_code}: {response.text[:700]}")
         raw = json.loads(self._output_text(response.json()))
         return self._validate(raw, tuple(evidence_files))
+
+    def _append_assignment_materials(
+        self, content: list[dict[str, Any]], coursework: dict[str, Any], max_pages: int
+    ) -> None:
+        """Añade los enunciados originales para que el modelo pueda resolverlos y comparar."""
+        materials = list(coursework.get("materials") or [])
+        if not materials:
+            content.append({
+                "type": "input_text",
+                "text": "La tarea no tiene material original adjunto; usa únicamente el enunciado y la evidencia legible.",
+            })
+            return
+        for index, material in enumerate(materials, 1):
+            wrapped = material.get("driveFile") or {}
+            drive = wrapped.get("driveFile") or wrapped
+            file_id = str(drive.get("id") or "")
+            title = str(drive.get("title") or f"material-{index}")
+            if file_id:
+                try:
+                    meta, data, mime_type = self.classroom.download_drive_file(file_id)
+                    title = str(meta.get("name") or title)
+                    images = self._render_reference(data, mime_type, title, max_pages)
+                except Exception as exc:
+                    content.append({
+                        "type": "input_text",
+                        "text": f"No se pudo leer el material original {title}: {exc}. No inventes su contenido.",
+                    })
+                    continue
+                content.append({"type": "input_text", "text": f"ENUNCIADO ORIGINAL {index}: {title}"})
+                for image in images:
+                    content.append({
+                        "type": "input_image",
+                        "image_url": "data:image/png;base64," + base64.b64encode(image).decode("ascii"),
+                    })
+            elif material.get("link"):
+                content.append({
+                    "type": "input_text",
+                    "text": f"MATERIAL ORIGINAL ENLAZADO: {(material.get('link') or {}).get('url') or ''}",
+                })
+
+    @staticmethod
+    def _render_reference(data: bytes, mime_type: str, name: str, max_pages: int) -> list[bytes]:
+        if mime_type.startswith("image/"):
+            from PIL import Image
+            out = BytesIO()
+            image = Image.open(BytesIO(data)).convert("RGB")
+            image.thumbnail((1800, 1800))
+            image.save(out, format="PNG", optimize=True)
+            return [out.getvalue()]
+        if mime_type == "application/pdf" or name.lower().endswith(".pdf"):
+            import fitz
+            document = fitz.open(stream=data, filetype="pdf")
+            images: list[bytes] = []
+            for page in document[:max_pages]:
+                scale = min(1800 / max(page.rect.width, page.rect.height), 3.0)
+                images.append(page.get_pixmap(matrix=fitz.Matrix(scale, scale), alpha=False).tobytes("png"))
+            return images
+        return []
 
     @staticmethod
     def _output_text(data: dict[str, Any]) -> str:
