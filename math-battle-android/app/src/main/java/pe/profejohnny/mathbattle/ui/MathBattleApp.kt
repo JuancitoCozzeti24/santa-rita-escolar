@@ -735,10 +735,8 @@ private fun BattleAudio(state: UiState) {
         } else null
         onDispose { music?.stop(); music?.release() }
     }
-    LaunchedEffect(state.screen, state.game.sessionId) {
-        if (state.screen != Screen.GAME) return@LaunchedEffect
-        while (true) {
-            kotlinx.coroutines.delay(10_000)
+    LaunchedEffect(state.game.score, state.game.sessionId) {
+        if (state.game.score > 0 && state.game.score % 10 == 0) {
             MediaPlayer.create(context, R.raw.oneup)?.apply {
                 setOnCompletionListener { it.release() }
                 start()
