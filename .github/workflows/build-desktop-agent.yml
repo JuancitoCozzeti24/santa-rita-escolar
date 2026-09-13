@@ -4,7 +4,6 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - main
       - feat/desktop-agent-visual-first
     paths:
       - "desktop_agent/**"
@@ -36,6 +35,7 @@ jobs:
           --name SIEROOM-Desktop-Agent-CLASSROOM-TEST
           --collect-all playwright
           --collect-all fitz
+          --collect-all keyring
           --hidden-import PIL
           --hidden-import docx
           --hidden-import openpyxl

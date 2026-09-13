@@ -4,6 +4,7 @@ from pathlib import Path
 from getpass import getpass
 import os
 import sys
+import json
 
 from dotenv import load_dotenv
 
@@ -13,10 +14,52 @@ def _pause() -> None:
 
 
 DEFAULT_BACKEND = "https://santa-rita-escolar-tcpb.onrender.com"
+KEYRING_SERVICE = "SieRoom Desktop Agent"
+KEYRING_USER = "backend-secret"
+
+
+def _windows_config_dir() -> Path:
+    root = Path(os.getenv("LOCALAPPDATA") or (Path.home() / "AppData" / "Local"))
+    return root / "SieRoom Desktop Agent"
+
+
+def _load_saved_connection() -> bool:
+    try:
+        import keyring
+        config_path = _windows_config_dir() / "settings.json"
+        if not config_path.is_file():
+            return False
+        data = json.loads(config_path.read_text(encoding="utf-8"))
+        backend_url = str(data.get("backend_url") or "").rstrip("/")
+        secret = str(keyring.get_password(KEYRING_SERVICE, KEYRING_USER) or "")
+        if not backend_url or not secret:
+            return False
+        os.environ["SIEROOM_BACKEND_URL"] = backend_url
+        os.environ["SIEROOM_BACKEND_SECRET"] = secret
+        return True
+    except Exception:
+        return False
+
+
+def _save_connection(backend_url: str, secret: str) -> None:
+    import keyring
+    config_dir = _windows_config_dir()
+    config_dir.mkdir(parents=True, exist_ok=True)
+    (config_dir / "settings.json").write_text(
+        json.dumps({"backend_url": backend_url.rstrip("/")}, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    keyring.set_password(KEYRING_SERVICE, KEYRING_USER, secret)
 
 
 def _configured(app_dir: Path) -> bool:
+    if _load_saved_connection():
+        return True
     if os.getenv("SIEROOM_BACKEND_URL") and os.getenv("SIEROOM_BACKEND_SECRET"):
+        try:
+            _save_connection(os.environ["SIEROOM_BACKEND_URL"], os.environ["SIEROOM_BACKEND_SECRET"])
+        except Exception:
+            pass
         return True
     required = {
         "OPENAI_API_KEY": os.getenv("OPENAI_API_KEY"),
@@ -49,14 +92,10 @@ def _configured(app_dir: Path) -> bool:
     except Exception as exc:
         print(f"No se pudo comprobar la conexión con SieRoom: {exc}")
         return False
-    env_path = app_dir / ".env"
-    env_path.write_text(
-        f"SIEROOM_BACKEND_URL={backend_url.rstrip('/')}\nSIEROOM_BACKEND_SECRET={secret}\n",
-        encoding="utf-8",
-    )
+    _save_connection(backend_url, secret)
     os.environ["SIEROOM_BACKEND_URL"] = backend_url.rstrip("/")
     os.environ["SIEROOM_BACKEND_SECRET"] = secret
-    print("Conexión verificada y guardada únicamente en esta computadora.")
+    print("Conexión verificada. El secreto quedó protegido en las credenciales de Windows.")
     return True
 
 
