@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from getpass import getpass
 import os
 import sys
 
@@ -11,7 +12,12 @@ def _pause() -> None:
     input("\nPresiona Enter para cerrar...")
 
 
-def _configured() -> bool:
+DEFAULT_BACKEND = "https://santa-rita-escolar-tcpb.onrender.com"
+
+
+def _configured(app_dir: Path) -> bool:
+    if os.getenv("SIEROOM_BACKEND_URL") and os.getenv("SIEROOM_BACKEND_SECRET"):
+        return True
     required = {
         "OPENAI_API_KEY": os.getenv("OPENAI_API_KEY"),
         "GOOGLE_CLIENT_ID": os.getenv("GOOGLE_CLIENT_ID"),
@@ -19,10 +25,38 @@ def _configured() -> bool:
         "GOOGLE_REFRESH_TOKEN": os.getenv("GOOGLE_REFRESH_TOKEN"),
     }
     missing = [name for name, value in required.items() if not value]
-    if missing:
-        print("Falta configuración local: " + ", ".join(missing))
-        print("Crea un archivo .env junto al EXE. Consulta DESKTOP_AGENT.md.")
+    if not missing:
+        return True
+
+    print("Conectaremos este EXE con tu SieRoom de Render.")
+    backend_url = input(f"Dirección de SieRoom [{DEFAULT_BACKEND}]: ").strip() or DEFAULT_BACKEND
+    secret = getpass("Secreto del complemento SieRoom (no se mostrará): ").strip()
+    if not secret:
+        print("El secreto de conexión no puede estar vacío.")
         return False
+    try:
+        from desktop_agent.backend import BackendConnection
+        from desktop_agent.settings import DesktopSettings
+        probe = DesktopSettings(
+            data_dir=app_dir / ".sieroom", classroom_url="https://classroom.google.com/",
+            cieweb_url="https://santaritadecasia.sieweb.com.pe", model="gpt-5.1",
+            openai_api_key="", backend_url=backend_url.rstrip("/"), backend_secret=secret,
+        )
+        status = BackendConnection(probe).status()
+        if not status.get("classroom_configured") or not status.get("openai_configured"):
+            print("Render respondió, pero todavía no tiene Google u OpenAI completamente configurado.")
+            return False
+    except Exception as exc:
+        print(f"No se pudo comprobar la conexión con SieRoom: {exc}")
+        return False
+    env_path = app_dir / ".env"
+    env_path.write_text(
+        f"SIEROOM_BACKEND_URL={backend_url.rstrip('/')}\nSIEROOM_BACKEND_SECRET={secret}\n",
+        encoding="utf-8",
+    )
+    os.environ["SIEROOM_BACKEND_URL"] = backend_url.rstrip("/")
+    os.environ["SIEROOM_BACKEND_SECRET"] = secret
+    print("Conexión verificada y guardada únicamente en esta computadora.")
     return True
 
 
@@ -34,7 +68,7 @@ def main() -> None:
     print("SIEROOM DESKTOP AGENT — PRUEBA DE CLASSROOM")
     print("=" * 62)
     print("Esta versión primero revisa y NO escribe nada sin tu autorización.")
-    if not _configured():
+    if not _configured(app_dir):
         _pause()
         return
 

@@ -24,7 +24,11 @@ class AgentRunner:
     def run_with_browser(self, browser: SchoolBrowser, tab: str, goal: str, max_steps: int = 80) -> None:
         history: list[dict[str, object]] = []
         pending_key: str | None = None
-        planner = VisionPlanner(self.settings)
+        if self.settings.backend_url:
+            from .backend import BackendConnection, BackendVisionPlanner
+            planner = BackendVisionPlanner(BackendConnection(self.settings))
+        else:
+            planner = VisionPlanner(self.settings)
         for step in range(1, max_steps + 1):
             observation = browser.observe(tab)
             decision = planner.decide(goal, observation, history)

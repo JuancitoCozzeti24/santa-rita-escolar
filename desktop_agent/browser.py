@@ -1,21 +1,12 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 import base64
 
 from playwright.sync_api import BrowserContext, Error, Page, Playwright, sync_playwright
 
 from .settings import DesktopSettings
-
-
-@dataclass(frozen=True)
-class Observation:
-    url: str
-    title: str
-    screenshot_b64: str
-    viewport: dict[str, int]
+from .observation import Observation
 
 
 class SchoolBrowser:

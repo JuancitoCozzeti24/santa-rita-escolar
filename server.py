@@ -19,6 +19,7 @@ from server_core import *  # noqa: F401,F403
 from attendance import install as install_attendance
 from profe_johnny_brain import install as install_profe_johnny_brain
 from battle_accounts import install as install_battle_accounts
+from desktop_api import install as install_desktop_api
 
 
 PRIVATE_FEEDBACK_POLICY = """
@@ -393,6 +394,7 @@ def classroom_delete_private_comment(
 
 
 install_battle_accounts(mcp)
+install_desktop_api(mcp, classroom)
 install_profe_johnny_brain(mcp)
 install_attendance(mcp, sieweb, settings, classroom)
 setattr(mcp, "_sieroom_attendance_installed", True)

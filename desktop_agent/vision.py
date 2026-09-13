@@ -5,7 +5,7 @@ from typing import Any
 import json
 import requests
 
-from .browser import Observation
+from .observation import Observation
 from .settings import DesktopSettings
 
 

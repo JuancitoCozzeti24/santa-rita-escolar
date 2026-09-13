@@ -12,6 +12,8 @@ class DesktopSettings:
     cieweb_url: str
     model: str
     openai_api_key: str
+    backend_url: str = ""
+    backend_secret: str = ""
     headless: bool = False
 
     @classmethod
@@ -23,5 +25,7 @@ class DesktopSettings:
             cieweb_url=os.getenv("SIEROOM_CIEWEB_URL", "https://www.sieweb.com.pe/"),
             model=os.getenv("SIEROOM_VISION_MODEL", "gpt-5.1"),
             openai_api_key=os.getenv("OPENAI_API_KEY", ""),
+            backend_url=os.getenv("SIEROOM_BACKEND_URL", "").rstrip("/"),
+            backend_secret=os.getenv("SIEROOM_BACKEND_SECRET", ""),
             headless=os.getenv("SIEROOM_HEADLESS", "0").strip() == "1",
         )

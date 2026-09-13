@@ -55,14 +55,21 @@ def main() -> None:
     settings = DesktopSettings.from_env()
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     journal = OperationJournal(settings.data_dir / "operations.sqlite3")
-    classroom = ClassroomClient()
+    if settings.backend_url:
+        from .backend import BackendClassroomClient, BackendConnection, BackendReviewer
+        connection = BackendConnection(settings)
+        connection.status()
+        classroom = BackendClassroomClient(connection)
+        reviewer = BackendReviewer(connection)
+    else:
+        classroom = ClassroomClient()
+        reviewer = SubmissionReviewer(settings, classroom)
     flow = ClassroomFlow(classroom, journal)
     batch = flow.prepare(args.course, args.task)
     summary = flow.batch_summary(batch)
     print(json.dumps({k: v for k, v in summary.items() if k != "students"}, ensure_ascii=False, indent=2))
 
     criteria = Path(args.criteria_file).read_text(encoding="utf-8") if args.criteria_file else ""
-    reviewer = SubmissionReviewer(settings, classroom)
     reviews: list[tuple[StudentWork, StudentReview]] = []
     for student in batch.students:
         if student.attachment_count == 0:

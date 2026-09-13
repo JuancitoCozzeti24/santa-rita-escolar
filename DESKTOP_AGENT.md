@@ -74,4 +74,7 @@ GOOGLE_REFRESH_TOKEN=...
 SIEROOM_CIEWEB_URL=https://URL-REAL-DEL-COLEGIO/
 ```
 
-No se deben subir estas credenciales a GitHub ni enviarlas dentro del EXE.
+La compilación nueva muestra un asistente y permite reutilizar el backend de SieRoom con solo
+`SIEROOM_BACKEND_URL` y `SIEROOM_BACKEND_SECRET`. El secreto es el mismo configurado en el complemento
+Classroom Bridge y se guarda únicamente en un `.env` local. Las cuatro credenciales anteriores quedan como
+modo alternativo para desarrollo. No se deben subir credenciales a GitHub ni enviarlas dentro del EXE.
