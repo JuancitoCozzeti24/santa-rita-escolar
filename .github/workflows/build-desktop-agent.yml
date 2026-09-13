@@ -4,6 +4,7 @@ on:
   workflow_dispatch:
   push:
     branches:
+      - main
       - feat/desktop-agent-visual-first
     paths:
       - "desktop_agent/**"
