@@ -3,7 +3,7 @@ from tempfile import TemporaryDirectory
 import unittest
 
 from desktop_agent.classroom_flow import ClassroomFlow
-from desktop_agent.classroom_review import ExerciseFinding, StudentReview
+from desktop_agent.classroom_review import ExerciseFinding, StudentReview, SubmissionReviewer
 from desktop_agent.journal import OperationJournal
 
 
@@ -71,6 +71,31 @@ def review() -> StudentReview:
 
 
 class ClassroomFlowTests(unittest.TestCase):
+    def test_feedback_is_built_locally_with_required_structure(self) -> None:
+        normalized = review().normalized_for("LUCÍA CAROLINA RODRÍGUEZ ALFARO")
+        self.assertTrue(normalized.feedback.startswith("Lucía,"))
+        self.assertIn("Lo que hiciste bien:", normalized.feedback)
+        self.assertIn("Lo que debes mejorar:", normalized.feedback)
+        self.assertIn("Pregunta 1:", normalized.feedback)
+        self.assertIn("Sugerencia:", normalized.feedback)
+        self.assertIn("Nota cuantitativa: 17/20", normalized.feedback)
+        self.assertIn("Nota cualitativa: A", normalized.feedback)
+
+    def test_model_feedback_format_does_not_invalidate_review(self) -> None:
+        raw = {
+            "score": 12, "level": "B", "summary": "Avance parcial.",
+            "strengths": ["Identificó la variable"],
+            "findings": [{
+                "label": "Ejercicio 1", "observed": "Planteó la relación.",
+                "correct": "La relación es pertinente.", "improvement": "Concluir el despeje.",
+                "error_type": "incompleto",
+            }],
+            "suggestion": "Comprueba el resultado.", "feedback": "texto libre",
+        }
+        result = SubmissionReviewer._validate(raw, ("entrega.pdf",)).normalized_for("Ana Pérez")
+        self.assertIn("Nota cuantitativa: 12/20", result.feedback)
+        self.assertIn("Nota cualitativa: B", result.feedback)
+
     def test_ambiguous_course_is_blocked(self) -> None:
         with TemporaryDirectory() as directory:
             client = FakeClassroom()

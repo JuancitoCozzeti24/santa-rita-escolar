@@ -55,14 +55,31 @@ def main() -> None:
     settings = DesktopSettings.from_env()
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     journal = OperationJournal(settings.data_dir / "operations.sqlite3")
-    classroom = ClassroomClient()
+    if settings.backend_url:
+        from .backend import BackendClassroomClient, BackendConnection, BackendReviewer
+        connection = BackendConnection(settings)
+        connection.status()
+        classroom = BackendClassroomClient(connection)
+        reviewer = BackendReviewer(connection)
+    else:
+        classroom = ClassroomClient()
+        reviewer = SubmissionReviewer(settings, classroom)
     flow = ClassroomFlow(classroom, journal)
     batch = flow.prepare(args.course, args.task)
     summary = flow.batch_summary(batch)
-    print(json.dumps({k: v for k, v in summary.items() if k != "students"}, ensure_ascii=False, indent=2))
+    print("\n" + "=" * 62)
+    print(f"CURSO: {batch.course.get('name') or ''} — {batch.course.get('section') or ''}")
+    print(f"TAREA: {batch.coursework.get('title') or ''}")
+    print(f"ESTUDIANTES EN EL PADRÓN: {summary['roster_count']}")
+    print(f"ENTREGAS CON ARCHIVO: {summary['with_attachments']}")
+    print(f"REGISTROS SIN ARCHIVO: {len(summary['without_attachments'])}")
+    print(f"SIN REGISTRO EN CLASSROOM: {len(summary['without_submission'])}")
+    print("=" * 62)
+    if summary["with_attachments"] == 0:
+        print("No hay archivos entregados para revisar en esta tarea. No se modificó Classroom.")
+        return
 
     criteria = Path(args.criteria_file).read_text(encoding="utf-8") if args.criteria_file else ""
-    reviewer = SubmissionReviewer(settings, classroom)
     reviews: list[tuple[StudentWork, StudentReview]] = []
     for student in batch.students:
         if student.attachment_count == 0:
@@ -74,7 +91,8 @@ def main() -> None:
         target = _review_target(batch, student)
         cached, inserted = journal.reserve("classroom_review", target, {"criteria": criteria})
         if not inserted and cached.status == "completed" and cached.result:
-            review = StudentReview.from_public(cached.result)
+            review = StudentReview.from_public(cached.result).normalized_for(student.student_name)
+            journal.transition(cached.key, "completed", review.public())
             print(f"REVISIÓN REUTILIZADA: {student.student_name} — {review.score}/20")
         else:
             journal.transition(cached.key, "executing")
@@ -86,9 +104,13 @@ def main() -> None:
                     course_id=str(batch.course["id"]), coursework=batch.coursework,
                     submission=raw_submission, student_name=student.student_name, criteria=criteria,
                 )
+                review = review.normalized_for(student.student_name)
             except Exception as exc:
                 journal.transition(cached.key, "failed", {"error": str(exc)})
                 print(f"ERROR de revisión: {student.student_name}: {exc}")
+                if "OpenAI HTTP 4" in str(exc) or "desktop_unauthorized" in str(exc):
+                    print("Error general del servicio. Se detuvo el lote para no repetir el mismo fallo.")
+                    break
                 continue
             journal.transition(cached.key, "completed", review.public())
             print(f"REVISADO: {student.student_name} — {review.score}/20 ({review.level})")

@@ -4,6 +4,7 @@ from dataclasses import dataclass, asdict
 from typing import Any, TYPE_CHECKING
 import base64
 import json
+from io import BytesIO
 
 from .settings import DesktopSettings
 
@@ -34,6 +35,37 @@ class StudentReview:
     def public(self) -> dict[str, Any]:
         return asdict(self)
 
+    def normalized_for(self, student_name: str) -> "StudentReview":
+        """Construye localmente el comentario final; no depende del formato del modelo."""
+        first_name = student_name.strip().split()[0].title() if student_name.strip() else "Estudiante"
+        strengths = self.strengths or ("Presentaste evidencia de tu trabajo.",)
+        detail_lines: list[str] = []
+        for finding in self.findings:
+            parts = [finding.observed.strip(), finding.correct.strip(), finding.improvement.strip()]
+            detail = " ".join(part for part in parts if part)
+            if finding.error_type:
+                detail += f" Tipo de aspecto por mejorar: {finding.error_type}."
+            detail_lines.append(f"- {finding.label}: {detail.strip()}")
+        feedback = "\n".join([
+            f"{first_name}, {self.summary.strip()}",
+            "",
+            "Lo que hiciste bien:",
+            *(f"- {value.strip()}" for value in strengths if value.strip()),
+            "",
+            "Lo que debes mejorar:",
+            *detail_lines,
+            "",
+            f"Sugerencia: {self.suggestion.strip()}",
+            "",
+            f"Nota cuantitativa: {self.score}/20",
+            f"Nota cualitativa: {self.level}",
+        ]).strip()
+        return StudentReview(
+            score=self.score, level=self.level, summary=self.summary, strengths=self.strengths,
+            findings=self.findings, suggestion=self.suggestion, feedback=feedback,
+            evidence_files=self.evidence_files,
+        )
+
     @classmethod
     def from_public(cls, raw: dict[str, Any]) -> "StudentReview":
         return cls(
@@ -46,6 +78,7 @@ class StudentReview:
 
 
 REVIEW_INSTRUCTIONS = """Actúa como docente peruano de Matemática y evalúa únicamente la evidencia visible.
+Resuelve por ti mismo los ejercicios del enunciado original antes de contrastar la respuesta del estudiante.
 Revisa ejercicio por ejercicio: planteamiento, procedimiento, operaciones, unidades, representación,
 justificación y respuesta. Da crédito parcial a procedimientos pertinentes. Distingue error conceptual,
 procedimental, aritmético, notación, incompleto o falta de evidencia. No inventes contenido ilegible.
@@ -90,8 +123,10 @@ class SubmissionReviewer:
                 },
                 "teacher_criteria_or_expected_work": criteria,
                 "important": "Si falta evidencia o algo es ilegible, decláralo; no lo reconstruyas.",
+                "output_format": "Responde exclusivamente con un objeto JSON válido.",
             }, ensure_ascii=False),
         }]
+        self._append_assignment_materials(content, coursework, max_pages_per_file)
         evidence_files: list[str] = []
         for row in attachments["attachments"]:
             index = int(row["index"])
@@ -139,7 +174,65 @@ class SubmissionReviewer:
         if not response.ok:
             raise RuntimeError(f"OpenAI HTTP {response.status_code}: {response.text[:700]}")
         raw = json.loads(self._output_text(response.json()))
-        return self._validate(raw, tuple(evidence_files))
+        return self._validate(raw, tuple(evidence_files)).normalized_for(student_name)
+
+    def _append_assignment_materials(
+        self, content: list[dict[str, Any]], coursework: dict[str, Any], max_pages: int
+    ) -> None:
+        """Añade los enunciados originales para que el modelo pueda resolverlos y comparar."""
+        materials = list(coursework.get("materials") or [])
+        if not materials:
+            content.append({
+                "type": "input_text",
+                "text": "La tarea no tiene material original adjunto; usa únicamente el enunciado y la evidencia legible.",
+            })
+            return
+        for index, material in enumerate(materials, 1):
+            wrapped = material.get("driveFile") or {}
+            drive = wrapped.get("driveFile") or wrapped
+            file_id = str(drive.get("id") or "")
+            title = str(drive.get("title") or f"material-{index}")
+            if file_id:
+                try:
+                    meta, data, mime_type = self.classroom.download_drive_file(file_id)
+                    title = str(meta.get("name") or title)
+                    images = self._render_reference(data, mime_type, title, max_pages)
+                except Exception as exc:
+                    content.append({
+                        "type": "input_text",
+                        "text": f"No se pudo leer el material original {title}: {exc}. No inventes su contenido.",
+                    })
+                    continue
+                content.append({"type": "input_text", "text": f"ENUNCIADO ORIGINAL {index}: {title}"})
+                for image in images:
+                    content.append({
+                        "type": "input_image",
+                        "image_url": "data:image/png;base64," + base64.b64encode(image).decode("ascii"),
+                    })
+            elif material.get("link"):
+                content.append({
+                    "type": "input_text",
+                    "text": f"MATERIAL ORIGINAL ENLAZADO: {(material.get('link') or {}).get('url') or ''}",
+                })
+
+    @staticmethod
+    def _render_reference(data: bytes, mime_type: str, name: str, max_pages: int) -> list[bytes]:
+        if mime_type.startswith("image/"):
+            from PIL import Image
+            out = BytesIO()
+            image = Image.open(BytesIO(data)).convert("RGB")
+            image.thumbnail((1800, 1800))
+            image.save(out, format="PNG", optimize=True)
+            return [out.getvalue()]
+        if mime_type == "application/pdf" or name.lower().endswith(".pdf"):
+            import fitz
+            document = fitz.open(stream=data, filetype="pdf")
+            images: list[bytes] = []
+            for page in document[:max_pages]:
+                scale = min(1800 / max(page.rect.width, page.rect.height), 3.0)
+                images.append(page.get_pixmap(matrix=fitz.Matrix(scale, scale), alpha=False).tobytes("png"))
+            return images
+        return []
 
     @staticmethod
     def _output_text(data: dict[str, Any]) -> str:
@@ -173,13 +266,6 @@ class SubmissionReviewer:
         )
         if not findings:
             raise ValueError("La revisión no contiene análisis por ejercicio.")
-        feedback = str(raw.get("feedback") or "").strip()
-        required = (
-            "Lo que hiciste bien", "Lo que debes mejorar", "Sugerencia", f"{score}/20",
-            f"Nota cualitativa: {expected_level}",
-        )
-        if any(part.casefold() not in feedback.casefold() for part in required):
-            raise ValueError("La retroalimentación no cumple la estructura pedagógica requerida.")
         return StudentReview(
             score=score,
             level=expected_level,
@@ -187,6 +273,6 @@ class SubmissionReviewer:
             strengths=tuple(str(value) for value in raw.get("strengths") or []),
             findings=findings,
             suggestion=str(raw.get("suggestion") or ""),
-            feedback=feedback,
+            feedback=str(raw.get("feedback") or "").strip(),
             evidence_files=evidence_files,
         )
