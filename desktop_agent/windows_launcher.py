@@ -60,6 +60,19 @@ def _configured(app_dir: Path) -> bool:
     return True
 
 
+def _choose(label: str, rows: list[dict[str, object]], display) -> dict[str, object]:
+    if not rows:
+        raise RuntimeError(f"No se encontraron opciones para {label}.")
+    print(f"\n{label}:")
+    for index, row in enumerate(rows, 1):
+        print(f"  {index}. {display(row)}")
+    while True:
+        answer = input("Escribe el número: ").strip()
+        if answer.isdigit() and 1 <= int(answer) <= len(rows):
+            return rows[int(answer) - 1]
+        print(f"Elige un número entre 1 y {len(rows)}.")
+
+
 def main() -> None:
     app_dir = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path.cwd()
     load_dotenv(app_dir / ".env")
@@ -72,13 +85,33 @@ def main() -> None:
         _pause()
         return
 
-    course = input("Curso o sección exacta (ejemplo: 2.º B): ").strip()
-    task = input("Título exacto de la tarea: ").strip()
-    criteria = input("Ruta del solucionario/criterios TXT (opcional): ").strip().strip('"')
-    if not course or not task:
-        print("El curso y la tarea son obligatorios.")
+    from desktop_agent.backend import BackendClassroomClient, BackendConnection
+    from desktop_agent.settings import DesktopSettings
+
+    connection = BackendConnection(DesktopSettings.from_env())
+    classroom = BackendClassroomClient(connection)
+    try:
+        course_row = _choose(
+            "CURSOS DE CLASSROOM",
+            classroom.list_courses(active_only=True),
+            lambda row: f"{row.get('name') or '(sin nombre)'} — {row.get('section') or 'sin sección'}",
+        )
+        course = str(course_row["id"])
+        assignments = [
+            row for row in classroom.list_coursework(course, include_drafts=False)
+            if str(row.get("workType") or "") == "ASSIGNMENT"
+        ]
+        task_row = _choose(
+            "TAREAS PUBLICADAS",
+            assignments,
+            lambda row: str(row.get("title") or "(sin título)"),
+        )
+        task = str(task_row["id"])
+    except Exception as exc:
+        print(f"No se pudieron cargar los cursos y tareas: {exc}")
         _pause()
         return
+    criteria = input("Ruta del solucionario/criterios TXT (opcional): ").strip().strip('"')
     if criteria and not Path(criteria).is_file():
         print(f"No se encontró el archivo de criterios: {criteria}")
         _pause()
