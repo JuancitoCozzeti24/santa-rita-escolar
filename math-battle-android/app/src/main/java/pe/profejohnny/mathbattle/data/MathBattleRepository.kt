@@ -1,6 +1,5 @@
 package pe.profejohnny.mathbattle.data
 
-import com.google.firebase.Timestamp
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
@@ -111,28 +110,45 @@ class MathBattleRepository(
     }
 
     suspend fun submit(result: BattleResult): Int? {
-        val uid = requireNotNull(currentUid)
+        val uid = requireNotNull(currentUid) { "Debes iniciar sesión." }
         val profileRef = firestore.collection("profiles").document(uid)
         val boardRef = firestore.collection("leaderboard").document(uid)
         val submissionRef = firestore.collection("scoreSubmissions").document("${uid}_${result.sessionId}")
-        firestore.runTransaction { tx ->
-            val profile = tx.get(profileRef)
-            require(profile.exists()) { "Primero vincula tu identidad." }
-            if (tx.get(submissionRef).exists()) return@runTransaction null
-            val board = tx.get(boardRef)
-            val previousScore = board.getLong("bestScore")?.toInt() ?: -1
-            val previousDuration = board.getLong("durationMs") ?: Long.MAX_VALUE
-            val changedSection = board.exists() && board.getString("section") != profile.getString("section")
-            val isBest = changedSection || result.score > previousScore ||
-                (result.score == previousScore && result.durationMs < previousDuration)
-            tx.set(submissionRef, mapOf(
+        val profile = profileRef.get().await()
+        require(profile.exists()) { "Primero vincula tu identidad." }
+        val section = profile.getString("section")?.takeIf { it.isNotBlank() }
+            ?: throw IllegalStateException("Tu perfil no tiene aula asignada.")
+        val publicName = profile.getString("publicName")?.takeIf { it.isNotBlank() } ?: "Participante"
+        val avatarId = profile.getString("avatarId") ?: "ninja"
+        val board = boardRef.get().await()
+        val previousScore = board.getLong("bestScore")?.toInt() ?: -1
+        val previousDuration = board.getLong("durationMs") ?: Long.MAX_VALUE
+        val changedSection = board.exists() && board.getString("section") != section
+        val isBest = changedSection || result.score > previousScore ||
+            (result.score == previousScore && result.durationMs < previousDuration)
+
+        // El ranking es la escritura principal. No debe cancelarse si falla el historial
+        // auxiliar o la actualización de estadísticas del perfil.
+        if (isBest) boardRef.set(mapOf(
+            "uid" to uid, "publicName" to publicName,
+            "section" to section, "avatarId" to avatarId,
+            "bestScore" to result.score, "bestLevel" to result.level,
+            "bestAccuracy" to result.accuracy, "durationMs" to result.durationMs,
+            "startedAtMs" to result.startedAtMs, "endedAtMs" to result.endedAtMs,
+            "achievedAt" to FieldValue.serverTimestamp(), "clientVersion" to BuildConfig.VERSION_NAME
+        )).await()
+
+        runCatching {
+            submissionRef.set(mapOf(
                 "uid" to uid, "score" to result.score, "level" to result.level,
                 "correct" to result.correct, "wrong" to result.wrong, "accuracy" to result.accuracy,
                 "bestStreak" to result.bestStreak, "durationMs" to result.durationMs,
                 "startedAtMs" to result.startedAtMs, "endedAtMs" to result.endedAtMs,
                 "sessionId" to result.sessionId, "clientVersion" to BuildConfig.VERSION_NAME,
                 "createdAt" to FieldValue.serverTimestamp()
-            ))
+            )).await()
+        }
+        runCatching {
             val profileUpdates = mutableMapOf<String, Any>(
                 "plays" to FieldValue.increment(1), "updatedAt" to FieldValue.serverTimestamp()
             )
@@ -141,18 +157,8 @@ class MathBattleRepository(
                 "bestAccuracy" to result.accuracy, "bestDurationMs" to result.durationMs,
                 "bestStartedAtMs" to result.startedAtMs, "bestEndedAtMs" to result.endedAtMs
             ))
-            tx.update(profileRef, profileUpdates)
-            if (isBest) tx.set(boardRef, mapOf(
-                "uid" to uid, "publicName" to profile.getString("publicName"),
-                "section" to profile.getString("section"), "avatarId" to profile.getString("avatarId"),
-                "bestScore" to result.score, "bestLevel" to result.level,
-                "bestAccuracy" to result.accuracy, "durationMs" to result.durationMs,
-                "startedAtMs" to result.startedAtMs, "endedAtMs" to result.endedAtMs,
-                "achievedAt" to Timestamp.now()
-            ))
-            null
-        }.await()
-        val section = loadMyProfile()?.section ?: return null
+            profileRef.update(profileUpdates).await()
+        }
         return ranking(section).indexOfFirst { it.uid == uid }.takeIf { it >= 0 }?.plus(1)
     }
 

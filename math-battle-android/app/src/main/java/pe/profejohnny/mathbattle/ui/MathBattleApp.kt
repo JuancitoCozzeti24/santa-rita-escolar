@@ -483,11 +483,15 @@ private fun GameScreen(state: UiState, viewModel: MathBattleViewModel) {
                 Column(modifier, verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
                     Eyebrow(rule.skill.uppercase())
                     val questionSize = when {
+                        compactLandscape && game.question.text.length > 55 -> 23.sp
+                        compactLandscape && game.question.text.length > 28 -> 29.sp
+                        compactLandscape && game.question.text.length > 16 -> 38.sp
+                        compactLandscape -> 56.sp
                         game.question.text.length > 55 -> if (roomy) 56.sp else 32.sp
                         game.question.text.length > 28 -> if (roomy) 72.sp else 42.sp
-                        else -> if (roomy) 118.sp else if (compactLandscape) 72.sp else 88.sp
+                        else -> if (roomy) 118.sp else 88.sp
                     }
-                    Text(game.question.text, color = Color.White, fontFamily = BattleDisplayFont, fontSize = questionSize, lineHeight = questionSize * 1.02f, fontWeight = FontWeight.Black, textAlign = TextAlign.Center)
+                    Text(game.question.text, color = Color.White, fontFamily = BattleDisplayFont, fontSize = questionSize, lineHeight = questionSize * 1.02f, fontWeight = FontWeight.Black, textAlign = TextAlign.Center, maxLines = 4)
                 }
             }
             val answers: @Composable (Modifier) -> Unit = { modifier ->
