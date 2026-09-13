@@ -35,6 +35,8 @@ jobs:
           --name SIEROOM-Desktop-Agent-CLASSROOM-TEST
           --collect-all playwright
           --collect-all fitz
+          --collect-all keyring
+          --collect-submodules desktop_agent
           --hidden-import PIL
           --hidden-import docx
           --hidden-import openpyxl
