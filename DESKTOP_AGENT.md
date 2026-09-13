@@ -61,3 +61,17 @@ python -m desktop_agent.classroom_cli --course "2.º B" --task "C3: Nuestro avan
 El comentario privado se publica visualmente, sin Bridge. La nota y devolución usan la API oficial de
 Classroom y se releen después de cada escritura. Si Google rechaza el permiso o la verificación no coincide,
 el lote se detiene en ese alumno. Al repetir el comando, reutiliza revisiones y operaciones ya verificadas.
+
+### Configuración junto al EXE
+
+El ejecutable de prueba lee un archivo `.env` local ubicado en la carpeta desde la que se abre:
+
+```text
+OPENAI_API_KEY=...
+GOOGLE_CLIENT_ID=...
+GOOGLE_CLIENT_SECRET=...
+GOOGLE_REFRESH_TOKEN=...
+SIEROOM_CIEWEB_URL=https://URL-REAL-DEL-COLEGIO/
+```
+
+No se deben subir estas credenciales a GitHub ni enviarlas dentro del EXE.
