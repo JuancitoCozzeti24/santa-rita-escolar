@@ -44,9 +44,20 @@ service cloud.firestore {
 
     match /leaderboard/{uid} {
       allow read: if signedIn();
-      allow create, update: if signedIn()
-        && uid == request.auth.uid
-        && request.resource.data.uid == request.auth.uid;
+      allow delete: if owner();
+    }
+
+    match /rankingEntries/{entryId} {
+      allow read: if signedIn();
+      allow create: if signedIn()
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.publicName is string
+        && request.resource.data.publicName.size() > 0
+        && request.resource.data.publicName.size() <= 40
+        && request.resource.data.section in ["2A", "2B", "5A", "5B", "LIBRE"]
+        && request.resource.data.bestScore is int
+        && request.resource.data.bestScore >= 0;
+      allow update: if false;
       allow delete: if owner();
     }
 

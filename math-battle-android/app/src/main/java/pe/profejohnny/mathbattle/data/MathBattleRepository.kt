@@ -3,7 +3,6 @@ package pe.profejohnny.mathbattle.data
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
-import com.google.firebase.firestore.Query
 import kotlinx.coroutines.tasks.await
 import pe.profejohnny.mathbattle.BuildConfig
 import pe.profejohnny.mathbattle.model.BattleResult
@@ -104,15 +103,13 @@ class MathBattleRepository(
         val uid = requireNotNull(currentUid)
         firestore.collection("profiles").document(uid)
             .update(mapOf("avatarId" to avatarId, "updatedAt" to FieldValue.serverTimestamp())).await()
-        val entry = firestore.collection("leaderboard").document(uid).get().await()
-        if (entry.exists()) entry.reference.update("avatarId", avatarId).await()
         return requireNotNull(loadMyProfile())
     }
 
     suspend fun submit(result: BattleResult): Int? {
         val uid = requireNotNull(currentUid) { "Debes iniciar sesión." }
         val profileRef = firestore.collection("profiles").document(uid)
-        val boardRef = firestore.collection("leaderboard").document(uid)
+        val boardRef = firestore.collection("rankingEntries").document("${uid}_${result.sessionId}")
         val submissionRef = firestore.collection("scoreSubmissions").document("${uid}_${result.sessionId}")
         val profile = profileRef.get().await()
         require(profile.exists()) { "Primero vincula tu identidad." }
@@ -120,16 +117,9 @@ class MathBattleRepository(
             ?: throw IllegalStateException("Tu perfil no tiene aula asignada.")
         val publicName = profile.getString("publicName")?.takeIf { it.isNotBlank() } ?: "Participante"
         val avatarId = profile.getString("avatarId") ?: "ninja"
-        val board = boardRef.get().await()
-        val previousScore = board.getLong("bestScore")?.toInt() ?: -1
-        val previousDuration = board.getLong("durationMs") ?: Long.MAX_VALUE
-        val changedSection = board.exists() && board.getString("section") != section
-        val isBest = changedSection || result.score > previousScore ||
-            (result.score == previousScore && result.durationMs < previousDuration)
-
         // El ranking es la escritura principal. No debe cancelarse si falla el historial
         // auxiliar o la actualización de estadísticas del perfil.
-        if (isBest) boardRef.set(mapOf(
+        boardRef.set(mapOf(
             "uid" to uid, "publicName" to publicName,
             "section" to section, "avatarId" to avatarId,
             "bestScore" to result.score, "bestLevel" to result.level,
@@ -152,6 +142,10 @@ class MathBattleRepository(
             val profileUpdates = mutableMapOf<String, Any>(
                 "plays" to FieldValue.increment(1), "updatedAt" to FieldValue.serverTimestamp()
             )
+            val currentBest = profile.getLong("bestScore")?.toInt() ?: -1
+            val currentDuration = profile.getLong("bestDurationMs") ?: Long.MAX_VALUE
+            val isBest = result.score > currentBest ||
+                (result.score == currentBest && result.durationMs < currentDuration)
             if (isBest) profileUpdates.putAll(mapOf(
                 "bestScore" to result.score, "bestLevel" to result.level,
                 "bestAccuracy" to result.accuracy, "bestDurationMs" to result.durationMs,
@@ -159,24 +153,30 @@ class MathBattleRepository(
             ))
             profileRef.update(profileUpdates).await()
         }
-        return ranking(section).indexOfFirst { it.uid == uid }.takeIf { it >= 0 }?.plus(1)
+        return runCatching {
+            ranking(section).indexOfFirst { it.uid == uid }.takeIf { it >= 0 }?.plus(1)
+        }.getOrNull()
     }
 
-    suspend fun ranking(section: String): List<RankingEntry> = firestore.collection("leaderboard")
+    suspend fun ranking(section: String): List<RankingEntry> = firestore.collection("rankingEntries")
         .whereEqualTo("section", section)
-        .orderBy("bestScore", Query.Direction.DESCENDING)
-        .orderBy("durationMs", Query.Direction.ASCENDING)
-        .orderBy("achievedAt", Query.Direction.ASCENDING)
-        .limit(100).get().await().documents.mapNotNull { it.toObject(RankingEntry::class.java) }
+        .limit(500).get().await().documents.mapNotNull { it.toObject(RankingEntry::class.java) }
+        .groupBy { it.uid }
+        .mapNotNull { (_, attempts) -> attempts.minWithOrNull(compareByDescending<RankingEntry> { it.bestScore }.thenBy { it.durationMs }) }
+        .sortedWith(compareByDescending<RankingEntry> { it.bestScore }.thenBy { it.durationMs })
+        .take(100)
 
     suspend fun deleteRankingEntry(uid: String) {
         require(isAdmin) { "Solo el propietario puede administrar el ranking." }
-        firestore.collection("leaderboard").document(uid).delete().await()
+        val docs = firestore.collection("rankingEntries").whereEqualTo("uid", uid).get().await().documents
+        val batch = firestore.batch()
+        docs.forEach { batch.delete(it.reference) }
+        batch.commit().await()
     }
 
     suspend fun clearRanking(section: String) {
         require(isAdmin) { "Solo el propietario puede administrar el ranking." }
-        val docs = firestore.collection("leaderboard").whereEqualTo("section", section).get().await().documents
+        val docs = firestore.collection("rankingEntries").whereEqualTo("section", section).get().await().documents
         docs.chunked(400).forEach { group ->
             val batch = firestore.batch()
             group.forEach { batch.delete(it.reference) }
