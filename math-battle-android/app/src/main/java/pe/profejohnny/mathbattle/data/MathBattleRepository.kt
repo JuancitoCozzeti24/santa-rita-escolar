@@ -79,6 +79,28 @@ class MathBattleRepository(
         return requireNotNull(loadMyProfile()) { "No se creó el perfil de Batalla Libre." }
     }
 
+    suspend fun selectOwnerSection(section: String): StudentProfile {
+        require(isAdmin) { "Solo el propietario puede usar esta función." }
+        require(section in setOf("2A", "2B", "5A", "5B")) { "Aula no válida." }
+        val uid = requireNotNull(currentUid) { "Debes iniciar sesión." }
+        val profileRef = firestore.collection("profiles").document(uid)
+        val existing = profileRef.get().await()
+        if (existing.exists()) {
+            profileRef.update(mapOf(
+                "publicName" to "Profe Johnny", "section" to section,
+                "updatedAt" to FieldValue.serverTimestamp()
+            )).await()
+        } else {
+            profileRef.set(mapOf(
+                "uid" to uid, "rosterId" to "OWNER", "publicName" to "Profe Johnny",
+                "section" to section, "avatarId" to "lightning",
+                "bestScore" to 0, "bestLevel" to 1, "bestAccuracy" to 0, "plays" to 0,
+                "createdAt" to FieldValue.serverTimestamp(), "updatedAt" to FieldValue.serverTimestamp()
+            )).await()
+        }
+        return requireNotNull(loadMyProfile()) { "No se pudo crear el perfil del propietario." }
+    }
+
     suspend fun updateAvatar(avatarId: String): StudentProfile {
         val uid = requireNotNull(currentUid)
         firestore.collection("profiles").document(uid)
@@ -100,7 +122,8 @@ class MathBattleRepository(
             val board = tx.get(boardRef)
             val previousScore = board.getLong("bestScore")?.toInt() ?: -1
             val previousDuration = board.getLong("durationMs") ?: Long.MAX_VALUE
-            val isBest = result.score > previousScore ||
+            val changedSection = board.exists() && board.getString("section") != profile.getString("section")
+            val isBest = changedSection || result.score > previousScore ||
                 (result.score == previousScore && result.durationMs < previousDuration)
             tx.set(submissionRef, mapOf(
                 "uid" to uid, "score" to result.score, "level" to result.level,

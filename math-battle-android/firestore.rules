@@ -24,6 +24,11 @@ service cloud.firestore {
         && request.resource.data.bestScore == 0
         && request.resource.data.plays == 0
         && (
+          (owner()
+            && request.resource.data.rosterId == "OWNER"
+            && request.resource.data.publicName == "Profe Johnny"
+            && request.resource.data.section in ["2A", "2B", "5A", "5B"])
+          ||
           (request.resource.data.rosterId == "PUBLIC"
             && request.resource.data.section == "LIBRE"
             && request.resource.data.publicName is string

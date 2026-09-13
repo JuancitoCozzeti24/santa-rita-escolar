@@ -69,11 +69,12 @@ class MathBattleViewModel(private val firebaseReady: Boolean) : ViewModel() {
                 return@launch
             }
             val profile = runCatching { repository?.loadMyProfile() }.getOrNull()
-            val resolvedProfile = profile ?: if (repository?.isAdmin == true) adminProfile() else null
+            val admin = repository?.isAdmin == true
+            val resolvedProfile = profile
             _state.value = _state.value.copy(
-                screen = if (resolvedProfile == null) Screen.SIGN_IN else Screen.LOBBY,
+                screen = if (admin) Screen.SECTION else if (resolvedProfile == null) Screen.SIGN_IN else Screen.LOBBY,
                 profile = resolvedProfile,
-                isAdmin = repository?.isAdmin == true
+                isAdmin = admin
             )
         }
     }
@@ -82,13 +83,15 @@ class MathBattleViewModel(private val firebaseReady: Boolean) : ViewModel() {
         viewModelScope.launch {
             _state.value = _state.value.copy(loading = true, message = null)
             val profile = runCatching { repository?.loadMyProfile() }.getOrNull()
-            val resolvedProfile = profile ?: if (repository?.isAdmin == true) adminProfile() else null
+            val admin = repository?.isAdmin == true
+            val resolvedProfile = profile
             _state.value = _state.value.copy(
                 loading = false,
                 profile = resolvedProfile,
-                isAdmin = repository?.isAdmin == true,
-                screen = if (resolvedProfile == null) Screen.SECTION else Screen.LOBBY,
-                message = if (resolvedProfile == null) "Cuenta Google verificada. Ahora elige tu aula." else null
+                isAdmin = admin,
+                screen = if (admin || resolvedProfile == null) Screen.SECTION else Screen.LOBBY,
+                message = if (admin) "Cuenta de propietario verificada. Elige el aula en la que participarás."
+                    else if (resolvedProfile == null) "Cuenta Google verificada. Ahora elige tu aula." else null
             )
         }
     }
@@ -98,6 +101,13 @@ class MathBattleViewModel(private val firebaseReady: Boolean) : ViewModel() {
 
     fun chooseSection(section: String) {
         viewModelScope.launch {
+            if (repository?.isAdmin == true) {
+                _state.value = _state.value.copy(section = section, loading = true, message = null)
+                runCatching { repository.selectOwnerSection(section) }
+                    .onSuccess { _state.value = _state.value.copy(profile = it, loading = false, screen = Screen.AVATAR) }
+                    .onFailure { _state.value = _state.value.copy(loading = false, message = friendly(it)) }
+                return@launch
+            }
             _state.value = _state.value.copy(section = section, roster = emptyList(), loading = true, message = null, screen = Screen.STUDENT)
             runCatching { requireNotNull(repository).listRoster(section) }
                 .onSuccess { _state.value = _state.value.copy(roster = it, loading = false) }
@@ -265,17 +275,12 @@ class MathBattleViewModel(private val firebaseReady: Boolean) : ViewModel() {
     fun clearMessage() { _state.value = _state.value.copy(message = null) }
     fun onAppPaused() { if (_state.value.screen == Screen.GAME) finishBattle() }
 
-    private fun adminProfile() = StudentProfile(
-        uid = repository?.currentUid.orEmpty(),
-        publicName = "Profe Johnny",
-        section = "2A",
-        avatarId = "lightning"
-    )
-
     private fun friendly(error: Throwable): String = when {
         error.message?.contains("email", true) == true -> "Ese nombre no corresponde al correo Google con el que ingresaste."
         error.message?.contains("claimed", true) == true -> "Ese estudiante ya tiene una cuenta vinculada."
-        else -> "No se pudo completar la operación. Revisa Internet e inténtalo nuevamente."
+        error.message?.contains("PERMISSION_DENIED", true) == true -> "Firebase rechazó el permiso para esta operación."
+        error.message?.contains("FAILED_PRECONDITION", true) == true -> "El ranking todavía está preparando su índice. Inténtalo nuevamente en unos minutos."
+        else -> "No se pudo completar la operación (${error.message ?: error.javaClass.simpleName})."
     }
 }
 
