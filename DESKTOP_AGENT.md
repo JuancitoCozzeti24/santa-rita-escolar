@@ -42,3 +42,22 @@ Incluye arranque, sesión persistente, observación visual, acciones, respaldo D
 idempotente. Los flujos pedagógicos específicos (descarga/análisis de cada entrega, rúbrica, equivalencia
 numérica-literaria, réplica A/B de desempeños y mensajería) deben implementarse como máquinas de estados
 sobre esta base; todavía no deben ejecutarse como una orden genérica sin supervisión.
+
+## Flujo específico de Classroom
+
+Primero genera una revisión previa sin modificar Classroom:
+
+```powershell
+python -m desktop_agent.classroom_cli --course "2.º B" --task "C3: Nuestro avance en inequaciones" --criteria-file solucionario.txt
+```
+
+El curso y la tarea deben coincidir exactamente. Se omiten entregas sin archivo y entregas ya devueltas.
+Después de revisar el informe JSON generado en `.sieroom`, se aplica el lote explícitamente:
+
+```powershell
+python -m desktop_agent.classroom_cli --course "2.º B" --task "C3: Nuestro avance en inequaciones" --criteria-file solucionario.txt --apply
+```
+
+El comentario privado se publica visualmente, sin Bridge. La nota y devolución usan la API oficial de
+Classroom y se releen después de cada escritura. Si Google rechaza el permiso o la verificación no coincide,
+el lote se detiene en ese alumno. Al repetir el comando, reutiliza revisiones y operaciones ya verificadas.
