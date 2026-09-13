@@ -32,7 +32,7 @@ jobs:
       - name: Build Windows executable
         run: >-
           pyinstaller --noconfirm --clean --onefile --console
-          --name SIEROOM-Desktop-Agent-CLASSROOM-TEST
+          --name SIEROOM-Desktop-Agent-v0.3
           --collect-all playwright
           --collect-all fitz
           --collect-all keyring
@@ -46,10 +46,10 @@ jobs:
         shell: pwsh
         run: |
           Copy-Item DESKTOP_AGENT.md dist/DESKTOP_AGENT.md
-          Compress-Archive -Path dist/SIEROOM-Desktop-Agent-CLASSROOM-TEST.exe,dist/DESKTOP_AGENT.md -DestinationPath dist/SIEROOM-Desktop-Agent-CLASSROOM-TEST.zip
+          Compress-Archive -Path dist/SIEROOM-Desktop-Agent-v0.3.exe,dist/DESKTOP_AGENT.md -DestinationPath dist/SIEROOM-Desktop-Agent-v0.3.zip
       - uses: actions/upload-artifact@v4
         with:
-          name: SIEROOM-Desktop-Agent-CLASSROOM-TEST
-          path: dist/SIEROOM-Desktop-Agent-CLASSROOM-TEST.zip
+          name: SIEROOM-Desktop-Agent-v0.3
+          path: dist/SIEROOM-Desktop-Agent-v0.3.zip
           if-no-files-found: error
           retention-days: 14

@@ -8,6 +8,9 @@ import json
 import shutil
 
 from dotenv import load_dotenv
+from desktop_agent.backend import BackendClassroomClient, BackendConnection
+from desktop_agent.classroom_cli import main as classroom_main
+from desktop_agent.settings import DesktopSettings
 
 
 def _pause() -> None:
@@ -92,8 +95,6 @@ def _configured(app_dir: Path) -> bool:
         print("El secreto de conexión no puede estar vacío.")
         return False
     try:
-        from desktop_agent.backend import BackendConnection
-        from desktop_agent.settings import DesktopSettings
         probe = DesktopSettings(
             data_dir=app_dir / ".sieroom", classroom_url="https://classroom.google.com/",
             cieweb_url="https://santaritadecasia.sieweb.com.pe", model="gpt-5.1",
@@ -131,16 +132,13 @@ def main() -> None:
     load_dotenv(app_dir / ".env")
     load_dotenv()
     print("=" * 62)
-    print("SIEROOM DESKTOP AGENT — PRUEBA DE CLASSROOM")
+    print("SIEROOM DESKTOP AGENT v0.3 — CLASSROOM")
     print("=" * 62)
     print("Esta versión primero revisa y NO escribe nada sin tu autorización.")
     if not _configured(app_dir):
         _pause()
         return
     _configure_persistent_data(app_dir)
-
-    from desktop_agent.backend import BackendClassroomClient, BackendConnection
-    from desktop_agent.settings import DesktopSettings
 
     connection = BackendConnection(DesktopSettings.from_env())
     classroom = BackendClassroomClient(connection)
@@ -165,8 +163,6 @@ def main() -> None:
         print(f"No se pudieron cargar los cursos y tareas: {exc}")
         _pause()
         return
-    from desktop_agent.classroom_cli import main as classroom_main
-
     command = ["sieroom-classroom", "--course", course, "--task", task]
     try:
         sys.argv = command
