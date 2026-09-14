@@ -42,6 +42,7 @@ POLÍTICA PERMANENTE DE BITÁCORA DOCENTE:
 10. La frase explícita “BITÁCORA: …”, “registra en la bitácora…” o equivalente constituye autorización para añadir el registro descrito y permite llamar la escritura con confirmed=true. Si el usuario solo está preguntando, analizando o ensayando una redacción, no escribas.
 11. Para informes de un estudiante, usa student_report (o student_history si solo necesitas los registros) y construye el informe solo con hechos documentados; protege los datos de otros alumnos y no expongas nombres de terceros innecesariamente.
 12. Si el docente indica un rango temporal, envía fecha_desde y fecha_hasta. Si solo dice “BITÁCORA” sin estudiante ni operación, consulta status y ofrece buscar por estudiante, sección o rango; no vuelques datos personales de todos los alumnos.
+13. Para registrar muchas constancias verificadas de una misma revisión, usa append_observations_batch. El lote debe resolverse completo antes de escribir, omitir referencias ya existentes y verificar todos los Registro_ID añadidos.
 """.strip()
 
 _token_lock = threading.RLock()
@@ -142,16 +143,22 @@ def _sheets_get(a1_range: str) -> list[list[Any]]:
     return list((_google_request("GET", url).get("values") or []))
 
 
-def _sheets_append(a1_range: str, row: list[Any]) -> str:
+def _sheets_append_rows(a1_range: str, rows: list[list[Any]]) -> str:
+    if not rows:
+        raise ValueError("No hay filas para agregar.")
     encoded = quote(a1_range, safe="")
     url = f"https://sheets.googleapis.com/v4/spreadsheets/{_spreadsheet_id()}/values/{encoded}:append"
     result = _google_request("POST", url, params={
         "valueInputOption": "USER_ENTERED", "insertDataOption": "INSERT_ROWS",
-    }, json_body={"values": [row]})
+    }, json_body={"values": rows})
     updated_range = str((result.get("updates") or {}).get("updatedRange") or "")
     if not updated_range:
         raise RuntimeError("Google Sheets no devolvió updatedRange tras el append.")
     return updated_range
+
+
+def _sheets_append(a1_range: str, row: list[Any]) -> str:
+    return _sheets_append_rows(a1_range, [row])
 
 
 def _row_dict(headers: list[Any], row: list[Any]) -> dict[str, Any]:
@@ -181,13 +188,14 @@ def _load_students() -> list[dict[str, str]]:
     return out
 
 
-def _resolve_student(data: dict[str, Any]) -> dict[str, Any]:
+def _resolve_student_from_students(
+    data: dict[str, Any], students: list[dict[str, str]]
+) -> dict[str, Any]:
     query = str(data.get("student") or data.get("estudiante") or data.get("alumno_id") or data.get("alucod") or "").strip()
     if not query:
         raise ValueError("Debes indicar student/estudiante, alumno_id o alucod.")
     grade = _grade_norm(data.get("grado"))
     section = _section_norm(data.get("seccion"))
-    students = _load_students()
     filtered = [s for s in students if (not grade or _grade_norm(s["grado"]) == grade) and (not section or _section_norm(s["seccion"]) == section)]
     nq = _norm(query)
     exact = [s for s in filtered if nq and nq in {_norm(s["alumno_id"]), _norm(s["alucod"]), _norm(s["nombre"])}]
@@ -201,7 +209,22 @@ def _resolve_student(data: dict[str, Any]) -> dict[str, Any]:
         return {"status": "resolved", "student": fuzzy[0]}
     if len(fuzzy) > 1:
         return {"status": "ambiguous", "candidates": fuzzy}
+    # Classroom puede incluir un segundo nombre que no figura en ALUMNOS. Solo
+    # aceptamos esta relación cuando todos los tokens del nombre institucional
+    # están presentes y la coincidencia continúa siendo única.
+    reverse = [
+        s for s in filtered
+        if set(_norm(s["nombre"]).split()) and set(_norm(s["nombre"]).split()).issubset(wanted)
+    ]
+    if len(reverse) == 1:
+        return {"status": "resolved", "student": reverse[0]}
+    if len(reverse) > 1:
+        return {"status": "ambiguous", "candidates": reverse}
     return {"status": "not_found", "query": query, "grado": grade, "seccion": section}
+
+
+def _resolve_student(data: dict[str, Any]) -> dict[str, Any]:
+    return _resolve_student_from_students(data, _load_students())
 
 
 def _require_resolved(data: dict[str, Any]) -> dict[str, str]:
@@ -297,8 +320,9 @@ def _record_id(prefix: str, alumno_id: str) -> str:
     return f"{prefix}-{_now():%Y%m%d-%H%M%S%f}-{alumno_id}"
 
 
-def _preview_observation(data: dict[str, Any]) -> tuple[dict[str, Any], list[Any]]:
-    student = _require_resolved(data)
+def _preview_observation_for_student(
+    data: dict[str, Any], student: dict[str, str]
+) -> tuple[dict[str, Any], list[Any]]:
     description = str(data.get("descripcion_objetiva") or data.get("descripcion") or "").strip()
     if not description:
         raise ValueError("descripcion_objetiva es obligatoria.")
@@ -320,6 +344,10 @@ def _preview_observation(data: dict[str, Any]) -> tuple[dict[str, Any], list[Any
         "Registrado por": str(data.get("registrado_por") or "Docente de Matemática").strip(),
     }
     return record, list(record.values())
+
+
+def _preview_observation(data: dict[str, Any]) -> tuple[dict[str, Any], list[Any]]:
+    return _preview_observation_for_student(data, _require_resolved(data))
 
 
 def _preview_academic(data: dict[str, Any]) -> tuple[dict[str, Any], list[Any]]:
@@ -364,6 +392,109 @@ def _verify_saved(updated_range: str, record_id: str) -> dict[str, Any]:
     if not rows or str(rows[0][0] if rows[0] else "") != record_id:
         raise RuntimeError(f"No se pudo verificar la persistencia del registro {record_id} en {updated_range}.")
     return {"verified": True, "updated_range": updated_range, "row": rows[0]}
+
+
+def _verify_saved_rows(updated_range: str, record_ids: list[str]) -> dict[str, Any]:
+    rows = _sheets_get(updated_range)
+    saved_ids = [str(row[0]) for row in rows if row]
+    if saved_ids != record_ids:
+        raise RuntimeError(
+            "No se pudo verificar el lote completo de bitácora. "
+            f"Esperados={len(record_ids)}, verificados={len(saved_ids)}."
+        )
+    return {
+        "verified": True,
+        "updated_range": updated_range,
+        "record_ids": saved_ids,
+        "count": len(saved_ids),
+    }
+
+
+def _append_observations_batch(data: dict[str, Any], confirmed: bool) -> dict[str, Any]:
+    raw_records = data.get("records")
+    if not isinstance(raw_records, list) or not raw_records:
+        raise ValueError("records debe ser una lista no vacía.")
+    if len(raw_records) > 500:
+        raise ValueError("El lote admite como máximo 500 constancias.")
+
+    students = _load_students()
+    existing_rows = _sheets_get("BITÁCORA!A1:R3000")
+    headers = [str(value) for value in (existing_rows[0] if existing_rows else [])]
+    existing_references = {
+        str(_row_dict(headers, row).get("Evidencia o referencia") or "").strip()
+        for row in existing_rows[1:]
+        if row
+    }
+
+    prepared: list[tuple[dict[str, Any], list[Any]]] = []
+    skipped: list[dict[str, Any]] = []
+    unresolved: list[dict[str, Any]] = []
+    seen_references: set[str] = set()
+
+    for index, raw in enumerate(raw_records):
+        if not isinstance(raw, dict):
+            unresolved.append({"index": index, "error": "El registro no es un objeto JSON."})
+            continue
+        resolved = _resolve_student_from_students(raw, students)
+        if resolved.get("status") != "resolved":
+            unresolved.append({"index": index, "input": raw, "resolution": resolved})
+            continue
+        reference = str(raw.get("evidencia") or "").strip()
+        if not reference:
+            unresolved.append({"index": index, "input": raw, "error": "evidencia es obligatoria para deduplicar el lote."})
+            continue
+        if reference in existing_references or reference in seen_references:
+            skipped.append({"index": index, "reason": "already_exists", "evidencia": reference})
+            continue
+        seen_references.add(reference)
+        prepared.append(_preview_observation_for_student(raw, dict(resolved["student"])))
+
+    if unresolved:
+        return {
+            "ok": False,
+            "blocked": True,
+            "reason": "unresolved_or_invalid_records",
+            "requested": len(raw_records),
+            "ready": len(prepared),
+            "skipped_existing": len(skipped),
+            "unresolved": unresolved,
+        }
+
+    preview_records = [record for record, _row in prepared]
+    if not confirmed:
+        return {
+            "requires_confirmation": True,
+            "requested": len(raw_records),
+            "ready": len(prepared),
+            "skipped_existing": len(skipped),
+            "preview": preview_records,
+            "skipped": skipped,
+            "spreadsheet_url": _spreadsheet_url(),
+        }
+    if not prepared:
+        return {
+            "ok": True,
+            "saved": False,
+            "already_complete": True,
+            "requested": len(raw_records),
+            "skipped_existing": len(skipped),
+            "spreadsheet_url": _spreadsheet_url(),
+        }
+
+    rows = [row for _record, row in prepared]
+    record_ids = [str(record["Registro_ID"]) for record, _row in prepared]
+    updated_range = _sheets_append_rows("BITÁCORA!A:R", rows)
+    return {
+        "ok": True,
+        "saved": True,
+        "kind": "BITÁCORA_BATCH",
+        "requested": len(raw_records),
+        "saved_count": len(prepared),
+        "skipped_existing": len(skipped),
+        "records": preview_records,
+        "verification": _verify_saved_rows(updated_range, record_ids),
+        "spreadsheet_url": _spreadsheet_url(),
+    }
 
 
 def _history(data: dict[str, Any]) -> dict[str, Any]:
@@ -450,6 +581,7 @@ def dispatch(action: str, data: dict[str, Any], confirmed: bool = False) -> dict
         "bitacora_student_history": "student_history",
         "bitacora_student_report": "student_report",
         "bitacora_append_observation": "append_observation",
+        "bitacora_append_observations_batch": "append_observations_batch",
         "bitacora_append_academic": "append_academic",
     }
     act = aliases.get(act, act)
@@ -472,7 +604,7 @@ def dispatch(action: str, data: dict[str, Any], confirmed: bool = False) -> dict
                 "ACADÉMICO": _sheets_get("ACADÉMICO!A1:M2")[:1],
             },
             "reads": ["policy", "status", "resolve_student", "student_history", "student_report"],
-            "writes": ["append_observation", "append_academic"],
+            "writes": ["append_observation", "append_observations_batch", "append_academic"],
             "timezone": "America/Lima",
             "append_only": True,
         }
@@ -500,6 +632,8 @@ def dispatch(action: str, data: dict[str, Any], confirmed: bool = False) -> dict
             "verification": _verify_saved(updated_range, record["Registro_ID"]),
             "spreadsheet_url": _spreadsheet_url(),
         }
+    if act == "append_observations_batch":
+        return _append_observations_batch(data, confirmed)
     if act == "append_academic":
         record, row = _preview_academic(data)
         if not confirmed:
@@ -520,7 +654,7 @@ def dispatch(action: str, data: dict[str, Any], confirmed: bool = False) -> dict
         }
     raise ValueError(
         "action inválida. Usa policy, status, resolve_student, student_history, "
-        "student_report, append_observation o append_academic."
+        "student_report, append_observation, append_observations_batch o append_academic."
     )
 
 
@@ -544,7 +678,7 @@ def install(mcp) -> None:
 
     @mcp.tool()
     def bitacora_docente(action: str, payload_json: str = "{}", confirmed: bool = False) -> dict[str, Any]:
-        """Consulta y registra en BITÁCORA DOCENTE – MATEMÁTICA 2026. Lecturas: policy, status, resolve_student, student_history y student_report; estos dos últimos admiten fecha_desde/fecha_hasta. Escrituras append_observation y append_academic agregan una sola fila y verifican persistencia. Requieren confirmed=true; una orden explícita del usuario con “BITÁCORA: ...” o “registra en la bitácora...” constituye autorización para confirmed=true."""
+        """Consulta y registra en BITÁCORA DOCENTE – MATEMÁTICA 2026. Lecturas: policy, status, resolve_student, student_history y student_report; estos dos últimos admiten fecha_desde/fecha_hasta. Escrituras append_observation, append_observations_batch y append_academic agregan filas y verifican persistencia; el lote se valida completo y omite evidencias ya registradas. Requieren confirmed=true; una orden explícita del usuario con “BITÁCORA: ...” o “registra en la bitácora...” constituye autorización para confirmed=true."""
         return dispatch(action, _parse_payload(payload_json), confirmed)
 
     setattr(mcp, "_sieroom_bitacora_installed", True)

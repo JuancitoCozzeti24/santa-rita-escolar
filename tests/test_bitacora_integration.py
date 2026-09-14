@@ -118,6 +118,76 @@ class BitacoraIntegrationTests(unittest.TestCase):
         self.assertEqual(fake.registered, ["bitacora_docente"])
         self.assertIn("POLÍTICA PERMANENTE DE BITÁCORA", fake._mcp_server.instructions)
 
+    def test_batch_blocks_entire_write_when_a_student_is_unresolved(self):
+        records = [
+            {
+                "student": "Estudiante inexistente",
+                "grado": "2.º",
+                "seccion": "A",
+                "descripcion": "No presentó evidencia.",
+                "evidencia": "Classroom; course_work_id=1; submission_id=1; estado=MISSING",
+            }
+        ]
+        with patch.object(bitacora, "_sheets_get", side_effect=fake_sheets_get), patch.object(
+            bitacora, "_sheets_append_rows"
+        ) as append_rows:
+            result = bitacora.dispatch(
+                "bitacora_append_observations_batch", {"records": records}, confirmed=True
+            )
+
+        self.assertTrue(result["blocked"])
+        self.assertEqual(len(result["unresolved"]), 1)
+        append_rows.assert_not_called()
+
+    def test_batch_skips_existing_reference_and_verifies_new_rows(self):
+        existing_reference = "Classroom; course_work_id=1; submission_id=1; estado=MISSING"
+        new_reference = "Classroom; course_work_id=2; submission_id=2; estado=LATE"
+        existing_row = [
+            "BIT-OLD", "10/09/2026", "", "ALU-001", "PÉREZ RAMOS, ANA", "2.º", "A",
+            "Observación", "Incumplimiento", "No presentó.", "", "", "", "Media", "", "",
+            existing_reference, "Docente",
+        ]
+
+        def batch_sheets_get(a1_range: str):
+            if a1_range.startswith("ALUMNOS!"):
+                return STUDENTS
+            if a1_range == "BITÁCORA!A1:R3000":
+                return [BEHAVIOR_HEADERS, existing_row]
+            raise AssertionError(f"Rango inesperado: {a1_range}")
+
+        records = [
+            {
+                "student": "Ana Pérez Ramos",
+                "grado": "2.º",
+                "seccion": "A",
+                "descripcion": "No presentó evidencia.",
+                "evidencia": existing_reference,
+            },
+            {
+                "student": "Ana Pérez Ramos",
+                "grado": "2.º",
+                "seccion": "A",
+                "descripcion": "Presentó después del plazo.",
+                "categoria": "Tardanza",
+                "evidencia": new_reference,
+            },
+        ]
+        verification = {"verified": True, "count": 1}
+        with patch.object(bitacora, "_sheets_get", side_effect=batch_sheets_get), patch.object(
+            bitacora, "_sheets_append_rows", return_value="BITÁCORA!A90:R90"
+        ) as append_rows, patch.object(
+            bitacora, "_verify_saved_rows", return_value=verification
+        ):
+            result = bitacora.dispatch(
+                "bitacora_append_observations_batch", {"records": records}, confirmed=True
+            )
+
+        self.assertTrue(result["saved"])
+        self.assertEqual(result["saved_count"], 1)
+        self.assertEqual(result["skipped_existing"], 1)
+        self.assertEqual(result["verification"], verification)
+        self.assertEqual(len(append_rows.call_args.args[1]), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

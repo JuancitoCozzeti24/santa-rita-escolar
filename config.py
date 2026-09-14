@@ -13,7 +13,7 @@ BITACORA_ACADEMICS_COMPAT_NOTE = (
     "COMPATIBILIDAD BITÁCORA: si la herramienta bitacora_docente no aparece en este chat, "
     "usa sieweb_academics con action=bitacora_policy, bitacora_status, "
     "bitacora_resolve_student, bitacora_student_history, bitacora_student_report, bitacora_append_observation o "
-    "bitacora_append_academic. Las dos acciones append son escrituras y conservan la misma "
+    "bitacora_append_observations_batch o bitacora_append_academic. Las acciones append son escrituras y conservan la misma "
     "regla de autorización: una orden explícita del docente para registrar/anotar en la bitácora "
     "permite confirmed=true. Nunca inventes estudiante, hora, causa o identificadores."
 )
@@ -125,6 +125,7 @@ def _install_bitacora_academics_compat() -> None:
                     "bitacora_student_history",
                     "bitacora_student_report",
                     "bitacora_append_observation",
+                    "bitacora_append_observations_batch",
                     "bitacora_append_academic",
                 }
                 if act not in bitacora_actions:
@@ -140,7 +141,7 @@ def _install_bitacora_academics_compat() -> None:
                 (original_fn.__doc__ or "")
                 + "\n\nCompatibilidad BITÁCORA: action="
                 + "bitacora_policy|bitacora_status|bitacora_resolve_student|"
-                + "bitacora_student_history|bitacora_student_report|bitacora_append_observation|bitacora_append_academic. "
+                + "bitacora_student_history|bitacora_student_report|bitacora_append_observation|bitacora_append_observations_batch|bitacora_append_academic. "
                 + "Las acciones append requieren confirmed=true; una orden explícita del docente "
                 + "para registrar/anotar en la bitácora constituye autorización."
             )
