@@ -5,7 +5,8 @@ import os
 import re
 import threading
 import unicodedata
-from datetime import datetime
+from collections import Counter
+from datetime import date, datetime
 from typing import Any
 from urllib.parse import quote
 from zoneinfo import ZoneInfo
@@ -39,7 +40,8 @@ POLÍTICA PERMANENTE DE BITÁCORA DOCENTE:
 8. Si el docente no dijo que informó a familia o tutor/orientación, deja esos campos vacíos; no asumas “No”.
 9. Después de cada escritura, relee la fila guardada y verifica que el Registro_ID persista antes de afirmar que el registro quedó almacenado.
 10. La frase explícita “BITÁCORA: …”, “registra en la bitácora…” o equivalente constituye autorización para añadir el registro descrito y permite llamar la escritura con confirmed=true. Si el usuario solo está preguntando, analizando o ensayando una redacción, no escribas.
-11. Para informes de un estudiante, usa student_history y construye el informe solo con registros documentados; protege los datos de otros alumnos y no expongas nombres de terceros innecesariamente.
+11. Para informes de un estudiante, usa student_report (o student_history si solo necesitas los registros) y construye el informe solo con hechos documentados; protege los datos de otros alumnos y no expongas nombres de terceros innecesariamente.
+12. Si el docente indica un rango temporal, envía fecha_desde y fecha_hasta. Si solo dice “BITÁCORA” sin estudiante ni operación, consulta status y ofrece buscar por estudiante, sección o rango; no vuelques datos personales de todos los alumnos.
 """.strip()
 
 _token_lock = threading.RLock()
@@ -238,6 +240,59 @@ def _time_value(data: dict[str, Any]) -> str:
     return value
 
 
+def _parse_date(value: Any, field_name: str) -> date | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    for pattern in ("%d/%m/%Y", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(text, pattern).date()
+        except ValueError:
+            continue
+    raise ValueError(f"{field_name} debe usar DD/MM/YYYY o YYYY-MM-DD.")
+
+
+def _history_date_range(data: dict[str, Any]) -> tuple[date | None, date | None]:
+    start = _parse_date(
+        data.get("fecha_desde", data.get("date_from", data.get("desde"))),
+        "fecha_desde",
+    )
+    end = _parse_date(
+        data.get("fecha_hasta", data.get("date_to", data.get("hasta"))),
+        "fecha_hasta",
+    )
+    if start and end and start > end:
+        raise ValueError("fecha_desde no puede ser posterior a fecha_hasta.")
+    return start, end
+
+
+def _row_date(record: dict[str, Any]) -> date | None:
+    try:
+        return _parse_date(record.get("Fecha"), "Fecha")
+    except ValueError:
+        return None
+
+
+def _in_date_range(record: dict[str, Any], start: date | None, end: date | None) -> bool:
+    if not start and not end:
+        return True
+    current = _row_date(record)
+    if current is None:
+        return False
+    return (not start or current >= start) and (not end or current <= end)
+
+
+def _sort_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def key(record: dict[str, Any]) -> tuple[date, str, str]:
+        return (
+            _row_date(record) or date.min,
+            str(record.get("Hora") or ""),
+            str(record.get("Registro_ID") or ""),
+        )
+
+    return sorted(records, key=key)
+
+
 def _record_id(prefix: str, alumno_id: str) -> str:
     return f"{prefix}-{_now():%Y%m%d-%H%M%S%f}-{alumno_id}"
 
@@ -314,19 +369,164 @@ def _verify_saved(updated_range: str, record_id: str) -> dict[str, Any]:
 def _history(data: dict[str, Any]) -> dict[str, Any]:
     student = _require_resolved(data)
     limit = max(1, min(int(data.get("limit") or 100), 300))
+    start, end = _history_date_range(data)
     behavior_rows = _sheets_get("BITÁCORA!A1:R3000")
     bh = behavior_rows[0] if behavior_rows else []
-    behavior = [_row_dict(bh, row) for row in behavior_rows[1:] if len(row) >= 4 and str(row[3]) == student["alumno_id"]]
+    all_behavior = [
+        _row_dict(bh, row)
+        for row in behavior_rows[1:]
+        if len(row) >= 4 and str(row[3]).strip() == student["alumno_id"]
+    ]
+    behavior = _sort_records([
+        record for record in all_behavior if _in_date_range(record, start, end)
+    ])
     academic_rows = _sheets_get("ACADÉMICO!A1:M3000")
     ah = academic_rows[0] if academic_rows else []
-    academic = [_row_dict(ah, row) for row in academic_rows[1:] if len(row) >= 3 and str(row[2]) == student["alumno_id"]]
+    all_academic = [
+        _row_dict(ah, row)
+        for row in academic_rows[1:]
+        if len(row) >= 3 and str(row[2]).strip() == student["alumno_id"]
+    ]
+    academic = _sort_records([
+        record for record in all_academic if _in_date_range(record, start, end)
+    ])
     return {
         "student": student, "bitacora": behavior[-limit:], "academico": academic[-limit:],
-        "counts": {"bitacora": len(behavior), "academico": len(academic)},
+        "counts": {
+            "bitacora": len(behavior),
+            "academico": len(academic),
+            "bitacora_total_sin_filtro": len(all_behavior),
+            "academico_total_sin_filtro": len(all_academic),
+        },
+        "scope": {
+            "fecha_desde": start.strftime("%d/%m/%Y") if start else None,
+            "fecha_hasta": end.strftime("%d/%m/%Y") if end else None,
+            "limit": limit,
+            "chronological": True,
+        },
+        "source": {
+            "spreadsheet_title": SPREADSHEET_TITLE,
+            "spreadsheet_id": _spreadsheet_id(),
+            "spreadsheet_url": _spreadsheet_url(),
+        },
     }
 
 
+def _student_report(data: dict[str, Any]) -> dict[str, Any]:
+    history = _history(data)
+    behavior = list(history.get("bitacora") or [])
+    academic = list(history.get("academico") or [])
+    history["summary"] = {
+        "tipos_bitacora": dict(Counter(
+            str(row.get("Tipo de registro") or "Sin tipo") for row in behavior
+        )),
+        "categorias_bitacora": dict(Counter(
+            str(row.get("Categoría") or "Sin categoría") for row in behavior
+        )),
+        "niveles_importancia": dict(Counter(
+            str(row.get("Nivel de importancia") or "Sin nivel") for row in behavior
+        )),
+        "niveles_academicos": dict(Counter(
+            str(row.get("Nivel cualitativo") or "Sin nivel") for row in academic
+        )),
+    }
+    history["report_rules"] = [
+        "Redactar únicamente con los registros devueltos.",
+        "Separar fortalezas, observaciones/incidencias, seguimiento y evidencia académica.",
+        "Citar Fecha y Registro_ID en cada hecho relevante.",
+        "No convertir ausencia de registros en una afirmación absoluta sobre la conducta.",
+        "No atribuir al estudiante registros de sección con Alumno_ID vacío.",
+    ]
+    return history
+
+
+def dispatch(action: str, data: dict[str, Any], confirmed: bool = False) -> dict[str, Any]:
+    """Despachador único para el tool nativo y la ruta compatible estable."""
+    act = str(action or "").strip().lower()
+    aliases = {
+        "bitacora_policy": "policy",
+        "bitacora_status": "status",
+        "bitacora_resolve_student": "resolve_student",
+        "bitacora_student_history": "student_history",
+        "bitacora_student_report": "student_report",
+        "bitacora_append_observation": "append_observation",
+        "bitacora_append_academic": "append_academic",
+    }
+    act = aliases.get(act, act)
+    if act == "policy":
+        return {
+            "policy": BITACORA_POLICY,
+            "spreadsheet_id": _spreadsheet_id(),
+            "spreadsheet_url": _spreadsheet_url(),
+        }
+    if act == "status":
+        return {
+            "ok": True,
+            "available": True,
+            "spreadsheet_title": SPREADSHEET_TITLE,
+            "spreadsheet_id": _spreadsheet_id(),
+            "spreadsheet_url": _spreadsheet_url(),
+            "tabs": {
+                "ALUMNOS": _sheets_get("ALUMNOS!A1:G2")[:1],
+                "BITÁCORA": _sheets_get("BITÁCORA!A1:R2")[:1],
+                "ACADÉMICO": _sheets_get("ACADÉMICO!A1:M2")[:1],
+            },
+            "reads": ["policy", "status", "resolve_student", "student_history", "student_report"],
+            "writes": ["append_observation", "append_academic"],
+            "timezone": "America/Lima",
+            "append_only": True,
+        }
+    if act == "resolve_student":
+        return _resolve_student(data)
+    if act == "student_history":
+        return _history(data)
+    if act == "student_report":
+        return _student_report(data)
+    if act == "append_observation":
+        record, row = _preview_observation(data)
+        if not confirmed:
+            return {
+                "requires_confirmation": True,
+                "preview": record,
+                "note": "Una orden explícita del usuario con BITÁCORA permite repetir con confirmed=true.",
+                "spreadsheet_url": _spreadsheet_url(),
+            }
+        updated_range = _sheets_append("BITÁCORA!A:R", row)
+        return {
+            "ok": True,
+            "saved": True,
+            "kind": "BITÁCORA",
+            "record": record,
+            "verification": _verify_saved(updated_range, record["Registro_ID"]),
+            "spreadsheet_url": _spreadsheet_url(),
+        }
+    if act == "append_academic":
+        record, row = _preview_academic(data)
+        if not confirmed:
+            return {
+                "requires_confirmation": True,
+                "preview": record,
+                "note": "Una orden explícita del usuario con BITÁCORA permite repetir con confirmed=true.",
+                "spreadsheet_url": _spreadsheet_url(),
+            }
+        updated_range = _sheets_append("ACADÉMICO!A:M", row)
+        return {
+            "ok": True,
+            "saved": True,
+            "kind": "ACADÉMICO",
+            "record": record,
+            "verification": _verify_saved(updated_range, record["Registro_ID"]),
+            "spreadsheet_url": _spreadsheet_url(),
+        }
+    raise ValueError(
+        "action inválida. Usa policy, status, resolve_student, student_history, "
+        "student_report, append_observation o append_academic."
+    )
+
+
 def install(mcp) -> None:
+    if getattr(mcp, "_sieroom_bitacora_installed", False):
+        return
     try:
         current = str(getattr(mcp, "instructions", "") or "").strip()
         if BITACORA_POLICY not in current:
@@ -344,39 +544,8 @@ def install(mcp) -> None:
 
     @mcp.tool()
     def bitacora_docente(action: str, payload_json: str = "{}", confirmed: bool = False) -> dict[str, Any]:
-        """Gestiona BITÁCORA DOCENTE – MATEMÁTICA 2026. Lecturas: policy, status, resolve_student, student_history. Escrituras append_observation y append_academic agregan una sola fila y verifican persistencia. Requieren confirmed=true; una orden explícita del usuario con “BITÁCORA: ...” o “registra en la bitácora...” constituye autorización para confirmed=true."""
-        act = str(action or "").strip().lower()
-        data = _parse_payload(payload_json)
-        if act == "policy":
-            return {"policy": BITACORA_POLICY, "spreadsheet_id": _spreadsheet_id(), "spreadsheet_url": _spreadsheet_url()}
-        if act == "status":
-            return {
-                "ok": True, "spreadsheet_title": SPREADSHEET_TITLE,
-                "spreadsheet_id": _spreadsheet_id(), "spreadsheet_url": _spreadsheet_url(),
-                "tabs": {
-                    "ALUMNOS": _sheets_get("ALUMNOS!A1:G2")[:1],
-                    "BITÁCORA": _sheets_get("BITÁCORA!A1:R2")[:1],
-                    "ACADÉMICO": _sheets_get("ACADÉMICO!A1:M2")[:1],
-                },
-                "timezone": "America/Lima", "append_only": True,
-            }
-        if act == "resolve_student":
-            return _resolve_student(data)
-        if act == "student_history":
-            return _history(data)
-        if act == "append_observation":
-            record, row = _preview_observation(data)
-            if not confirmed:
-                return {"requires_confirmation": True, "preview": record, "note": "Una orden explícita del usuario con BITÁCORA permite repetir con confirmed=true."}
-            updated_range = _sheets_append("BITÁCORA!A:R", row)
-            return {"ok": True, "saved": True, "kind": "BITÁCORA", "record": record, "verification": _verify_saved(updated_range, record["Registro_ID"])}
-        if act == "append_academic":
-            record, row = _preview_academic(data)
-            if not confirmed:
-                return {"requires_confirmation": True, "preview": record, "note": "Una orden explícita del usuario con BITÁCORA permite repetir con confirmed=true."}
-            updated_range = _sheets_append("ACADÉMICO!A:M", row)
-            return {"ok": True, "saved": True, "kind": "ACADÉMICO", "record": record, "verification": _verify_saved(updated_range, record["Registro_ID"])}
-        raise ValueError("action inválida. Usa policy, status, resolve_student, student_history, append_observation o append_academic.")
+        """Consulta y registra en BITÁCORA DOCENTE – MATEMÁTICA 2026. Lecturas: policy, status, resolve_student, student_history y student_report; estos dos últimos admiten fecha_desde/fecha_hasta. Escrituras append_observation y append_academic agregan una sola fila y verifican persistencia. Requieren confirmed=true; una orden explícita del usuario con “BITÁCORA: ...” o “registra en la bitácora...” constituye autorización para confirmed=true."""
+        return dispatch(action, _parse_payload(payload_json), confirmed)
 
     setattr(mcp, "_sieroom_bitacora_installed", True)
     print("SieRoom Bitácora: herramienta bitacora_docente instalada.", flush=True)
