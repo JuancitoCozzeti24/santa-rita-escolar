@@ -20,6 +20,13 @@ from attendance import install as install_attendance
 from profe_johnny_brain import install as install_profe_johnny_brain
 from battle_accounts import install as install_battle_accounts
 from desktop_api import install as install_desktop_api
+from bitacora import install as install_bitacora
+
+
+# Registro explícito y verificable. El bootstrap de config mantiene compatibilidad
+# con despliegues anteriores; esta llamada garantiza que el módulo exista incluso
+# si FastMCP cambia el orden interno de inicialización.
+install_bitacora(mcp)
 
 
 PRIVATE_FEEDBACK_POLICY = """

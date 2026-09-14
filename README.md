@@ -1,4 +1,18 @@
-# SieRoom SRC 0.8.7
+# SieRoom SRC 0.8.16
+
+## Bitácora Docente integrada
+
+SieRoom consulta de forma nativa el Google Sheet **BITÁCORA DOCENTE – MATEMÁTICA 2026**. La palabra **BITÁCORA** activa esta fuente y no el Bridge de Classroom.
+
+- `bitacora_docente action=status` verifica el archivo y sus pestañas.
+- `resolve_student` identifica al alumno contra `ALUMNOS` sin inventar códigos.
+- `student_history` devuelve sus filas documentadas de `BITÁCORA` y `ACADÉMICO`.
+- `student_report` entrega el conjunto de evidencias y resúmenes necesario para redactar un informe completo.
+- `student_history` y `student_report` admiten `fecha_desde` y `fecha_hasta` en formato `DD/MM/YYYY` o `YYYY-MM-DD`.
+- `append_observation` y `append_academic` son operaciones append-only, requieren autorización explícita y releen la fila guardada para verificarla.
+- La ruta estable `sieweb_academics` conserva las acciones equivalentes con prefijo `bitacora_`, incluso si un chat todavía no descubre la herramienta nueva.
+
+El Bridge permanece limitado a comentarios privados, calificaciones y devoluciones de Classroom.
 
 ## Hotfix del panel privado vacío
 
