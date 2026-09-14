@@ -18,6 +18,8 @@ services:
         sync: false
       - key: GOOGLE_REFRESH_TOKEN
         sync: false
+      - key: BITACORA_SPREADSHEET_ID
+        value: 13QYo-Dx23LPzKbY7szrz1HWyOMgQwKP5_oriGKKCNnA
       - key: SIEWEB_BASE_URL
         value: https://santaritadecasia.sieweb.com.pe
       - key: SIEWEB_USER
