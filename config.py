@@ -12,7 +12,7 @@ load_dotenv()
 BITACORA_ACADEMICS_COMPAT_NOTE = (
     "COMPATIBILIDAD BITÁCORA: si la herramienta bitacora_docente no aparece en este chat, "
     "usa sieweb_academics con action=bitacora_policy, bitacora_status, "
-    "bitacora_resolve_student, bitacora_student_history, bitacora_append_observation o "
+    "bitacora_resolve_student, bitacora_student_history, bitacora_student_report, bitacora_append_observation o "
     "bitacora_append_academic. Las dos acciones append son escrituras y conservan la misma "
     "regla de autorización: una orden explícita del docente para registrar/anotar en la bitácora "
     "permite confirmed=true. Nunca inventes estudiante, hora, causa o identificadores."
@@ -123,106 +123,24 @@ def _install_bitacora_academics_compat() -> None:
                     "bitacora_status",
                     "bitacora_resolve_student",
                     "bitacora_student_history",
+                    "bitacora_student_report",
                     "bitacora_append_observation",
                     "bitacora_append_academic",
                 }
                 if act not in bitacora_actions:
                     return original_fn(action, payload_json, confirmed)
 
-                from bitacora import (
-                    BITACORA_POLICY,
-                    _history,
-                    _parse_payload,
-                    _preview_academic,
-                    _preview_observation,
-                    _resolve_student,
-                    _sheets_append,
-                    _spreadsheet_id,
-                    _spreadsheet_url,
-                    _verify_saved,
-                )
+                from bitacora import _parse_payload, dispatch
 
-                data = _parse_payload(payload_json)
-                if act == "bitacora_policy":
-                    result = {
-                        "policy": BITACORA_POLICY,
-                        "spreadsheet_id": _spreadsheet_id(),
-                        "spreadsheet_url": _spreadsheet_url(),
-                        "compatibility_route": "sieweb_academics",
-                    }
-                elif act == "bitacora_status":
-                    result = {
-                        "ok": True,
-                        "available": True,
-                        "compatibility_route": "sieweb_academics",
-                        "reads": [
-                            "bitacora_policy",
-                            "bitacora_status",
-                            "bitacora_resolve_student",
-                            "bitacora_student_history",
-                        ],
-                        "writes": [
-                            "bitacora_append_observation",
-                            "bitacora_append_academic",
-                        ],
-                        "spreadsheet_id": _spreadsheet_id(),
-                        "spreadsheet_url": _spreadsheet_url(),
-                    }
-                elif act == "bitacora_resolve_student":
-                    result = _resolve_student(data)
-                elif act == "bitacora_student_history":
-                    result = _history(data)
-                elif act == "bitacora_append_observation":
-                    record, row = _preview_observation(data)
-                    if not confirmed:
-                        result = {
-                            "requires_confirmation": True,
-                            "preview": record,
-                            "note": (
-                                "Una orden explícita del docente para registrar/anotar en la "
-                                "BITÁCORA permite repetir con confirmed=true."
-                            ),
-                            "spreadsheet_url": _spreadsheet_url(),
-                        }
-                    else:
-                        updated_range = _sheets_append("BITÁCORA!A:R", row)
-                        result = {
-                            "ok": True,
-                            "saved": True,
-                            "kind": "BITÁCORA",
-                            "record": record,
-                            "verification": _verify_saved(updated_range, record["Registro_ID"]),
-                            "spreadsheet_url": _spreadsheet_url(),
-                        }
-                else:
-                    record, row = _preview_academic(data)
-                    if not confirmed:
-                        result = {
-                            "requires_confirmation": True,
-                            "preview": record,
-                            "note": (
-                                "Una orden explícita del docente para registrar/anotar en la "
-                                "BITÁCORA permite repetir con confirmed=true."
-                            ),
-                            "spreadsheet_url": _spreadsheet_url(),
-                        }
-                    else:
-                        updated_range = _sheets_append("ACADÉMICO!A:M", row)
-                        result = {
-                            "ok": True,
-                            "saved": True,
-                            "kind": "ACADÉMICO",
-                            "record": record,
-                            "verification": _verify_saved(updated_range, record["Registro_ID"]),
-                            "spreadsheet_url": _spreadsheet_url(),
-                        }
+                result = dispatch(act, _parse_payload(payload_json), confirmed)
+                result["compatibility_route"] = "sieweb_academics"
                 return json.dumps(result, ensure_ascii=False, default=str)
 
             sieweb_academics_with_bitacora.__doc__ = (
                 (original_fn.__doc__ or "")
                 + "\n\nCompatibilidad BITÁCORA: action="
                 + "bitacora_policy|bitacora_status|bitacora_resolve_student|"
-                + "bitacora_student_history|bitacora_append_observation|bitacora_append_academic. "
+                + "bitacora_student_history|bitacora_student_report|bitacora_append_observation|bitacora_append_academic. "
                 + "Las acciones append requieren confirmed=true; una orden explícita del docente "
                 + "para registrar/anotar en la bitácora constituye autorización."
             )
