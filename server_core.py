@@ -10,10 +10,6 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from mcp.server.fastmcp import FastMCP, Image
-from mcp.server.auth.settings import AuthSettings
-from pydantic import AnyHttpUrl
-
-from auth import Auth0TokenVerifier
 
 from classroom import ClassroomClient, ClassroomError
 from config import settings
@@ -21,12 +17,6 @@ from sieweb import SieWebClient
 from bridge import ClassroomBridgeQueue
 from starlette.requests import Request
 from starlette.responses import JSONResponse
-
-if not settings.auth0_issuer or not settings.auth0_audience:
-    raise RuntimeError(
-        "Falta configurar AUTH0_ISSUER y AUTH0_AUDIENCE. "
-        "El servidor remoto se niega a iniciar sin autenticación OAuth."
-    )
 
 mcp = FastMCP(
     "SieRoom SRC",
@@ -63,14 +53,6 @@ mcp = FastMCP(
         "v0.8.7 conserva la vista ya validada cuando lectura y escritura corresponden al mismo alumno, evitando que Classroom desmonte el panel privado por una recarga innecesaria. "
         "Si se solicita comentar, calificar y devolver, primero prepara/revisa la retroalimentación, luego encola el comentario privado y deja que el puente lo publique; "
         "solo después el servidor aplica la nota/devolución oficial configurada para ese trabajo."
-    ),
-    token_verifier=Auth0TokenVerifier(
-        issuer=settings.auth0_issuer, audience=settings.auth0_audience
-    ),
-    auth=AuthSettings(
-        issuer_url=AnyHttpUrl(settings.auth0_issuer.rstrip("/") + "/"),
-        resource_server_url=AnyHttpUrl(settings.mcp_resource_url),
-        required_scopes=[settings.auth0_required_scope],
     ),
 )
 
