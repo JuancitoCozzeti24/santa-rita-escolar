@@ -2,6 +2,16 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 
 const source = fs.readFileSync(new URL("./browser_extension/content.js", import.meta.url), "utf8");
+const bridgeSource = fs.readFileSync(new URL("./browser_extension/bridge.js", import.meta.url), "utf8");
+
+assert.match(bridgeSource, /let queueHalted = false;/,
+  "El puente debe mantener un estado explícito de pausa tras cualquier fallo.");
+assert.match(bridgeSource, /result\?\.pausedForAccount \|\| result\?\.failed \|\| result\?\.halted/,
+  "La cola debe detenerse inmediatamente cuando falla el comentario del estudiante actual.");
+assert.match(bridgeSource, /COLA DETENIDA: el trabajo/,
+  "El fallo debe mostrarse de forma visible y no quedar silencioso.");
+assert.match(bridgeSource, /queueHalted = false;[\s\S]{0,120}queueHaltReason = "";/,
+  "Solo RESET debe limpiar la pausa de seguridad.");
 const normSource = `const norm = (s) => String(s || "")
   .normalize("NFD")
   .replace(/[\\u0300-\\u036f]/g, "")
