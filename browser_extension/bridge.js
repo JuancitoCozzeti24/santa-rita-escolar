@@ -2,6 +2,7 @@ const statusEl = document.getElementById("status");
 const logEl = document.getElementById("log");
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const SIEROOM_CONTENT_BUILD = "0.8.7-HF4-GRADE-TARGET";
+const DEFAULT_TEACHER_EMAIL = "jbringas@santaritadecasia.edu.pe";
 let classroomTabId = null;
 let busy = false;
 let resetGeneration = 0;
@@ -48,7 +49,7 @@ async function cfg() {
   const data = await chrome.storage.local.get(["endpoint", "teacherEmail", "secret"]);
   return {
     endpoint: String(data.endpoint || "https://santa-rita-escolar-tcpb.onrender.com").replace(/\/$/, ""),
-    teacherEmail: String(data.teacherEmail || "").trim().toLowerCase(),
+    teacherEmail: String(data.teacherEmail || DEFAULT_TEACHER_EMAIL).trim().toLowerCase(),
     secret: String(data.secret || "")
   };
 }
