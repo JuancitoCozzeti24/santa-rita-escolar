@@ -382,7 +382,17 @@
     if (actual.includes(expected)) return true;
     const fingerprints = commentFingerprints(expected);
     const matches = fingerprints.filter((value) => actual.includes(value)).length;
-    return matches >= Math.min(2, fingerprints.length);
+    if (matches >= Math.min(2, fingerprints.length)) return true;
+
+    // Classroom contrae comentarios extensos después de publicarlos. En ese
+    // estado el DOM contiene el inicio exacto y uno o más encabezados, pero no
+    // el texto completo. La lectura-guardia previa ya verificó la entrega y el
+    // panel privados; por eso el prefijo exacto de 90 caracteres más estructura
+    // pedagógica visible es evidencia suficiente y evita falsos fallos.
+    const prefix = expected.slice(0, Math.min(90, expected.length));
+    return prefix.length >= 60 &&
+      actual.includes(prefix) &&
+      privateCommentMarkers(actual).length >= 1;
   }
 
   function composerHasFullText(composer, wanted) {
