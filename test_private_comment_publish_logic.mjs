@@ -58,6 +58,12 @@ assert.equal(
   false,
   "No debe confundir retroalimentaciones distintas."
 );
+const collapsed = detailed.slice(0, 150);
+assert.equal(
+  commentTextMatches(collapsed, detailed),
+  true,
+  "Debe confirmar una tarjeta de Classroom contraída si conserva el prefijo exacto y un encabezado pedagógico."
+);
 
 const bridge = fs.readFileSync(new URL("./browser_extension/bridge.js", import.meta.url), "utf8");
 const retryStart = bridge.indexOf("function isMissingPrivateEditorResult");
