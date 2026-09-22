@@ -511,12 +511,36 @@
     const sendMeta = meta(send);
     send.click();
     const started = Date.now();
+    let composerClearedSince = 0;
     while (Date.now() - started < 22000) {
       await sleep(500);
       const currentSection = privateSectionNow();
       if (postedCommentVisible(text, currentSection) ||
           (container?.isConnected && postedCommentVisible(text, { label, composer, container }))) {
         return { ok: true, alreadyPresent: false, method: "dom-v0.8.7", url: location.href };
+      }
+
+      // Classroom suele contraer comentarios extensos y el texto recién publicado
+      // deja de estar disponible en el DOM. El vaciado sostenido del editor después
+      // de un clic seguro en Publicar es la confirmación de aceptación de su propia UI.
+      const liveComposer = currentSection?.composer || (composer?.isConnected ? composer : null);
+      const editorCleared = !liveComposer || !norm(composerText(liveComposer));
+      const sendAcknowledged = !send.isConnected || send.disabled ||
+        send.getAttribute("aria-disabled") === "true" ||
+        (liveComposer && !findSendButton(currentSection?.container || container, liveComposer));
+      if (editorCleared && sendAcknowledged) {
+        if (!composerClearedSince) composerClearedSince = Date.now();
+        if (Date.now() - composerClearedSince >= 1800) {
+          return {
+            ok: true,
+            alreadyPresent: false,
+            method: "classroom-ui-submit-ack-v1",
+            visualCollapsed: true,
+            url: location.href
+          };
+        }
+      } else {
+        composerClearedSince = 0;
       }
     }
     throw new Error(
@@ -536,7 +560,7 @@
     return norm(parts.join(" "));
   }
 
-  const SIEROOM_CONTENT_BUILD = "0.8.7-HF4-GRADE-TARGET";
+  const SIEROOM_CONTENT_BUILD = "0.8.7-HF5-COMMENT-ACK";
 
   function gradeTargetLog(event, detail = {}) {
     try { console.info(`[SieRoom HF4] ${event}`, detail); } catch (_) {}
