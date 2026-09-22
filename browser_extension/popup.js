@@ -2,11 +2,17 @@ const endpoint = document.getElementById("endpoint");
 const teacherEmail = document.getElementById("teacherEmail");
 const secret = document.getElementById("secret");
 const msg = document.getElementById("msg");
+const DEFAULT_TEACHER_EMAIL = "jbringas@santaritadecasia.edu.pe";
 
 (async () => {
   const data = await chrome.storage.local.get(["endpoint", "teacherEmail", "secret"]);
   if (data.endpoint) endpoint.value = data.endpoint;
-  if (data.teacherEmail) teacherEmail.value = data.teacherEmail;
+  if (data.teacherEmail) {
+    teacherEmail.value = data.teacherEmail;
+  } else {
+    teacherEmail.value = DEFAULT_TEACHER_EMAIL;
+    await chrome.storage.local.set({ teacherEmail: DEFAULT_TEACHER_EMAIL });
+  }
   if (data.secret) secret.value = data.secret;
 })();
 
