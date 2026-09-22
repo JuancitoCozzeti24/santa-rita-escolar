@@ -6,6 +6,8 @@ let classroomTabId = null;
 let busy = false;
 let resetGeneration = 0;
 let lastJobStartedAt = 0;
+let queueHalted = false;
+let queueHaltReason = "";
 
 class BridgeResetError extends Error {}
 
@@ -509,7 +511,12 @@ async function processJob(job, generation) {
     const message = String(e?.message || e);
     log(`ERROR ${job.id}: ${message}`);
     try { await fail(job, message); } catch (_) {}
-    return { failed: true };
+    queueHalted = true;
+    queueHaltReason = message;
+    statusEl.textContent = `COLA DETENIDA: el trabajo ${job.id} falló y no se avanzará a otro estudiante. ${message}`;
+    statusEl.className = "bad";
+    log("COLA DETENIDA: se requiere RESET después de corregir el problema; no se procesarán más estudiantes.");
+    return { failed: true, halted: true };
   } finally {
     lastJobStartedAt = 0;
     if (previousActiveTabId && previousActiveTabId !== classroomTabId) {
@@ -522,6 +529,8 @@ async function processJob(job, generation) {
 async function resetQueue({ retryFailed = false, fromButton = true } = {}) {
   resetGeneration += 1;
   const myGeneration = resetGeneration;
+  queueHalted = false;
+  queueHaltReason = "";
   busy = false;
   statusEl.textContent = "Reiniciando y desatascando cola…";
   statusEl.className = "bad";
@@ -556,7 +565,7 @@ async function drainQueue(generation, maxJobs = 50) {
     const job = nxt.data?.job;
     if (!job) break;
     const result = await processJob(job, generation);
-    if (result?.pausedForAccount) break;
+    if (result?.pausedForAccount || result?.failed || result?.halted) break;
     assertGeneration(generation);
     processed += 1;
     // Pequeñísima pausa para que la UI y Chrome respiren, sin meter 3 s por trabajo.
@@ -566,6 +575,12 @@ async function drainQueue(generation, maxJobs = 50) {
 }
 
 async function poll(force = false) {
+  if (queueHalted) {
+    statusEl.textContent = `COLA DETENIDA: ${queueHaltReason || "un trabajo falló"}. Corrige el problema y usa RESET para reintentar.`;
+    statusEl.className = "bad";
+    if (force) log("La cola permanece detenida; no se avanzará a otro estudiante hasta usar RESET.");
+    return;
+  }
   // "Procesar ahora" nunca invalida un trabajo en curso. Solo RESET puede
   // cancelar una generación y liberar el claim del servidor.
   if (busy) {
