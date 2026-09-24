@@ -172,28 +172,197 @@ def _course_for_student(student: dict[str, str]) -> tuple[dict[str, Any] | None,
     return (courses[0] if courses else None), None
 
 
-def _student_classroom_summary(student_key: str, limit: int = 25) -> dict[str, Any]:
+def _all_active_students() -> list[dict[str, str]]:
+    rows = ba._sheet_get_from(ba.ROSTER_SHEET_ID, "ALUMNOS!A2:G1000")
+    out: list[dict[str, str]] = []
+    for raw in rows:
+        row = list(raw) + [""] * (7 - len(raw))
+        key = str(row[0] or "").strip()
+        full_name = str(row[1] or "").strip()
+        grade_match = re.search(r"[25]", str(row[2] or ""))
+        section_letter = _norm(row[3])
+        active = _norm(row[5]) in {"ACTIVO", "ACTIVE", "SI", "TRUE", "1"}
+        if not key or not full_name or not grade_match or section_letter not in {"A", "B"} or not active:
+            continue
+        out.append({
+            "student_key": key,
+            "full_name": full_name,
+            "grade": grade_match.group(0),
+            "section": section_letter,
+            "group": grade_match.group(0) + section_letter,
+            "alucod": str(row[6] or "").strip(),
+        })
+    return out
+
+
+def _resolve_student_from_text(text: str) -> dict[str, str] | None:
+    query = _norm(text)
+    if not query:
+        return None
+    query_tokens = set(query.split())
+    candidates: list[tuple[float, dict[str, str]]] = []
+    for student in _all_active_students():
+        name = _norm(student["full_name"])
+        tokens = [t for t in name.split() if len(t) > 1]
+        if not tokens:
+            continue
+        exact = bool(name and name in query)
+        overlap = len(set(tokens) & query_tokens)
+        if exact:
+            score = 100.0 + len(tokens)
+        elif overlap >= 2:
+            score = overlap * 10.0 + (overlap / max(1, len(set(tokens))))
+        else:
+            continue
+        group = student.get("group", "")
+        if group and _norm(group) in query:
+            score += 2.0
+        candidates.append((score, student))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: (-item[0], _norm(item[1]["full_name"])))
+    if len(candidates) > 1 and abs(candidates[0][0] - candidates[1][0]) < 0.0001:
+        return None
+    return candidates[0][1]
+
+
+def _student_classroom_summary(student_key: str, limit: int = 100) -> dict[str, Any]:
     student = _roster_record(student_key)
     if not student:
         raise ValueError("student_not_found")
     course, roster = _course_for_student(student)
     if not course:
-        return {"student": student, "course": None, "activities": [], "warning": "classroom_course_not_found"}
+        return {
+            "student": student,
+            "course": None,
+            "activities": [],
+            "progress": {
+                "total": 0,
+                "submitted": 0,
+                "pending": 0,
+                "late": 0,
+                "graded": 0,
+                "ungraded_submitted": 0,
+                "average_percent": None,
+            },
+            "warning": "classroom_course_not_found",
+        }
+
     course_id = str(course.get("id") or "")
     user_id = str((roster or {}).get("userId") or "")
+    works = brain._client.list_coursework(course_id, include_drafts=False)[:max(1, min(limit, 100))]
+
+    by_work: dict[str, dict[str, Any]] = {}
+    if user_id:
+        try:
+            for sub in brain._client.list_submissions(course_id, "-"):
+                if str(sub.get("userId") or "") == user_id:
+                    by_work[str(sub.get("courseWorkId") or "")] = sub
+        except Exception:
+            by_work = {}
+
     activities: list[dict[str, Any]] = []
-    for work in brain._client.list_coursework(course_id, include_drafts=False)[:max(1, min(limit, 50))]:
-        item = {"id": str(work.get("id") or ""), "title": str(work.get("title") or ""), "due": brain._format_due(work), "max_points": work.get("maxPoints"), "state": None, "late": None, "grade": None, "submitted": None}
-        if user_id and item["id"]:
+    submitted_count = 0
+    pending_count = 0
+    late_count = 0
+    graded_count = 0
+    ungraded_submitted = 0
+    earned_sum = 0.0
+    max_sum = 0.0
+
+    labels = {
+        "TURNED_IN": "Entregada",
+        "RETURNED": "Devuelta / calificada",
+        "RECLAIMED_BY_STUDENT": "Retirada por el estudiante",
+        "CREATED": "Pendiente",
+        "NEW": "Pendiente",
+    }
+
+    for work in works:
+        work_id = str(work.get("id") or "")
+        item: dict[str, Any] = {
+            "id": work_id,
+            "title": str(work.get("title") or ""),
+            "due": brain._format_due(work),
+            "max_points": work.get("maxPoints"),
+            "state": None,
+            "status": "Pendiente",
+            "late": False,
+            "grade": None,
+            "submitted": False,
+            "updated_at": None,
+        }
+
+        sub = by_work.get(work_id)
+        if sub is None and user_id and work_id and not by_work:
             try:
-                sub = next((s for s in brain._client.list_submissions(course_id, item["id"]) if str(s.get("userId") or "") == user_id), None)
+                sub = next(
+                    (
+                        row
+                        for row in brain._client.list_submissions(course_id, work_id)
+                        if str(row.get("userId") or "") == user_id
+                    ),
+                    None,
+                )
             except Exception:
                 sub = None
-            if sub:
-                item.update({"state": sub.get("state"), "late": sub.get("late"), "grade": sub.get("assignedGrade") if sub.get("assignedGrade") is not None else sub.get("draftGrade"), "submitted": sub.get("state") in {"TURNED_IN", "RETURNED"}, "updated_at": sub.get("updateTime")})
-        activities.append(item)
-    return {"student": {"student_key": student["student_key"], "display_name": student["full_name"], "grade": student["grade"], "section": student["section"]}, "course": {"id": course_id, "name": course.get("name")}, "classroom_user_resolved": bool(user_id), "activities": activities}
 
+        if sub:
+            state = str(sub.get("state") or "")
+            grade = sub.get("assignedGrade")
+            if grade is None:
+                grade = sub.get("draftGrade")
+            is_submitted = state in {"TURNED_IN", "RETURNED"}
+            item.update({
+                "state": state or None,
+                "status": labels.get(state, state or "Pendiente"),
+                "late": bool(sub.get("late")),
+                "grade": grade,
+                "submitted": is_submitted,
+                "updated_at": sub.get("updateTime"),
+            })
+
+        if item["submitted"]:
+            submitted_count += 1
+            if item["grade"] is None:
+                ungraded_submitted += 1
+        else:
+            pending_count += 1
+        if item["late"]:
+            late_count += 1
+        if item["grade"] is not None:
+            graded_count += 1
+            try:
+                max_points = float(item["max_points"])
+                grade_value = float(item["grade"])
+                if max_points > 0:
+                    earned_sum += grade_value
+                    max_sum += max_points
+            except (TypeError, ValueError):
+                pass
+        activities.append(item)
+
+    average_percent = round((earned_sum / max_sum) * 100.0, 1) if max_sum > 0 else None
+    return {
+        "student": {
+            "student_key": student["student_key"],
+            "display_name": student["full_name"],
+            "grade": student["grade"],
+            "section": student["section"],
+        },
+        "course": {"id": course_id, "name": course.get("name"), "section": course.get("section")},
+        "classroom_user_resolved": bool(user_id),
+        "progress": {
+            "total": len(activities),
+            "submitted": submitted_count,
+            "pending": pending_count,
+            "late": late_count,
+            "graded": graded_count,
+            "ungraded_submitted": ungraded_submitted,
+            "average_percent": average_percent,
+        },
+        "activities": activities,
+    }
 
 def _allowed_student(payload: dict[str, Any], requested: str = "") -> str:
     role = str(payload.get("role") or "")
@@ -305,6 +474,13 @@ def install(mcp: Any) -> None:
         requested = str(body.get("student_key") or "").strip()
         if not message:
             return _json({"ok": False, "error": "empty_message"}, 400)
+
+        owner_auto_resolved = None
+        if payload.get("role") == "owner" and not requested:
+            owner_auto_resolved = _resolve_student_from_text(message)
+            if owner_auto_resolved:
+                requested = owner_auto_resolved["student_key"]
+
         student_key = _allowed_student(payload, requested)
         private_context = ""
         summary: dict[str, Any] | None = None
@@ -324,7 +500,25 @@ def install(mcp: Any) -> None:
             reply = ""
         if not reply:
             reply = "No pude generar la respuesta completa en este momento, pero tu identidad sí quedó verificada."
-        return _json({"ok": True, "reply": reply, "meta": {"role": payload["role"], "student_key": student_key or None, "private_classroom_used": bool(summary), "api_version": API_VERSION}})
+        return _json({
+            "ok": True,
+            "reply": reply,
+            "meta": {
+                "role": payload["role"],
+                "student_key": student_key or None,
+                "private_classroom_used": bool(summary),
+                "owner_auto_resolved_student": (
+                    {
+                        "student_key": owner_auto_resolved["student_key"],
+                        "display_name": owner_auto_resolved["full_name"],
+                        "grade": owner_auto_resolved["grade"],
+                        "section": owner_auto_resolved["section"],
+                    }
+                    if owner_auto_resolved else None
+                ),
+                "api_version": API_VERSION,
+            },
+        })
 
     @mcp.custom_route("/profe-johnny/v1/owner/family-link", methods=["POST", "OPTIONS"])
     async def family_link_route(request: Request):
