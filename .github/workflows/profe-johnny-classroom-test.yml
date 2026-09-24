@@ -80,6 +80,8 @@ jobs:
           mkdir -p android-signing-tools
           cp "$ANDROID_HOME/build-tools/35.0.0/zipalign" android-signing-tools/
           cp "$ANDROID_HOME/build-tools/35.0.0/lib/apksigner.jar" android-signing-tools/
+          mkdir -p android-signing-tools/lib64
+          cp "$ANDROID_HOME/build-tools/35.0.0/lib64/libc++.so" android-signing-tools/lib64/
 
       - name: Upload Android signing tools
         uses: actions/upload-artifact@v4
