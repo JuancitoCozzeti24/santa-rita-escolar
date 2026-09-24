@@ -37,12 +37,14 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -62,6 +64,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -266,25 +269,34 @@ private fun ChatScreen(onBack: () -> Unit) {
     var input by remember { mutableStateOf("") }
     var sending by remember { mutableStateOf(false) }
 
+    // El código del docente nunca se almacena en el APK ni se persiste.
+    // Solo conservamos el token temporal devuelto por el servidor durante esta sesión.
+    var teacherToken by remember { mutableStateOf<String?>(null) }
+    var showTeacherLogin by remember { mutableStateOf(false) }
+    var teacherCode by remember { mutableStateOf("") }
+    var teacherError by remember { mutableStateOf<String?>(null) }
+    var authenticating by remember { mutableStateOf(false) }
+
     LaunchedEffect(messages.size) {
-        if (messages.isNotEmpty()) {
-            listState.animateScrollToItem(messages.lastIndex)
+        if (messages.size > 1) {
+            listState.scrollToItem(messages.lastIndex)
         }
     }
 
-    Box(Modifier.fillMaxSize().imePadding()) {
-        Image(
-            painter = painterResource(R.drawable.chat_fondo),
-            contentDescription = "Fondo matemático del chat",
-            contentScale = ContentScale.Crop,
-            modifier = Modifier.fillMaxSize()
-        )
-        Box(
-            Modifier
-                .fillMaxSize()
-                .background(Color.White.copy(alpha = 0.74f))
-        )
-
+    Box(
+        Modifier
+            .fillMaxSize()
+            .imePadding()
+            .background(
+                Brush.verticalGradient(
+                    listOf(
+                        Color(0xFFF7F3E8),
+                        Color(0xFFEAF4EF),
+                        Color(0xFFF7F3E8)
+                    )
+                )
+            )
+    ) {
         Column(Modifier.fillMaxSize()) {
             Row(
                 Modifier.fillMaxWidth().background(Color(0xE6004934)).padding(16.dp, 14.dp),
@@ -306,6 +318,49 @@ private fun ChatScreen(onBack: () -> Unit) {
             ) {
                 FilterChip(selected = grade == "2.º", onClick = { grade = "2.º" }, label = { Text("2.º año") })
                 FilterChip(selected = grade == "5.º", onClick = { grade = "5.º" }, label = { Text("5.º año") })
+            }
+
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Button(
+                    onClick = {
+                        if (teacherToken.isNullOrBlank()) {
+                            teacherError = null
+                            teacherCode = ""
+                            showTeacherLogin = true
+                        } else {
+                            teacherToken = null
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (teacherToken.isNullOrBlank()) Color(0xFF5A6862) else Color(0xFF006C4F)
+                    )
+                ) {
+                    Text(if (teacherToken.isNullOrBlank()) "Modo docente" else "Salir modo docente")
+                }
+
+                Text(
+                    if (teacherToken.isNullOrBlank())
+                        "Consulta general"
+                    else
+                        "Modo docente activo · Classroom privado habilitado",
+                    color = if (teacherToken.isNullOrBlank()) Color(0xFF5A6862) else Color(0xFF006C4F),
+                    fontSize = 12.sp,
+                    fontWeight = if (teacherToken.isNullOrBlank()) FontWeight.Normal else FontWeight.SemiBold,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+
+            if (!teacherToken.isNullOrBlank()) {
+                Text(
+                    "Puedes preguntar, por ejemplo: “¿Cómo va Claudio León en Classroom?”",
+                    color = Color(0xFF315B4C),
+                    fontSize = 12.sp,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 5.dp)
+                )
             }
 
             if (sending) {
@@ -363,11 +418,14 @@ private fun ChatScreen(onBack: () -> Unit) {
                     enabled = input.isNotBlank() && !sending,
                     onClick = {
                         val question = input.trim()
+                        val activeTeacherToken = teacherToken
                         input = ""
                         messages += ChatMessage(question, true)
                         sending = true
                         scope.launch {
-                            val answer = withContext(Dispatchers.IO) { askBackend(question, grade) }
+                            val answer = withContext(Dispatchers.IO) {
+                                askBackend(question, grade, activeTeacherToken)
+                            }
                             messages += ChatMessage(answer, false)
                             sending = false
                         }
@@ -376,30 +434,135 @@ private fun ChatScreen(onBack: () -> Unit) {
                 ) { Text(if (sending) "Consultando…" else "Enviar") }
             }
         }
+
+        if (showTeacherLogin) {
+            AlertDialog(
+                onDismissRequest = {
+                    if (!authenticating) {
+                        showTeacherLogin = false
+                        teacherCode = ""
+                        teacherError = null
+                    }
+                },
+                title = { Text("Activar modo docente") },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("Ingresa tu código de docente. El código no se guarda en el teléfono.")
+                        OutlinedTextField(
+                            value = teacherCode,
+                            onValueChange = {
+                                teacherCode = it
+                                teacherError = null
+                            },
+                            label = { Text("Código") },
+                            visualTransformation = PasswordVisualTransformation(),
+                            singleLine = true,
+                            enabled = !authenticating
+                        )
+                        teacherError?.let {
+                            Text(it, color = Color(0xFFB3261E), fontSize = 13.sp)
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(
+                        enabled = teacherCode.isNotBlank() && !authenticating,
+                        onClick = {
+                            val code = teacherCode
+                            authenticating = true
+                            teacherError = null
+                            scope.launch {
+                                val token = withContext(Dispatchers.IO) { authenticateOwner(code) }
+                                authenticating = false
+                                if (token.isNullOrBlank()) {
+                                    teacherError = "No se pudo activar el modo docente. Verifica el código e inténtalo otra vez."
+                                } else {
+                                    teacherToken = token
+                                    teacherCode = ""
+                                    showTeacherLogin = false
+                                    messages += ChatMessage(
+                                        "Modo docente activado. Ahora puedo consultar de forma privada el avance de tus estudiantes en Classroom.",
+                                        false
+                                    )
+                                }
+                            }
+                        }
+                    ) {
+                        Text(if (authenticating) "Verificando…" else "Activar")
+                    }
+                },
+                dismissButton = {
+                    TextButton(
+                        enabled = !authenticating,
+                        onClick = {
+                            showTeacherLogin = false
+                            teacherCode = ""
+                            teacherError = null
+                        }
+                    ) { Text("Cancelar") }
+                }
+            )
+        }
     }
 }
 
-private fun askBackend(message: String, grade: String): String {
+private fun authenticateOwner(code: String): String? {
+    val base = BuildConfig.API_BASE_URL.trim().trimEnd('/')
+    if (base.isBlank() || code.isBlank()) return null
+    return try {
+        val connection = (URL("$base/auth").openConnection() as HttpURLConnection).apply {
+            requestMethod = "POST"
+            connectTimeout = 15_000
+            readTimeout = 30_000
+            doOutput = true
+            setRequestProperty("Content-Type", "application/json; charset=utf-8")
+        }
+        val payload = JSONObject()
+            .put("role", "owner")
+            .put("code", code)
+            .toString()
+        connection.outputStream.use { it.write(payload.toByteArray(Charsets.UTF_8)) }
+        val httpCode = connection.responseCode
+        val stream = if (httpCode in 200..299) connection.inputStream else connection.errorStream
+        val body = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
+        connection.disconnect()
+        if (httpCode !in 200..299) null
+        else JSONObject(body).optString("token").takeIf { it.isNotBlank() }
+    } catch (_: Exception) {
+        null
+    }
+}
+
+private fun askBackend(message: String, grade: String, teacherToken: String? = null): String {
     val base = BuildConfig.API_BASE_URL.trim().trimEnd('/')
     if (base.isBlank()) {
         return "No pude atender tu consulta en este momento. Inténtalo nuevamente en unos segundos."
     }
     return try {
-        val connection = (URL("$base/chat").openConnection() as HttpURLConnection).apply {
+        val secure = !teacherToken.isNullOrBlank()
+        val endpoint = if (secure) "$base/secure-chat" else "$base/chat"
+        val connection = (URL(endpoint).openConnection() as HttpURLConnection).apply {
             requestMethod = "POST"
             connectTimeout = 15_000
             readTimeout = 60_000
             doOutput = true
             setRequestProperty("Content-Type", "application/json; charset=utf-8")
+            if (secure) setRequestProperty("Authorization", "Bearer $teacherToken")
         }
         val payload = JSONObject().put("message", message).put("grade", grade).toString()
         connection.outputStream.use { it.write(payload.toByteArray(Charsets.UTF_8)) }
-        val code = connection.responseCode
-        val stream = if (code in 200..299) connection.inputStream else connection.errorStream
-        val body = stream.bufferedReader().use { it.readText() }
+        val httpCode = connection.responseCode
+        val stream = if (httpCode in 200..299) connection.inputStream else connection.errorStream
+        val body = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
         connection.disconnect()
-        if (code !in 200..299) "No pude conectar con el asistente en este momento."
-        else JSONObject(body).optString("reply").ifBlank { "No recibí una respuesta válida del servidor." }
+
+        if (httpCode == 401 && secure) {
+            "La sesión del modo docente venció o ya no es válida. Sal del modo docente y vuelve a activarlo."
+        } else if (httpCode !in 200..299) {
+            "No pude conectar con el asistente en este momento."
+        } else {
+            JSONObject(body).optString("reply").ifBlank { "No recibí una respuesta válida del servidor." }
+        }
     } catch (_: Exception) {
         "No pude conectar con el asistente en este momento. Inténtalo nuevamente en unos minutos."
     }
