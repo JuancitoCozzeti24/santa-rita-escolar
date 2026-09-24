@@ -8,7 +8,7 @@ import profe_johnny_identity_v3 as identity
 import profe_johnny_mobile_v2 as mobile
 from bitacora import _google_request
 
-API_VERSION = "2026-09-11-identity-v4"
+API_VERSION = "2026-09-24-identity-v5"
 
 
 def _course_for_student(student: dict[str, str]):
@@ -111,9 +111,16 @@ def _institutional_context() -> str:
 
 def _private_context(student_key: str):
     summary = identity._student_classroom_summary(student_key)
+    progress = summary.get("progress") or {}
     lines = [
         "## CLASSROOM PRIVADO DEL USUARIO AUTENTICADO",
         f"Estudiante: {summary['student']['display_name']} | {summary['student']['grade']}.º {summary['student']['section']}",
+        (
+            "Resumen Classroom: "
+            f"total={progress.get('total', 0)} | entregadas={progress.get('submitted', 0)} | "
+            f"pendientes={progress.get('pending', 0)} | tardías={progress.get('late', 0)} | "
+            f"calificadas={progress.get('graded', 0)} | promedio={progress.get('average_percent')}%"
+        ),
     ]
     for item in summary.get("activities") or []:
         lines.append(
@@ -147,6 +154,8 @@ def _install_bootstrap_contract() -> None:
             "owner_login": True,
             "secure_chat": True,
             "student_private_classroom": True,
+            "classroom_progress_summary": True,
+            "owner_natural_student_lookup": True,
             "sieweb_raw_hidden_from_students": True,
         })
         data.setdefault("endpoints", {}).update({
