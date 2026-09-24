@@ -20,6 +20,13 @@ jobs:
         with:
           ref: profe-johnny-classroom-test
 
+      - name: Apply polished chat formatting
+        shell: bash
+        run: |
+          python profe-johnny-app/apply_clean_chat_format.py
+          sed -i 's/versionCode = 7/versionCode = 7/' profe-johnny-app/app/build.gradle.kts
+          sed -i 's/versionName = "0.3.1"/versionName = "0.3.1"/' profe-johnny-app/app/build.gradle.kts
+
       - name: Verify secure teacher mode
         shell: bash
         run: |
@@ -66,13 +73,13 @@ jobs:
         run: gradle :app:assembleDebug --stacktrace -PPROFE_JOHNNY_API_BASE_URL=https://santa-rita-escolar-tcpb.onrender.com/profe-johnny/v1
 
       - name: Prepare artifact
-        run: cp profe-johnny-app/app/build/outputs/apk/debug/app-debug.apk PROFE-JOHNNY-APP-v0.3.0-CLASSROOM-TEST.apk
+        run: cp profe-johnny-app/app/build/outputs/apk/debug/app-debug.apk PROFE-JOHNNY-APP-v0.3.1-PSICOPEDAGOGICO.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: PROFE-JOHNNY-APP-v0.3.0-CLASSROOM-TEST
-          path: PROFE-JOHNNY-APP-v0.3.0-CLASSROOM-TEST.apk
+          name: PROFE-JOHNNY-APP-v0.3.1-PSICOPEDAGOGICO
+          path: PROFE-JOHNNY-APP-v0.3.1-PSICOPEDAGOGICO.apk
 
       - name: Prepare Android signing tools
         shell: bash
