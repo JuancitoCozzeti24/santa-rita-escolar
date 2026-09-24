@@ -1,0 +1,62 @@
+name: Probe PROFE JOHNNY Identity v5
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/probe-profe-johnny-identity-v5.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wait for Render deployment
+        shell: bash
+        run: |
+          set -euo pipefail
+          URL="https://santa-rita-escolar-tcpb.onrender.com/profe-johnny/v1/bootstrap"
+          for i in $(seq 1 36); do
+            code=$(curl -sS -o bootstrap.json -w '%{http_code}' "$URL" || true)
+            echo "attempt=$i http=$code"
+            if [ "$code" = "200" ] && grep -q '"2026-09-24-identity-v5"' bootstrap.json; then
+              cat bootstrap.json
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "Identity v5 bootstrap not ready"
+          cat bootstrap.json || true
+          exit 1
+
+      - name: Verify Classroom features
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          data=json.load(open("bootstrap.json",encoding="utf-8"))
+          assert data.get("api_version") == "2026-09-24-identity-v5", data
+          features=data.get("features") or {}
+          assert features.get("classroom_progress_summary") is True, features
+          assert features.get("owner_natural_student_lookup") is True, features
+          endpoints=data.get("endpoints") or {}
+          assert endpoints.get("secure_chat") == "/profe-johnny/v1/secure-chat", endpoints
+          assert endpoints.get("student_summary") == "/profe-johnny/v1/student-summary", endpoints
+          print("PROFE JOHNNY Identity v5 verified")
+          PY
+
+      - name: Verify private routes reject anonymous access
+        shell: bash
+        run: |
+          set -euo pipefail
+          code=$(curl -sS -o summary.json -w '%{http_code}'             "https://santa-rita-escolar-tcpb.onrender.com/profe-johnny/v1/student-summary")
+          test "$code" = "401"
+          python - <<'PY'
+          import json
+          data=json.load(open("summary.json",encoding="utf-8"))
+          assert data.get("error") == "unauthorized", data
+          print("Anonymous private access correctly blocked")
+          PY
