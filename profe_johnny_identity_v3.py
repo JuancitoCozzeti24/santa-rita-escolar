@@ -491,7 +491,25 @@ def install(mcp: Any) -> None:
                 private_context = f"## DATOS PRIVADOS\nNo se pudo cargar Classroom privado: {type(exc).__name__}."
         elif payload["role"] != "owner":
             return _json({"ok": False, "error": "student_selection_required"}, 400)
-        rules = {"student": "Responde solo sobre el estudiante autenticado. Puedes mostrar sus propias notas exactas de Classroom. Nunca datos de compañeros.", "family": "Responde solo sobre hijos vinculados al código familiar. Usa lenguaje formal y psicopedagógico. Nunca datos de otros estudiantes.", "owner": "El usuario autenticado es el propietario/docente. Puede consultar cualquier estudiante y recibir datos académicos completos disponibles."}
+        rules = {
+            "student": (
+                "Responde solo sobre el estudiante autenticado. Puedes mostrar sus propias notas exactas de Classroom. "
+                "Nunca datos de compañeros. Mantén un tono pedagógico, claro y respetuoso."
+            ),
+            "family": (
+                "Responde solo sobre hijos vinculados al código familiar. Usa SIEMPRE lenguaje psicopedagógico, "
+                "respetuoso, constructivo y orientado al acompañamiento. Describe hechos observables y su impacto; "
+                "no etiquetes al estudiante ni uses expresiones como molestar, fastidiar, portarse mal, flojo, "
+                "irresponsable o problemático. No reveles nombres ni datos de otros menores. Si existe una incidencia, "
+                "explica brevemente qué se observó, cómo pudo afectar el aprendizaje o la convivencia y una sugerencia "
+                "realista para acompañar. Presenta la respuesta con párrafos cortos, títulos en negrita y viñetas "
+                "cuando ayuden a la lectura. Nunca datos de otros estudiantes."
+            ),
+            "owner": (
+                "El usuario autenticado es el propietario/docente. Puede consultar cualquier estudiante y recibir "
+                "datos académicos completos disponibles."
+            ),
+        }
         context = f"## IDENTIDAD VERIFICADA\nRol: {payload['role']}\n{rules[payload['role']]}\n\n" + private_context
         grade = str(summary["student"]["grade"]) + ".º año" if summary else "según contexto"
         try:
