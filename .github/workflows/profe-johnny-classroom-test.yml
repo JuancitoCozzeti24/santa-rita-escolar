@@ -73,3 +73,16 @@ jobs:
         with:
           name: PROFE-JOHNNY-APP-v0.3.0-CLASSROOM-TEST
           path: PROFE-JOHNNY-APP-v0.3.0-CLASSROOM-TEST.apk
+
+      - name: Prepare Android signing tools
+        shell: bash
+        run: |
+          mkdir -p android-signing-tools
+          cp "$ANDROID_HOME/build-tools/35.0.0/zipalign" android-signing-tools/
+          cp "$ANDROID_HOME/build-tools/35.0.0/lib/apksigner.jar" android-signing-tools/
+
+      - name: Upload Android signing tools
+        uses: actions/upload-artifact@v4
+        with:
+          name: Android-Signing-Tools-35
+          path: android-signing-tools/
