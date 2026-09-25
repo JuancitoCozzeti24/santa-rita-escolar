@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import calendar
 import hashlib
 import hmac
 import json
@@ -8,6 +9,7 @@ import os
 import re
 import time
 import unicodedata
+from datetime import date, datetime
 from typing import Any
 from urllib.parse import quote
 
@@ -24,6 +26,7 @@ OWNER_SECRET_HASH = os.getenv("PROFE_JOHNNY_OWNER_SECRET_HASH", "").strip()
 FAMILY_SHEET_ID = os.getenv("PROFE_JOHNNY_FAMILY_SHEET_ID", DEFAULT_SPREADSHEET_ID).strip()
 FAMILY_TAB = "PROFE_APP_FAMILIAS"
 TOKEN_TTL = 30 * 86400
+DEFAULT_CLASSROOM_START = date(2026, 9, 9)
 
 
 def _norm(value: Any) -> str:
