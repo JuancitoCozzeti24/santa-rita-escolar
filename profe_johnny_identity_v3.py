@@ -18,7 +18,7 @@ from starlette.responses import JSONResponse
 
 import battle_accounts as ba
 import profe_johnny_brain as brain
-from bitacora import DEFAULT_SPREADSHEET_ID, _google_request
+from bitacora import DEFAULT_SPREADSHEET_ID, _google_request, _history as _bitacora_history
 
 API_VERSION = "2026-09-10-identity-v3"
 TOKEN_SECRET = os.getenv("PROFE_JOHNNY_TOKEN_SECRET", "").strip()
@@ -486,6 +486,37 @@ def _private_context(student_key: str, start_date: date | None = None, end_date:
     lines = ["## CLASSROOM PRIVADO DEL USUARIO AUTENTICADO", f"Estudiante: {summary['student']['display_name']} | {summary['student']['grade']}.º {summary['student']['section']}"]
     for item in summary.get("activities") or []:
         lines.append(f"- {item['title']} | límite={item['due']} | estado={item.get('state')} | nota={item.get('grade')} / {item.get('max_points')} | tardía={item.get('late')}")
+    # La bitácora oficial ya está configurada en el servidor. Se carga para
+    # familias y docente; el perfil estudiante no recibe información conductual.
+    if role in {"family", "owner"}:
+        try:
+            history_payload: dict[str, Any] = {"student": student_key, "limit": 100}
+            if start_date:
+                history_payload["fecha_desde"] = start_date.strftime("%d/%m/%Y")
+            if end_date:
+                history_payload["fecha_hasta"] = end_date.strftime("%d/%m/%Y")
+            history = _bitacora_history(history_payload)
+            records = list(history.get("bitacora") or [])
+            lines.append("## BITÁCORA DOCENTE OFICIAL")
+            lines.append(
+                "Fuente: BITÁCORA DOCENTE – MATEMÁTICA 2026. Interpreta estos registros como hechos "
+                "documentados por el docente; resume patrones, fechas e impacto pedagógico sin inventar causas."
+            )
+            if not records:
+                lines.append(
+                    "No hay incidencias ni observaciones conductuales registradas para este estudiante "
+                    "en el periodo consultado. No inventes incidencias."
+                )
+            else:
+                for record in records:
+                    lines.append("- " + " | ".join(
+                        f"{key}={value}" for key, value in record.items()
+                        if value not in (None, "") and str(key).lower() not in {"alumno_id"}
+                    ))
+        except Exception as exc:
+            lines.append("## BITÁCORA DOCENTE OFICIAL")
+            lines.append(f"No se pudo cargar la bitácora en esta consulta: {type(exc).__name__}. No inventes registros.")
+
     lines.append("## POLÍTICA SIEWEB")
     lines.append("Para estudiantes y familias, cualquier información de SIEweb/CIEweb debe convertirse en orientación pedagógica sin revelar letra o nota cruda; para owner sí puede mostrarse el dato disponible. No inventes SIEweb si no está en el contexto.")
     return "\n".join(lines), summary
@@ -641,12 +672,14 @@ def install(mcp: Any) -> None:
                 "no etiquetes al estudiante ni uses expresiones como molestar, fastidiar, portarse mal, flojo, "
                 "irresponsable o problemático. No reveles nombres ni datos de otros menores. Si existe una incidencia, "
                 "explica brevemente qué se observó, cómo pudo afectar el aprendizaje o la convivencia y una sugerencia "
-                "realista para acompañar. Presenta la respuesta con párrafos cortos, títulos en negrita y viñetas "
+                "realista para acompañar. Si preguntan por conducta, comportamiento, incidencias o seguimiento, usa la BITÁCORA DOCENTE oficial incluida en el contexto e interpreta sus registros sin inventar. Presenta la respuesta con párrafos cortos, títulos en negrita y viñetas "
                 "cuando ayuden a la lectura. Nunca datos de otros estudiantes."
             ),
             "owner": (
                 "El usuario autenticado es el propietario/docente. Puede consultar cualquier estudiante y recibir "
-                "datos académicos completos disponibles."
+                "datos académicos completos disponibles. Para Classroom, por defecto usa únicamente actividades desde el 09/09/2026. "
+                "También puede consultar la BITÁCORA DOCENTE oficial del estudiante; interpreta los registros, fechas y patrones "
+                "pedagógicamente y no inventes causas ni incidencias."
             ),
         }
         context = (
