@@ -472,8 +472,8 @@ def _allowed_student(payload: dict[str, Any], requested: str = "") -> str:
     return ""
 
 
-def _private_context(student_key: str) -> tuple[str, dict[str, Any]]:
-    summary = _student_classroom_summary(student_key)
+def _private_context(student_key: str, start_date: date | None = None, end_date: date | None = None, role: str = "student") -> tuple[str, dict[str, Any]]:
+    summary = _student_classroom_summary(student_key, start_date=start_date, end_date=end_date)
     lines = ["## CLASSROOM PRIVADO DEL USUARIO AUTENTICADO", f"Estudiante: {summary['student']['display_name']} | {summary['student']['grade']}.º {summary['student']['section']}"]
     for item in summary.get("activities") or []:
         lines.append(f"- {item['title']} | límite={item['due']} | estado={item.get('state')} | nota={item.get('grade')} / {item.get('max_points')} | tardía={item.get('late')}")
@@ -591,12 +591,32 @@ def install(mcp: Any) -> None:
             if owner_auto_resolved:
                 requested = owner_auto_resolved["student_key"]
 
+        period_start, period_end, period_label, needs_period = _period_from_message(message)
+        if needs_period:
+            return _json({
+                "ok": True,
+                "reply": (
+                    "Claro. Para revisar información anterior al periodo actual, indícame de qué "
+                    "trimestre, mes o fecha específica deseas saber."
+                ),
+                "meta": {
+                    "role": payload["role"],
+                    "period_selection_required": True,
+                    "api_version": API_VERSION,
+                },
+            })
+
         student_key = _allowed_student(payload, requested)
         private_context = ""
         summary: dict[str, Any] | None = None
         if student_key:
             try:
-                private_context, summary = _private_context(student_key)
+                private_context, summary = _private_context(
+                    student_key,
+                    start_date=period_start,
+                    end_date=period_end,
+                    role=str(payload.get("role") or "student"),
+                )
             except Exception as exc:
                 private_context = f"## DATOS PRIVADOS\nNo se pudo cargar Classroom privado: {type(exc).__name__}."
         elif payload["role"] != "owner":
@@ -620,7 +640,11 @@ def install(mcp: Any) -> None:
                 "datos académicos completos disponibles."
             ),
         }
-        context = f"## IDENTIDAD VERIFICADA\nRol: {payload['role']}\n{rules[payload['role']]}\n\n" + private_context
+        context = (
+            f"## IDENTIDAD VERIFICADA\nRol: {payload['role']}\n{rules[payload['role']]}\n"
+            f"Periodo consultado: {period_label or 'periodo indicado'}\n\n"
+            + private_context
+        )
         grade = str(summary["student"]["grade"]) + ".º año" if summary else "según contexto"
         try:
             reply = brain._openai_reply(message, grade, context)
@@ -635,6 +659,11 @@ def install(mcp: Any) -> None:
                 "role": payload["role"],
                 "student_key": student_key or None,
                 "private_classroom_used": bool(summary),
+                "period": {
+                    "label": period_label,
+                    "start": period_start.isoformat() if period_start else None,
+                    "end": period_end.isoformat() if period_end else None,
+                },
                 "owner_auto_resolved_student": (
                     {
                         "student_key": owner_auto_resolved["student_key"],
