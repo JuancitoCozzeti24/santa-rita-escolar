@@ -304,7 +304,7 @@ def _resolve_student_from_text(text: str) -> dict[str, str] | None:
     return candidates[0][1]
 
 
-def _student_classroom_summary(student_key: str, limit: int = 100) -> dict[str, Any]:
+def _student_classroom_summary(student_key: str, limit: int = 100, start_date: date | None = None, end_date: date | None = None) -> dict[str, Any]:
     student = _roster_record(student_key)
     if not student:
         raise ValueError("student_not_found")
@@ -328,7 +328,19 @@ def _student_classroom_summary(student_key: str, limit: int = 100) -> dict[str, 
 
     course_id = str(course.get("id") or "")
     user_id = str((roster or {}).get("userId") or "")
-    works = brain._client.list_coursework(course_id, include_drafts=False)[:max(1, min(limit, 100))]
+    if start_date is None and end_date is None:
+        start_date = DEFAULT_CLASSROOM_START
+    all_works = brain._client.list_coursework(course_id, include_drafts=False)
+    works = []
+    for work in all_works:
+        work_date = _coursework_date(work)
+        if start_date and (work_date is None or work_date < start_date):
+            continue
+        if end_date and (work_date is None or work_date > end_date):
+            continue
+        works.append(work)
+        if len(works) >= max(1, min(limit, 100)):
+            break
 
     by_work: dict[str, dict[str, Any]] = {}
     if user_id:
@@ -430,6 +442,10 @@ def _student_classroom_summary(student_key: str, limit: int = 100) -> dict[str, 
         },
         "course": {"id": course_id, "name": course.get("name"), "section": course.get("section")},
         "classroom_user_resolved": bool(user_id),
+        "period": {
+            "start": start_date.isoformat() if start_date else None,
+            "end": end_date.isoformat() if end_date else None,
+        },
         "progress": {
             "total": len(activities),
             "submitted": submitted_count,
