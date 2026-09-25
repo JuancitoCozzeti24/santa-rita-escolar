@@ -27,6 +27,17 @@ FAMILY_SHEET_ID = os.getenv("PROFE_JOHNNY_FAMILY_SHEET_ID", DEFAULT_SPREADSHEET_
 FAMILY_TAB = "PROFE_APP_FAMILIAS"
 TOKEN_TTL = 30 * 86400
 DEFAULT_CLASSROOM_START = date(2026, 9, 9)
+TRIMESTER_RANGES = {
+    1: (date(2026, 3, 2), date(2026, 6, 1)),
+    2: (date(2026, 6, 2), date(2026, 9, 8)),
+    3: (date(2026, 9, 9), None),
+}
+MONTHS_ES = {
+    "ENERO": 1, "FEBRERO": 2, "MARZO": 3, "ABRIL": 4,
+    "MAYO": 5, "JUNIO": 6, "JULIO": 7, "AGOSTO": 8,
+    "SEPTIEMBRE": 9, "SETIEMBRE": 9, "OCTUBRE": 10,
+    "NOVIEMBRE": 11, "DICIEMBRE": 12,
+}
 
 
 def _norm(value: Any) -> str:
