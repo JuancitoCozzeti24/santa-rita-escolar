@@ -410,14 +410,30 @@ def install(mcp: Any) -> None:
             body = await request.json()
         except Exception:
             body = {}
-        role = str(body.get("role") or "").strip().lower()
+        role = str(body.get("role") or "auto").strip().lower()
         code = str(body.get("code") or "").strip()
-        if role == "student":
+        if not code:
+            return _json({"ok": False, "error": "invalid_credentials"}, 401)
+
+        if role in {"auto", ""}:
+            if _verify_owner_secret(code):
+                result = {
+                    "token": _token("owner", subject="owner"),
+                    "profile": {"role": "owner", "display_name": "Profe Johnny"},
+                }
+            else:
+                result = _student_login(code)
+                if not result:
+                    result = _family_login(code)
+        elif role == "student":
             result = _student_login(code)
         elif role == "family":
             result = _family_login(code)
         elif role == "owner":
-            result = {"token": _token("owner", subject="owner"), "profile": {"role": "owner", "display_name": "Profe Johnny"}} if _verify_owner_secret(code) else None
+            result = {
+                "token": _token("owner", subject="owner"),
+                "profile": {"role": "owner", "display_name": "Profe Johnny"},
+            } if _verify_owner_secret(code) else None
         else:
             return _json({"ok": False, "error": "invalid_role"}, 400)
         if not result:
