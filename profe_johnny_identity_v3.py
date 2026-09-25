@@ -78,15 +78,24 @@ def _period_from_message(message: str) -> tuple[date | None, date | None, str, b
         except ValueError:
             pass
 
-    if any(x in q for x in ("PRIMER TRIMESTRE", "1 TRIMESTRE", "I TRIMESTRE")):
-        start, end = TRIMESTER_RANGES[1]
-        return start, end, "I trimestre 2026", False
-    if any(x in q for x in ("SEGUNDO TRIMESTRE", "2 TRIMESTRE", "II TRIMESTRE")):
-        start, end = TRIMESTER_RANGES[2]
-        return start, end, "II trimestre 2026", False
     if any(x in q for x in ("TERCER TRIMESTRE", "3 TRIMESTRE", "III TRIMESTRE")):
         start, end = TRIMESTER_RANGES[3]
         return start, end, "III trimestre 2026", False
+    if any(x in q for x in ("SEGUNDO TRIMESTRE", "2 TRIMESTRE", "II TRIMESTRE")):
+        start, end = TRIMESTER_RANGES[2]
+        return start, end, "II trimestre 2026", False
+    if any(x in q for x in ("PRIMER TRIMESTRE", "1 TRIMESTRE", "I TRIMESTRE")):
+        start, end = TRIMESTER_RANGES[1]
+        return start, end, "I trimestre 2026", False
+
+    for month_name, month_number in MONTHS_ES.items():
+        exact_match = re.search(rf"\\b(\\d{{1,2}})\\s+DE\\s+{month_name}\\b", q)
+        if exact_match:
+            try:
+                exact = date(2026, month_number, int(exact_match.group(1)))
+                return exact, exact, exact.strftime("%d/%m/%Y"), False
+            except ValueError:
+                pass
 
     for month_name, month_number in MONTHS_ES.items():
         if month_name in q:
