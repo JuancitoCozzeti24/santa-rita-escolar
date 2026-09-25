@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+from datetime import date
 from typing import Any
 from urllib.parse import quote
 
 import profe_johnny_brain as brain
 import profe_johnny_identity_v3 as identity
 import profe_johnny_mobile_v2 as mobile
-from bitacora import _google_request
+from bitacora import _google_request, dispatch as bitacora_dispatch
 
 API_VERSION = "2026-09-24-identity-v5"
 
