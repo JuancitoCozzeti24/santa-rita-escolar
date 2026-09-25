@@ -110,12 +110,117 @@ def _institutional_context() -> str:
     return "\n\n".join(blocks)
 
 
-def _private_context(student_key: str):
-    summary = identity._student_classroom_summary(student_key)
+def _bitacora_context(
+    summary: dict[str, Any],
+    start_date: date | None,
+    end_date: date | None,
+    role: str,
+) -> str:
+    if role not in {"family", "owner"}:
+        return (
+            "## BITÁCORA DOCENTE\n"
+            "El perfil estudiante no tiene acceso a la bitácora docente. "
+            "Solo puede consultar su información académica."
+        )
+
+    student = summary.get("student") or {}
+    payload: dict[str, Any] = {
+        "student": str(student.get("display_name") or ""),
+        "grado": str(student.get("grade") or ""),
+        "seccion": str(student.get("section") or ""),
+        "limit": 80,
+    }
+    if start_date:
+        payload["fecha_desde"] = start_date.isoformat()
+    if end_date:
+        payload["fecha_hasta"] = end_date.isoformat()
+
+    try:
+        history = bitacora_dispatch("student_history", payload, False)
+    except Exception as exc:
+        summary["bitacora_status"] = {
+            "available": False,
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+        return (
+            "## BITÁCORA DOCENTE\n"
+            "No fue posible consultar la bitácora en este momento. "
+            "No inventes incidencias ni observaciones."
+        )
+
+    records = list(history.get("bitacora") or [])
+    summary["bitacora_status"] = {
+        "available": True,
+        "records": len(records),
+        "scope": history.get("scope") or {},
+    }
+    lines = [
+        "## BITÁCORA DOCENTE DEL ESTUDIANTE AUTORIZADO",
+        f"Registros encontrados en el periodo consultado: {len(records)}.",
+    ]
+    if not records:
+        lines.append(
+            "No se encontraron incidencias u observaciones conductuales registradas "
+            "para este estudiante dentro del periodo consultado."
+        )
+        return "\n".join(lines)
+
+    target_name = str(student.get("display_name") or "")
+    for row in records:
+        def safe(value: Any) -> str:
+            text = str(value or "").strip()
+            if role == "family":
+                return brain._redact_other_students(text, target_name)
+            return text
+
+        date_text = safe(row.get("Fecha"))
+        kind = safe(row.get("Tipo de registro"))
+        category = safe(row.get("Categoría"))
+        description = safe(row.get("Descripción objetiva"))
+        impact = safe(row.get("Impacto en aprendizaje/convivencia"))
+        action = safe(row.get("Acción docente"))
+        follow = safe(row.get("Seguimiento"))
+
+        lines.append(
+            f"- {date_text} | tipo={kind} | categoría={category} | "
+            f"hecho={description} | impacto={impact} | acción={action} | seguimiento={follow}"
+        )
+
+    lines.extend([
+        "INTERPRETACIÓN PARA FAMILIAS:",
+        (
+            "Si el rol es family, interpreta estos registros con lenguaje psicopedagógico, "
+            "descriptivo y constructivo. Explica qué ocurrió, qué impacto tuvo y cómo puede "
+            "acompañarse la mejora. No reveles nombres de otros estudiantes."
+        ),
+        (
+            "No diagnostiques, no atribuyas intenciones y no conviertas una observación puntual "
+            "en una etiqueta permanente sobre el estudiante."
+        ),
+    ])
+    return "\n".join(lines)
+
+
+def _private_context(
+    student_key: str,
+    start_date: date | None = None,
+    end_date: date | None = None,
+    role: str = "student",
+):
+    summary = identity._student_classroom_summary(
+        student_key,
+        start_date=start_date,
+        end_date=end_date,
+    )
     progress = summary.get("progress") or {}
+    period = summary.get("period") or {}
     lines = [
         "## CLASSROOM PRIVADO DEL USUARIO AUTENTICADO",
         f"Estudiante: {summary['student']['display_name']} | {summary['student']['grade']}.º {summary['student']['section']}",
+        (
+            "Periodo Classroom: "
+            f"desde={period.get('start')} | hasta={period.get('end')}"
+        ),
         (
             "Resumen Classroom: "
             f"total={progress.get('total', 0)} | entregadas={progress.get('submitted', 0)} | "
@@ -128,9 +233,14 @@ def _private_context(student_key: str):
             f"- {item['title']} | límite={item['due']} | estado={item.get('state')} | "
             f"nota={item.get('grade')} / {item.get('max_points')} | tardía={item.get('late')}"
         )
+
+    lines.append(_bitacora_context(summary, start_date, end_date, role))
+
     lines.extend([
         "## POLÍTICA DE PRIVACIDAD ACADÉMICA",
         "Las notas exactas de Classroom sí pueden mostrarse al propio estudiante o a su familia autenticada. Nunca reveles datos de otros estudiantes.",
+        "El perfil estudiante NO puede acceder a la bitácora docente.",
+        "El perfil familia puede recibir información de bitácora únicamente sobre su hijo vinculado y redactada con enfoque psicopedagógico.",
         "## POLÍTICA SIEWEB/CIEWEB",
         "Para estudiantes y familias, cualquier información de SIEweb/CIEweb disponible debe convertirse en orientación pedagógica sin revelar letra o nota cruda. Para owner sí puede mostrarse el dato disponible. Si SIEweb no está en el contexto, no lo inventes.",
     ])
@@ -138,7 +248,6 @@ def _private_context(student_key: str):
     if institutional:
         lines.append(institutional)
     return "\n".join(lines), summary
-
 
 def _install_bootstrap_contract() -> None:
     if getattr(mobile, "_identity_v4_bootstrap_patched", False):
