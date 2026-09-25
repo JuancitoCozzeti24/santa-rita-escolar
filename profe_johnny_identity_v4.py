@@ -9,7 +9,7 @@ import profe_johnny_identity_v3 as identity
 import profe_johnny_mobile_v2 as mobile
 from bitacora import _google_request, dispatch as bitacora_dispatch
 
-API_VERSION = "2026-09-24-identity-v5"
+API_VERSION = "2026-09-25-identity-v5.2"
 
 
 def _course_for_student(student: dict[str, str]):
