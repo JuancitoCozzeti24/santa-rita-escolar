@@ -60,6 +60,50 @@ def _coursework_date(work: dict[str, Any]) -> date | None:
     return _iso_date(work.get("creationTime")) or _iso_date(work.get("updateTime"))
 
 
+def _period_from_message(message: str) -> tuple[date | None, date | None, str, bool]:
+    raw = str(message or "")
+    q = _norm(raw)
+
+    match = re.search(r"\b(\d{1,2})[/-](\d{1,2})(?:[/-](\d{2,4}))?\b", raw)
+    if match:
+        day = int(match.group(1))
+        month = int(match.group(2))
+        year_text = match.group(3)
+        year = int(year_text) if year_text else 2026
+        if year < 100:
+            year += 2000
+        try:
+            exact = date(year, month, day)
+            return exact, exact, exact.strftime("%d/%m/%Y"), False
+        except ValueError:
+            pass
+
+    if any(x in q for x in ("PRIMER TRIMESTRE", "1 TRIMESTRE", "I TRIMESTRE")):
+        start, end = TRIMESTER_RANGES[1]
+        return start, end, "I trimestre 2026", False
+    if any(x in q for x in ("SEGUNDO TRIMESTRE", "2 TRIMESTRE", "II TRIMESTRE")):
+        start, end = TRIMESTER_RANGES[2]
+        return start, end, "II trimestre 2026", False
+    if any(x in q for x in ("TERCER TRIMESTRE", "3 TRIMESTRE", "III TRIMESTRE")):
+        start, end = TRIMESTER_RANGES[3]
+        return start, end, "III trimestre 2026", False
+
+    for month_name, month_number in MONTHS_ES.items():
+        if month_name in q:
+            start = date(2026, month_number, 1)
+            end = date(2026, month_number, calendar.monthrange(2026, month_number)[1])
+            return start, end, month_name.title() + " 2026", False
+
+    historical_markers = (
+        "ANTERIOR", "ANTES", "HISTORIAL", "PASADO", "OTRO TRIMESTRE",
+        "TRIMESTRES ANTERIORES", "MESES ANTERIORES",
+    )
+    if any(marker in q for marker in historical_markers):
+        return None, None, "", True
+
+    return DEFAULT_CLASSROOM_START, None, "desde el 09/09/2026", False
+
+
 def _norm(value: Any) -> str:
     text = unicodedata.normalize("NFKD", str(value or ""))
     text = "".join(ch for ch in text if not unicodedata.combining(ch))
