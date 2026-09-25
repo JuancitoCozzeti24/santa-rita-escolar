@@ -40,6 +40,26 @@ MONTHS_ES = {
 }
 
 
+def _iso_date(value: Any) -> date | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).date()
+    except Exception:
+        return None
+
+
+def _coursework_date(work: dict[str, Any]) -> date | None:
+    due = work.get("dueDate") or {}
+    try:
+        if due.get("year") and due.get("month") and due.get("day"):
+            return date(int(due["year"]), int(due["month"]), int(due["day"]))
+    except Exception:
+        pass
+    return _iso_date(work.get("creationTime")) or _iso_date(work.get("updateTime"))
+
+
 def _norm(value: Any) -> str:
     text = unicodedata.normalize("NFKD", str(value or ""))
     text = "".join(ch for ch in text if not unicodedata.combining(ch))
