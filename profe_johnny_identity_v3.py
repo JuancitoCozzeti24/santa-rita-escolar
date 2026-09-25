@@ -573,6 +573,25 @@ def _private_context(student_key: str, start_date: date | None = None, end_date:
     return "\n".join(lines), summary
 
 
+def _naturalize_reply(value: str) -> str:
+    text = str(value or "").strip()
+    replacements = (
+        (r"(?i)según la bitácora docente", "según lo registrado"),
+        (r"(?i)según la bitácora", "según lo registrado"),
+        (r"(?i)en la bitácora docente", "en el seguimiento realizado"),
+        (r"(?i)en la bitácora", "en el seguimiento realizado"),
+        (r"(?i)la bitácora docente indica", "se registró"),
+        (r"(?i)la bitácora indica", "se registró"),
+        (r"(?i)bitácora docente", "seguimiento realizado"),
+        (r"(?i)bitácora", "seguimiento"),
+        (r"(?i)el sistema indica", "se observa"),
+        (r"(?i)la base de datos indica", "se registra"),
+    )
+    for pattern, replacement in replacements:
+        text = re.sub(pattern, replacement, text)
+    return text
+
+
 def _write_family_link(family_code: str, student_key: str, label: str = "") -> None:
     student = _roster_record(student_key)
     if not student:
@@ -748,6 +767,7 @@ def install(mcp: Any) -> None:
             reply = ""
         if not reply:
             reply = "No pude generar la respuesta completa en este momento, pero tu identidad sí quedó verificada."
+        reply = _naturalize_reply(reply)
         return _json({
             "ok": True,
             "reply": reply,
