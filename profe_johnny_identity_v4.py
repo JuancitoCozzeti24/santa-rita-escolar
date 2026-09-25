@@ -118,7 +118,7 @@ def _bitacora_context(
 ) -> str:
     if role not in {"family", "owner"}:
         return (
-            "## BITÁCORA DOCENTE\n"
+            "## SEGUIMIENTO DOCENTE INTERNO\n"
             "El perfil estudiante no tiene acceso a la bitácora docente. "
             "Solo puede consultar su información académica."
         )
@@ -143,7 +143,7 @@ def _bitacora_context(
             "error": f"{type(exc).__name__}: {exc}",
         }
         return (
-            "## BITÁCORA DOCENTE\n"
+            "## SEGUIMIENTO DOCENTE INTERNO\n"
             "No fue posible consultar la bitácora en este momento. "
             "No inventes incidencias ni observaciones."
         )
@@ -155,7 +155,7 @@ def _bitacora_context(
         "scope": history.get("scope") or {},
     }
     lines = [
-        "## BITÁCORA DOCENTE DEL ESTUDIANTE AUTORIZADO",
+        "## SEGUIMIENTO DOCENTE INTERNO DEL ESTUDIANTE AUTORIZADO",
         f"Registros encontrados en el periodo consultado: {len(records)}.",
     ]
     if not records:
@@ -191,7 +191,9 @@ def _bitacora_context(
         (
             "Si el rol es family, interpreta estos registros con lenguaje psicopedagógico, "
             "descriptivo y constructivo. Explica qué ocurrió, qué impacto tuvo y cómo puede "
-            "acompañarse la mejora. No reveles nombres de otros estudiantes."
+            "acompañarse la mejora. No reveles nombres de otros estudiantes. Habla como el Profe Johnny: "
+            "de forma humana, directa y respetuosa. Nunca menciones bitácora, base de datos, API, sistema, "
+            "fuente interna ni el mecanismo usado para obtener la información."
         ),
         (
             "No diagnostiques, no atribuyas intenciones y no conviertas una observación puntual "
@@ -239,11 +241,19 @@ def _private_context(
     lines.extend([
         "## POLÍTICA DE PRIVACIDAD ACADÉMICA",
         "Las notas exactas de Classroom sí pueden mostrarse al propio estudiante o a su familia autenticada. Nunca reveles datos de otros estudiantes.",
-        "El perfil estudiante NO puede acceder a la bitácora docente.",
-        "El perfil familia puede recibir información de bitácora únicamente sobre su hijo vinculado y redactada con enfoque psicopedagógico.",
+        "El perfil estudiante NO puede acceder al seguimiento conductual reservado.",
+        "El perfil familia puede recibir únicamente la información pertinente sobre su hijo vinculado, redactada con enfoque psicopedagógico y sin explicar la fuente interna.",
         "## POLÍTICA SIEWEB/CIEWEB",
         "Para estudiantes y familias, cualquier información de SIEweb/CIEweb disponible debe convertirse en orientación pedagógica sin revelar letra o nota cruda. Para owner sí puede mostrarse el dato disponible. Si SIEweb no está en el contexto, no lo inventes.",
     ])
+    lines.append(
+        "## REGLA DE REDACCIÓN FINAL — OBLIGATORIA"
+    )
+    lines.append(
+        "Responde como una persona real, como el Profe Johnny. Integra la información con naturalidad. "
+        "No menciones bitácora, sistema, API, base de datos, contexto interno, fuente, motor, herramienta ni proceso de consulta. "
+        "No digas 'según la bitácora', 'el sistema indica', 'revisé la base' ni expresiones equivalentes."
+    )
     institutional = _institutional_context()
     if institutional:
         lines.append(institutional)
