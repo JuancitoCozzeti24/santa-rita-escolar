@@ -20,26 +20,27 @@ jobs:
         with:
           ref: profe-johnny-classroom-test
 
-      - name: Apply polished chat formatting
+      - name: Apply unified access-code gate
         shell: bash
         run: |
+          python profe-johnny-app/apply_access_code_gate.py
           python profe-johnny-app/apply_clean_chat_format.py
-          sed -i 's/versionCode = 7/versionCode = 7/' profe-johnny-app/app/build.gradle.kts
-          sed -i 's/versionName = "0.3.1"/versionName = "0.3.1"/' profe-johnny-app/app/build.gradle.kts
+          sed -i 's/versionCode = 6/versionCode = 8/' profe-johnny-app/app/build.gradle.kts
+          sed -i 's/versionName = "0.3.0"/versionName = "0.4.0"/' profe-johnny-app/app/build.gradle.kts
 
-      - name: Verify secure teacher mode
+      - name: Verify unified secure access
         shell: bash
         run: |
           set -euo pipefail
           FILE='profe-johnny-app/app/src/main/java/pe/profejohnny/app/MainActivity.kt'
-          grep -q 'Modo docente activo' "$FILE"
+          grep -q 'Ingresa tu código de acceso' "$FILE"
+          grep -q 'private data class AccessSession' "$FILE"
+          grep -q '.put("role", "auto")' "$FILE"
           grep -q '\$base/secure-chat' "$FILE"
-          grep -q '\$base/auth' "$FILE"
-          grep -q 'Authorization' "$FILE"
-          grep -q 'PasswordVisualTransformation' "$FILE"
-          ! grep -q 'R.drawable.chat_fondo' "$FILE"
-          grep -q 'versionName = "0.3.0"' profe-johnny-app/app/build.gradle.kts
-          grep -q 'versionCode = 6' profe-johnny-app/app/build.gradle.kts
+          grep -q 'Cambiar acceso' "$FILE"
+          grep -q 'Modo docente · Profe Johnny' "$FILE"
+          grep -q 'versionName = "0.4.0"' profe-johnny-app/app/build.gradle.kts
+          grep -q 'versionCode = 8' profe-johnny-app/app/build.gradle.kts
 
       - name: Create compile-time media placeholders
         shell: bash
@@ -73,13 +74,13 @@ jobs:
         run: gradle :app:assembleDebug --stacktrace -PPROFE_JOHNNY_API_BASE_URL=https://santa-rita-escolar-tcpb.onrender.com/profe-johnny/v1
 
       - name: Prepare artifact
-        run: cp profe-johnny-app/app/build/outputs/apk/debug/app-debug.apk PROFE-JOHNNY-APP-v0.3.1-PSICOPEDAGOGICO.apk
+        run: cp profe-johnny-app/app/build/outputs/apk/debug/app-debug.apk PROFE-JOHNNY-APP-v0.4.0-CODIGO-UNICO.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: PROFE-JOHNNY-APP-v0.3.1-PSICOPEDAGOGICO
-          path: PROFE-JOHNNY-APP-v0.3.1-PSICOPEDAGOGICO.apk
+          name: PROFE-JOHNNY-APP-v0.4.0-CODIGO-UNICO
+          path: PROFE-JOHNNY-APP-v0.4.0-CODIGO-UNICO.apk
 
       - name: Prepare Android signing tools
         shell: bash
