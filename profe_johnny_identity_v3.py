@@ -483,42 +483,93 @@ def _allowed_student(payload: dict[str, Any], requested: str = "") -> str:
 
 def _private_context(student_key: str, start_date: date | None = None, end_date: date | None = None, role: str = "student") -> tuple[str, dict[str, Any]]:
     summary = _student_classroom_summary(student_key, start_date=start_date, end_date=end_date)
-    lines = ["## CLASSROOM PRIVADO DEL USUARIO AUTENTICADO", f"Estudiante: {summary['student']['display_name']} | {summary['student']['grade']}.º {summary['student']['section']}"]
-    for item in summary.get("activities") or []:
-        lines.append(f"- {item['title']} | límite={item['due']} | estado={item.get('state')} | nota={item.get('grade')} / {item.get('max_points')} | tardía={item.get('late')}")
-    # La bitácora oficial ya está configurada en el servidor. Se carga para
-    # familias y docente; el perfil estudiante no recibe información conductual.
+    student = summary["student"]
+    target_name = str(student["display_name"])
+    lines = [
+        "## CONTEXTO PRIVADO DEL ESTUDIANTE AUTORIZADO",
+        f"Estudiante: {target_name} | {student['grade']}.º {student['section']}",
+    ]
+
+    # Familias y docente sí reciben seguimiento de bitácora. Para enlazar de forma
+    # confiable usamos nombre + grado + sección del estudiante ya resuelto en Classroom,
+    # no el student_key interno de otra fuente.
+    bitacora_meta: dict[str, Any] = {"loaded": False, "records": 0}
     if role in {"family", "owner"}:
         try:
-            history_payload: dict[str, Any] = {"student": student_key, "limit": 100}
+            history_payload: dict[str, Any] = {
+                "student": target_name,
+                "grado": str(student["grade"]),
+                "seccion": str(student["section"]),
+                "limit": 100,
+            }
             if start_date:
                 history_payload["fecha_desde"] = start_date.strftime("%d/%m/%Y")
             if end_date:
                 history_payload["fecha_hasta"] = end_date.strftime("%d/%m/%Y")
             history = _bitacora_history(history_payload)
             records = list(history.get("bitacora") or [])
-            lines.append("## BITÁCORA DOCENTE OFICIAL")
-            lines.append(
-                "Fuente: BITÁCORA DOCENTE – MATEMÁTICA 2026. Interpreta estos registros como hechos "
-                "documentados por el docente; resume patrones, fechas e impacto pedagógico sin inventar causas."
-            )
+            bitacora_meta = {
+                "loaded": True,
+                "records": len(records),
+                "total_records": int((history.get("counts") or {}).get("bitacora_total_sin_filtro") or len(records)),
+            }
+
+            lines.append("## SEGUIMIENTO DOCENTE INTERNO — NO NOMBRAR LA FUENTE AL USUARIO")
+            lines.append(f"Registros encontrados en el periodo: {len(records)}.")
             if not records:
                 lines.append(
-                    "No hay incidencias ni observaciones conductuales registradas para este estudiante "
-                    "en el periodo consultado. No inventes incidencias."
+                    "No hay registros conductuales en el periodo consultado. No inventes incidencias ni conviertas "
+                    "esto en una afirmación absoluta sobre toda la convivencia del estudiante."
                 )
             else:
-                for record in records:
-                    lines.append("- " + " | ".join(
-                        f"{key}={value}" for key, value in record.items()
-                        if value not in (None, "") and str(key).lower() not in {"alumno_id"}
-                    ))
+                for record in records[-30:]:
+                    fields: list[str] = []
+                    for key, value in record.items():
+                        if value in (None, ""):
+                            continue
+                        if str(key).lower() in {"alumno_id"}:
+                            continue
+                        text_value = str(value)
+                        if role == "family":
+                            try:
+                                text_value = brain._redact_other_students(text_value, target_name)
+                            except Exception:
+                                pass
+                        fields.append(f"{key}={text_value}")
+                    if fields:
+                        lines.append("- " + " | ".join(fields))
         except Exception as exc:
-            lines.append("## BITÁCORA DOCENTE OFICIAL")
-            lines.append(f"No se pudo cargar la bitácora en esta consulta: {type(exc).__name__}. No inventes registros.")
+            bitacora_meta = {"loaded": False, "records": 0, "error": type(exc).__name__}
+            lines.append("## SEGUIMIENTO DOCENTE INTERNO — NO NOMBRAR LA FUENTE AL USUARIO")
+            lines.append(
+                "No fue posible cargar el seguimiento docente en esta consulta. No afirmes que no existen "
+                "incidencias; limita la respuesta a la información académica disponible."
+            )
 
-    lines.append("## POLÍTICA SIEWEB")
-    lines.append("Para estudiantes y familias, cualquier información de SIEweb/CIEweb debe convertirse en orientación pedagógica sin revelar letra o nota cruda; para owner sí puede mostrarse el dato disponible. No inventes SIEweb si no está en el contexto.")
+    lines.append("## CLASSROOM PRIVADO DEL USUARIO AUTENTICADO")
+    progress = summary.get("progress") or {}
+    lines.append(
+        "Resumen académico del periodo: "
+        f"total={progress.get('total', 0)} | entregadas={progress.get('submitted', 0)} | "
+        f"pendientes={progress.get('pending', 0)} | tardías={progress.get('late', 0)} | "
+        f"calificadas={progress.get('graded', 0)} | promedio={progress.get('average_percent')}%"
+    )
+    for item in summary.get("activities") or []:
+        lines.append(
+            f"- {item['title']} | límite={item['due']} | estado={item.get('state')} | "
+            f"nota={item.get('grade')} / {item.get('max_points')} | tardía={item.get('late')}"
+        )
+
+    lines.append("## POLÍTICA DE RESPUESTA")
+    lines.append(
+        "La información anterior es contexto interno. No expliques al usuario cómo funciona el sistema, "
+        "qué fuentes se consultaron, ni menciones bitácora, base de datos, API, contexto interno o mecanismos técnicos."
+    )
+    lines.append(
+        "Para estudiantes y familias, cualquier información disponible debe convertirse en orientación pedagógica natural. "
+        "Para owner sí puede mostrarse el dato completo cuando lo solicita, pero sin confundir ausencia de registros con ausencia absoluta de incidentes."
+    )
+    summary["bitacora"] = bitacora_meta
     return "\n".join(lines), summary
 
 
@@ -667,19 +718,22 @@ def install(mcp: Any) -> None:
                 "Nunca datos de compañeros. Mantén un tono pedagógico, claro y respetuoso."
             ),
             "family": (
-                "Responde solo sobre hijos vinculados al código familiar. Usa SIEMPRE lenguaje psicopedagógico, "
-                "respetuoso, constructivo y orientado al acompañamiento. Describe hechos observables y su impacto; "
-                "no etiquetes al estudiante ni uses expresiones como molestar, fastidiar, portarse mal, flojo, "
-                "irresponsable o problemático. No reveles nombres ni datos de otros menores. Si existe una incidencia, "
-                "explica brevemente qué se observó, cómo pudo afectar el aprendizaje o la convivencia y una sugerencia "
-                "realista para acompañar. Si preguntan por conducta, comportamiento, incidencias o seguimiento, usa la BITÁCORA DOCENTE oficial incluida en el contexto e interpreta sus registros sin inventar. Presenta la respuesta con párrafos cortos, títulos en negrita y viñetas "
-                "cuando ayuden a la lectura. Nunca datos de otros estudiantes."
+                "Responde solo sobre hijos vinculados al código familiar. Habla como el propio Profe Johnny, no como un robot ni como un sistema. "
+                "Usa SIEMPRE lenguaje psicopedagógico, respetuoso, constructivo y orientado al acompañamiento. "
+                "No expliques fuentes, procesos internos ni digas frases como 'revisé la bitácora', 'consulté la base', 'el sistema indica' o similares. "
+                "Integra la información de forma natural, por ejemplo: 'Estimada familia, durante esta semana se observó...' "
+                "Describe hechos observables y su impacto; no etiquetes al estudiante ni uses expresiones como molestar, fastidiar, portarse mal, flojo, "
+                "irresponsable o problemático. No reveles nombres ni datos de otros menores: si una incidencia involucra a otro estudiante, di 'un compañero' "
+                "o 'otra estudiante'. Si existe una incidencia registrada en el periodo, NO la omitas. Explícala con naturalidad, indicando fecha o contexto "
+                "cuando sea útil, cómo pudo afectar el aprendizaje o la convivencia y una sugerencia realista para acompañar. "
+                "Si no hay registros en el periodo, no inventes incidencias y tampoco afirmes de manera absoluta que nunca existieron. "
+                "Presenta la respuesta con párrafos cortos, títulos breves y viñetas cuando ayuden a la lectura."
             ),
             "owner": (
                 "El usuario autenticado es el propietario/docente. Puede consultar cualquier estudiante y recibir "
                 "datos académicos completos disponibles. Para Classroom, por defecto usa únicamente actividades desde el 09/09/2026. "
-                "También puede consultar la BITÁCORA DOCENTE oficial del estudiante; interpreta los registros, fechas y patrones "
-                "pedagógicamente y no inventes causas ni incidencias."
+                "También puede consultar el seguimiento docente del estudiante. Si hay registros en el periodo, inclúyelos y no concluyas "
+                "que no existen incidentes. Interpreta fechas, hechos y patrones pedagógicamente y no inventes causas ni incidencias."
             ),
         }
         context = (
