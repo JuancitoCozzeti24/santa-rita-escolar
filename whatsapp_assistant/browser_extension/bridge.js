@@ -2,7 +2,7 @@
   "use strict";
 
   const CAPABILITY = "johnny_whatsapp_bridge_v1";
-  const BUILD = "0.1.0";
+  const BUILD = "0.1.1";
   let running = false;
 
   const $ = (id) => document.getElementById(id);
