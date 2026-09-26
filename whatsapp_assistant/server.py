@@ -17,6 +17,7 @@ from starlette.responses import JSONResponse
 VERSION = "0.1.0"
 BRIDGE_CAPABILITY = "johnny_whatsapp_bridge_v1"
 BRIDGE_SECRET = os.getenv("WHATSAPP_BRIDGE_SECRET", "").strip()
+INTERNAL_SECRET = os.getenv("WHATSAPP_INTERNAL_SECRET", "").strip()
 HOST = os.getenv("MCP_HOST", "0.0.0.0")
 PORT = int(os.getenv("PORT", os.getenv("MCP_PORT", "8000")))
 
@@ -152,6 +153,38 @@ def _auth_ok(request: Request) -> bool:
 
 def _unauthorized() -> JSONResponse:
     return JSONResponse({"ok": False, "error": "whatsapp_bridge_unauthorized"}, status_code=401)
+
+
+def _internal_auth_ok(request: Request) -> bool:
+    provided = str(request.headers.get("x-whatsapp-internal-secret") or "")
+    return bool(INTERNAL_SECRET) and bool(provided) and secrets.compare_digest(INTERNAL_SECRET, provided)
+
+
+@mcp.custom_route("/wa/v1/internal/enqueue", methods=["POST"])
+async def wa_internal_enqueue(request: Request):
+    if not _internal_auth_ok(request):
+        return JSONResponse({"ok": False, "error": "whatsapp_internal_unauthorized"}, status_code=401)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    body = body if isinstance(body, dict) else {}
+    try:
+        job = queue.enqueue(str(body.get("operation") or ""), dict(body.get("payload") or {}))
+    except Exception as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+    return JSONResponse({"ok": True, "job": job.public()})
+
+
+@mcp.custom_route("/wa/v1/internal/jobs/{job_id}", methods=["GET"])
+async def wa_internal_job(request: Request):
+    if not _internal_auth_ok(request):
+        return JSONResponse({"ok": False, "error": "whatsapp_internal_unauthorized"}, status_code=401)
+    job_id = str(request.path_params.get("job_id") or "")
+    job = queue.get(job_id)
+    if not job:
+        return JSONResponse({"ok": False, "error": "job_not_found"}, status_code=404)
+    return JSONResponse({"ok": True, "job": job.public()})
 
 
 @mcp.custom_route("/wa/v1/status", methods=["GET"])
