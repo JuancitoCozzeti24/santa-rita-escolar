@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Johnny WhatsApp Bridge</title>
+  <style>
+    body{font-family:system-ui,sans-serif;max-width:680px;margin:40px auto;padding:0 20px;color:#111}
+    .box{border:1px solid #ddd;border-radius:12px;padding:18px}
+    #status[data-bad="1"]{font-weight:700}
+    button{padding:9px 12px;margin-right:8px}
+  </style>
+</head>
+<body>
+  <h1>Johnny WhatsApp Bridge v0.1.0</h1>
+  <div class="box">
+    <p id="status">Iniciando…</p>
+    <p>Mantén esta pestaña abierta mientras quieras que ChatGPT consulte o envíe mensajes desde tu WhatsApp Web.</p>
+    <button id="openWhatsApp">Abrir WhatsApp Web</button>
+    <button id="start">Iniciar</button>
+    <button id="stop">Detener</button>
+  </div>
+  <script src="bridge.js"></script>
+</body>
+</html>
