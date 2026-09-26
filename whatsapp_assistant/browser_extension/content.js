@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD = "0.1.0";
+  const BUILD = "0.1.1";
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   const norm = (v) => String(v || "").replace(/\s+/g, " ").trim().toLocaleLowerCase();
 
@@ -15,15 +15,31 @@
   function currentChatTitle() {
     const header = document.querySelector("#main header") || document.querySelector("main header");
     if (!header) return "";
+
+    const preferredSelectors = [
+      '[data-testid="conversation-info-header-chat-title"]',
+      '[data-testid="conversation-info-header"] span[dir="auto"]',
+      'span[dir="auto"]',
+      '[role="button"] span[dir="auto"]'
+    ];
+    for (const selector of preferredSelectors) {
+      const candidates = [...header.querySelectorAll(selector)]
+        .filter(visible)
+        .map((el) => String(el.textContent || "").replace(/\s+/g, " ").trim())
+        .filter((t) => t && t.length < 180 && !/^(informaci[oó]n del perfil|profile info)$/i.test(t));
+      if (candidates.length) return candidates[0];
+    }
+
     const titled = [...header.querySelectorAll("[title]")]
       .filter(visible)
       .map((el) => String(el.getAttribute("title") || "").trim())
-      .filter(Boolean);
+      .filter((t) => t && !/^(informaci[oó]n del perfil|profile info)$/i.test(t));
     if (titled.length) return titled[0];
+
     const spans = [...header.querySelectorAll("span")]
       .filter(visible)
       .map((el) => String(el.textContent || "").replace(/\s+/g, " ").trim())
-      .filter((t) => t && t.length < 180);
+      .filter((t) => t && t.length < 180 && !/^(informaci[oó]n del perfil|profile info)$/i.test(t));
     return spans[0] || "";
   }
 
