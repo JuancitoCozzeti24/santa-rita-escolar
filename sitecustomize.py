@@ -16,32 +16,20 @@ def _patch_bridge_claim_compat_source() -> None:
     try:
         text = path.read_text(encoding="utf-8")
         changed = False
-        old_builds = (
-            'HF4_CONTENT_BUILDS = {HF4_CONTENT_BUILD, '
-            '"0.8.7-HF4-GRADE-TARGET-DEDUP-R4", '
-            '"0.8.7-HF4-GRADE-TARGET-DEDUP-R4-DEDUP-R4", '
-            '"0.8.7-HF4-GRADE-TARGET-DEDUP-R5", '
-            '"0.8.7-HF4-GRADE-TARGET-DEDUP-SINGLE-PASS-R6", '
-            '"0.8.7-HF4-GRADE-TARGET-DEDUP-SINGLE-PASS-R6.1", '
-            '"0.8.7-HF4-GRADE-TARGET-DEDUP-SINGLE-PASS-R6.2"}'
-        )
-        new_builds = (
-            'HF4_CONTENT_BUILDS = {HF4_CONTENT_BUILD, '
-            '"0.8.7-HF4-GRADE-TARGET-DEDUP-R4", '
-            '"0.8.7-HF4-GRADE-TARGET-DEDUP-R4-DEDUP-R4", '
-            '"0.8.7-HF4-GRADE-TARGET-DEDUP-R5", '
-            '"0.8.7-HF4-GRADE-TARGET-DEDUP-SINGLE-PASS-R6", '
-            '"0.8.7-HF4-GRADE-TARGET-DEDUP-SINGLE-PASS-R6.1", '
-            '"0.8.7-HF4-GRADE-TARGET-DEDUP-SINGLE-PASS-R6.2", '
-            '"0.8.7-HF4-R6.8-CLAIM-CAPABILITY-RESTORE", '
-            '"0.8.7-HF4-R6.9-DETAILED-FEEDBACK-CORE", '
-            '"0.8.7-HF4-R6.9.6-EXISTING-FEEDBACK-SEND"}'
-        )
-        if old_builds in text:
-            text = text.replace(old_builds, new_builds, 1)
-            changed = True
-        elif new_builds not in text:
+        marker = "HF4_CONTENT_BUILDS = {"
+        start = text.find(marker)
+        if start < 0:
             raise RuntimeError("No se encontró la definición esperada de HF4_CONTENT_BUILDS.")
+        end = text.find("}", start)
+        if end < 0:
+            raise RuntimeError("La definición de HF4_CONTENT_BUILDS está incompleta.")
+        builds_block = text[start:end + 1]
+        for build in (R68_BUILD, R69_BUILD, R696_CONTENT_BUILD):
+            quoted = f'"{build}"'
+            if quoted not in builds_block:
+                builds_block = builds_block[:-1] + f", {quoted}" + "}"
+                changed = True
+        text = text[:start] + builds_block + text[end + 1:]
         old_claim = f'and bridge_build == "{R62_BUILD}"'
         new_claim = 'and bridge_build in {' + f'"{R62_BUILD}", "{R68_BUILD}", "{R69_BUILD}"' + '}'
         occurrences = text.count(old_claim)
