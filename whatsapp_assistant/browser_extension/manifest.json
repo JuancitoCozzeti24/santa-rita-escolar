@@ -1,0 +1,24 @@
+{
+  "manifest_version": 3,
+  "name": "Johnny WhatsApp Assistant Bridge",
+  "version": "0.1.0",
+  "description": "Puente privado entre ChatGPT y la sesión oficial de WhatsApp Web del usuario.",
+  "permissions": ["storage", "tabs", "scripting"],
+  "host_permissions": [
+    "https://web.whatsapp.com/*",
+    "https://*.onrender.com/*",
+    "http://127.0.0.1/*",
+    "http://localhost/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["https://web.whatsapp.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Johnny WhatsApp Assistant"
+  }
+}
