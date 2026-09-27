@@ -20,15 +20,16 @@ jobs:
         with:
           ref: profe-johnny-classroom-test
 
-      - name: Apply unified access-code gate
+      - name: Apply unified access and dynamic notices
         shell: bash
         run: |
           python profe-johnny-app/apply_access_code_gate.py
           python profe-johnny-app/apply_clean_chat_format.py
-          sed -i 's/versionCode = 6/versionCode = 8/' profe-johnny-app/app/build.gradle.kts
-          sed -i 's/versionName = "0.3.0"/versionName = "0.4.0"/' profe-johnny-app/app/build.gradle.kts
+          python profe-johnny-app/apply_dynamic_notices.py
+          sed -i 's/versionCode = 6/versionCode = 9/' profe-johnny-app/app/build.gradle.kts
+          sed -i 's/versionName = "0.3.0"/versionName = "0.4.1"/' profe-johnny-app/app/build.gradle.kts
 
-      - name: Verify unified secure access
+      - name: Verify unified secure access and dynamic notices
         shell: bash
         run: |
           set -euo pipefail
@@ -39,8 +40,12 @@ jobs:
           grep -q '\$base/secure-chat' "$FILE"
           grep -q 'Cambiar acceso' "$FILE"
           grep -q 'Modo docente · Profe Johnny' "$FILE"
-          grep -q 'versionName = "0.4.0"' profe-johnny-app/app/build.gradle.kts
-          grep -q 'versionCode = 8' profe-johnny-app/app/build.gradle.kts
+          grep -q 'Itinerario oficial de Matemática' "$FILE"
+          grep -q 'Actualizar' "$FILE"
+          grep -q '\$base/notices?grade=' "$FILE"
+          grep -q 'Información común para toda la sección' "$FILE"
+          grep -q 'versionName = "0.4.1"' profe-johnny-app/app/build.gradle.kts
+          grep -q 'versionCode = 9' profe-johnny-app/app/build.gradle.kts
 
       - name: Create compile-time media placeholders
         shell: bash
@@ -74,13 +79,13 @@ jobs:
         run: gradle :app:assembleDebug --stacktrace -PPROFE_JOHNNY_API_BASE_URL=https://santa-rita-escolar-tcpb.onrender.com/profe-johnny/v1
 
       - name: Prepare artifact
-        run: cp profe-johnny-app/app/build/outputs/apk/debug/app-debug.apk PROFE-JOHNNY-APP-v0.4.0-CODIGO-UNICO.apk
+        run: cp profe-johnny-app/app/build/outputs/apk/debug/app-debug.apk PROFE-JOHNNY-APP-v0.4.1-AVISOS-DINAMICOS.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: PROFE-JOHNNY-APP-v0.4.0-CODIGO-UNICO
-          path: PROFE-JOHNNY-APP-v0.4.0-CODIGO-UNICO.apk
+          name: PROFE-JOHNNY-APP-v0.4.1-AVISOS-DINAMICOS
+          path: PROFE-JOHNNY-APP-v0.4.1-AVISOS-DINAMICOS.apk
 
       - name: Prepare Android signing tools
         shell: bash
