@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import re
+from pathlib import Path
 from typing import Any
 
 from starlette.requests import Request
@@ -73,15 +75,29 @@ def _safe_int(value: Any, default: int = 20) -> int:
         return default
 
 
-def _notice_key(item: dict[str, Any]) -> tuple[str, str, str]:
-    return (
-        str(item.get("type") or ""),
-        _norm(item.get("title")),
-        _norm(item.get("text") or item.get("due")),
-    )
+NOTICES_FILE = Path(__file__).with_name("profe_johnny_notices.json")
 
 
-def _notices_payload(grade: str, section: str = "", limit: int = 20) -> dict[str, Any]:
+def _load_manual_notices() -> dict[str, Any]:
+    try:
+        raw = json.loads(NOTICES_FILE.read_text(encoding="utf-8"))
+        if not isinstance(raw, dict):
+            raise ValueError("notices_root_not_object")
+        items = raw.get("items")
+        if not isinstance(items, list):
+            items = []
+        return {
+            "version": int(raw.get("version") or 1),
+            "updated_at": str(raw.get("updated_at") or ""),
+            "items": items,
+        }
+    except FileNotFoundError:
+        return {"version": 1, "updated_at": "", "items": []}
+    except Exception:
+        return {"version": 1, "updated_at": "", "items": []}
+
+
+def _notices_payload(grade: str, section: str = "", limit: int = 50) -> dict[str, Any]:
     wanted_grade = _grade_value(grade)
     wanted_section = _section_value(section)
     if not wanted_grade:
@@ -89,91 +105,52 @@ def _notices_payload(grade: str, section: str = "", limit: int = 20) -> dict[str
     if str(section or "").strip() and not wanted_section:
         raise ValueError("section debe ser A o B")
 
-    limit = max(1, min(int(limit or 20), 40))
-    courses = [
-        course
-        for course in brain._client.list_courses(active_only=True)
-        if _mobile_course_matches(course, wanted_grade)
-        and _section_matches(course, wanted_grade, wanted_section)
-    ]
+    limit = max(1, min(int(limit or 50), 100))
+    store = _load_manual_notices()
 
-    items: list[dict[str, Any]] = []
-    sources: list[dict[str, str]] = []
-    for course in courses:
-        course_id = str(course.get("id") or "")
-        course_name = str(course.get("name") or course_id)
-        if not course_id:
+    filtered: list[dict[str, Any]] = []
+    for raw in store.get("items") or []:
+        if not isinstance(raw, dict):
             continue
-        sources.append({"course_id": course_id, "course_name": course_name})
-
-        try:
-            announcements = brain._client.list_announcements(
-                course_id, include_drafts=False
-            )[:limit]
-        except Exception:
-            announcements = []
-        for announcement in announcements:
-            text = str(announcement.get("text") or "").strip()
-            if not text:
-                continue
-            items.append(
-                {
-                    "id": str(announcement.get("id") or ""),
-                    "type": "announcement",
-                    "title": "Aviso de Classroom",
-                    "text": text,
-                    "course_id": course_id,
-                    "course_name": course_name,
-                    "updated_at": announcement.get("updateTime")
-                    or announcement.get("creationTime"),
-                    "link": announcement.get("alternateLink"),
-                }
-            )
-
-        try:
-            coursework = brain._client.list_coursework(
-                course_id, include_drafts=False
-            )[:limit]
-        except Exception:
-            coursework = []
-        for work in coursework:
-            items.append(
-                {
-                    "id": str(work.get("id") or ""),
-                    "type": "coursework",
-                    "title": str(work.get("title") or "Actividad de Classroom"),
-                    "text": str(work.get("description") or "").strip()[:1200],
-                    "course_id": course_id,
-                    "course_name": course_name,
-                    "updated_at": work.get("updateTime") or work.get("creationTime"),
-                    "due": brain._format_due(work),
-                    "max_points": work.get("maxPoints"),
-                    "work_type": work.get("workType"),
-                    "link": work.get("alternateLink"),
-                }
-            )
-
-    # A/B suelen compartir contenido. Si se consulta solo por grado, evita duplicados visuales.
-    deduped: list[dict[str, Any]] = []
-    seen: set[tuple[str, str, str]] = set()
-    for item in sorted(items, key=lambda row: str(row.get("updated_at") or ""), reverse=True):
-        key = _notice_key(item)
-        if key in seen:
+        item_grade = _grade_value(raw.get("grade"))
+        item_section = _section_value(raw.get("section"))
+        active = bool(raw.get("active", True))
+        if not active or item_grade != wanted_grade:
             continue
-        seen.add(key)
-        deduped.append(item)
-        if len(deduped) >= limit:
-            break
+        if wanted_section and item_section != wanted_section:
+            continue
+        filtered.append({
+            "id": str(raw.get("id") or ""),
+            "type": str(raw.get("type") or "activity"),
+            "grade": item_grade,
+            "section": item_section,
+            "title": str(raw.get("title") or "").strip(),
+            "description": str(raw.get("description") or "").strip(),
+            "due_date": str(raw.get("due_date") or "").strip(),
+            "due_time": str(raw.get("due_time") or "").strip(),
+            "status": str(raw.get("status") or "vigente").strip(),
+            "topic": str(raw.get("topic") or "").strip(),
+            "note": str(raw.get("note") or "").strip(),
+            "created_at": str(raw.get("created_at") or "").strip(),
+            "updated_at": str(raw.get("updated_at") or "").strip(),
+        })
 
+    def sort_key(item: dict[str, Any]) -> tuple[str, str, str]:
+        date_text = str(item.get("due_date") or "9999-99-99")
+        time_text = str(item.get("due_time") or "99:99")
+        return (date_text, time_text, str(item.get("title") or ""))
+
+    filtered.sort(key=sort_key)
     return {
         "ok": True,
         "api_version": API_VERSION,
         "grade": wanted_grade,
         "section": wanted_section or None,
-        "count": len(deduped),
-        "items": deduped,
-        "sources": sources,
-        "updated_at": brain._now_lima().isoformat(),
+        "count": min(len(filtered), limit),
+        "items": filtered[:limit],
+        "updated_at": str(store.get("updated_at") or brain._now_lima().isoformat()),
+        "source": "profe_johnny_section_itinerary",
+        "personalized": False,
     }
 
 
@@ -191,9 +168,11 @@ def _bootstrap_payload() -> dict[str, Any]:
             "chat": True,
             "classroom_live_context": True,
             "notices": True,
+            "notices_dynamic_server": True,
+            "notices_manual_section_itinerary": True,
+            "push_notifications": False,
             "knowledge_base": True,
             "bitacora_private_context": True,
-            "push_notifications": False,
             "verified_family_login": False,
         },
         "endpoints": {
