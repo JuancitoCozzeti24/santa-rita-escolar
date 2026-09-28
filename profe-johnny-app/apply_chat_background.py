@@ -3,33 +3,32 @@ from pathlib import Path
 p = Path("profe-johnny-app/app/src/main/java/pe/profejohnny/app/MainActivity.kt")
 s = p.read_text(encoding="utf-8")
 
-old = '''            LazyColumn(
-                state = listState,
-                modifier = Modifier.weight(1f).fillMaxWidth().padding(horizontal = 14.dp),
-                verticalArrangement = Arrangement.spacedBy(9.dp)
-            ) {
-                items(messages) { message ->
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = if (message.fromUser) Arrangement.End else Arrangement.Start
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .widthIn(max = 315.dp)
-                                .background(
-                                    if (message.fromUser) Color(0xEEDFF1E7) else Color(0xF2FFFFFF),
-                                    RoundedCornerShape(18.dp)
-                                )
-                                .padding(horizontal = 14.dp, vertical = 11.dp)
-                        ) {
-                            Text(message.text, color = Color(0xFF172018), fontSize = 15.sp)
-                        }
-                    }
-                }
-            }
-'''
+marker = "                items(messages) { message ->"
+idx = s.find(marker)
+if idx < 0:
+    raise SystemExit("Chat messages marker not found")
 
-new = '''            Box(
+start = s.rfind("            LazyColumn(", 0, idx)
+if start < 0:
+    raise SystemExit("Chat LazyColumn start not found")
+
+end_marker = "\n\n            Row(\n                Modifier.fillMaxWidth().background(Color.White.copy(alpha = 0.94f)).padding(10.dp),"
+end = s.find(end_marker, idx)
+if end < 0:
+    raise SystemExit("Chat input row marker not found")
+
+original = s[start:end]
+original = original.replace(
+    "modifier = Modifier.weight(1f).fillMaxWidth().padding(horizontal = 14.dp)",
+    "modifier = Modifier.fillMaxSize().padding(horizontal = 14.dp, vertical = 10.dp)",
+    1,
+)
+if ".weight(1f)" in original:
+    original = original.replace(".weight(1f)", "", 1)
+
+indented = "\n".join(("    " + line) if line else line for line in original.split("\n"))
+
+wrapper = '''            Box(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth()
@@ -45,37 +44,8 @@ new = '''            Box(
                         .fillMaxSize()
                         .background(Color(0x18003D2D))
                 )
-                LazyColumn(
-                    state = listState,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(horizontal = 14.dp, vertical = 10.dp),
-                    verticalArrangement = Arrangement.spacedBy(9.dp)
-                ) {
-                    items(messages) { message ->
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = if (message.fromUser) Arrangement.End else Arrangement.Start
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .widthIn(max = 315.dp)
-                                    .background(
-                                        if (message.fromUser) Color(0xF2DFF1E7) else Color(0xF5FFFFFF),
-                                        RoundedCornerShape(18.dp)
-                                    )
-                                    .padding(horizontal = 14.dp, vertical = 11.dp)
-                            ) {
-                                Text(message.text, color = Color(0xFF172018), fontSize = 15.sp)
-                            }
-                        }
-                    }
-                }
-            }
-'''
+''' + indented + '''
+            }'''
 
-if old not in s:
-    raise SystemExit("Chat message list anchor not found")
-
-s = s.replace(old, new, 1)
+s = s[:start] + wrapper + s[end:]
 p.write_text(s, encoding="utf-8")
