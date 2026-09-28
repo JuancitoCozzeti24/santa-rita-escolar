@@ -26,8 +26,9 @@ jobs:
           python profe-johnny-app/apply_access_code_gate.py
           python profe-johnny-app/apply_clean_chat_format.py
           python profe-johnny-app/apply_dynamic_notices.py
-          sed -i 's/versionCode = 6/versionCode = 9/' profe-johnny-app/app/build.gradle.kts
-          sed -i 's/versionName = "0.3.0"/versionName = "0.4.1"/' profe-johnny-app/app/build.gradle.kts
+          python profe-johnny-app/apply_chat_background.py
+          sed -i 's/versionCode = 6/versionCode = 10/' profe-johnny-app/app/build.gradle.kts
+          sed -i 's/versionName = "0.3.0"/versionName = "0.4.2"/' profe-johnny-app/app/build.gradle.kts
 
       - name: Verify unified secure access and dynamic notices
         shell: bash
@@ -44,8 +45,9 @@ jobs:
           grep -q 'Actualizar' "$FILE"
           grep -q '\$base/notices?grade=' "$FILE"
           grep -q 'Información común para toda la sección' "$FILE"
-          grep -q 'versionName = "0.4.1"' profe-johnny-app/app/build.gradle.kts
-          grep -q 'versionCode = 9' profe-johnny-app/app/build.gradle.kts
+          grep -q 'painterResource(R.drawable.chat_fondo)' "$FILE"
+          grep -q 'versionName = "0.4.2"' profe-johnny-app/app/build.gradle.kts
+          grep -q 'versionCode = 10' profe-johnny-app/app/build.gradle.kts
 
       - name: Create compile-time media placeholders
         shell: bash
@@ -79,13 +81,13 @@ jobs:
         run: gradle :app:assembleDebug --stacktrace -PPROFE_JOHNNY_API_BASE_URL=https://santa-rita-escolar-tcpb.onrender.com/profe-johnny/v1
 
       - name: Prepare artifact
-        run: cp profe-johnny-app/app/build/outputs/apk/debug/app-debug.apk PROFE-JOHNNY-APP-v0.4.1-AVISOS-DINAMICOS.apk
+        run: cp profe-johnny-app/app/build/outputs/apk/debug/app-debug.apk PROFE-JOHNNY-APP-v0.4.2-CHAT-FONDO.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: PROFE-JOHNNY-APP-v0.4.1-AVISOS-DINAMICOS
-          path: PROFE-JOHNNY-APP-v0.4.1-AVISOS-DINAMICOS.apk
+          name: PROFE-JOHNNY-APP-v0.4.2-CHAT-FONDO
+          path: PROFE-JOHNNY-APP-v0.4.2-CHAT-FONDO.apk
 
       - name: Prepare Android signing tools
         shell: bash
