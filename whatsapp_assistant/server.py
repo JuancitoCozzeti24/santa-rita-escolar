@@ -14,7 +14,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 BRIDGE_CAPABILITY = "johnny_whatsapp_bridge_v1"
 BRIDGE_SECRET = os.getenv("WHATSAPP_BRIDGE_SECRET", "").strip()
 INTERNAL_SECRET = os.getenv("WHATSAPP_INTERNAL_SECRET", "").strip()
@@ -28,10 +28,12 @@ mcp = FastMCP(
     streamable_http_path="/mcp",
     instructions=(
         "Asistente privado para el WhatsApp Web del usuario. Las lecturas se realizan "
-        "únicamente desde la sesión oficial abierta en su navegador. Para escribir, nunca "
-        "envíes un mensaje sin una orden explícita del usuario. Usa whatsapp_send_message "
-        "con confirmed=true solo después de que el usuario haya autorizado ese mensaje. "
-        "Antes de enviar, el bridge verifica el título del chat y bloquea cualquier discrepancia."
+        "únicamente desde la sesión oficial abierta en su navegador. Puede recorrer "
+        "automáticamente el historial del chat y abrir un chat por su título para lectura. "
+        "Para escribir, nunca envíes un mensaje sin una orden explícita del usuario. Usa "
+        "whatsapp_send_message con confirmed=true solo después de que el usuario haya "
+        "autorizado ese mensaje. Antes de enviar, el bridge verifica el título del chat y "
+        "bloquea cualquier discrepancia."
     ),
 )
 
@@ -50,6 +52,19 @@ def _clean_message(value: object) -> str:
         raise ValueError("El mensaje no puede estar vacío.")
     if len(text) > 5000:
         raise ValueError("El mensaje supera el límite de 5000 caracteres de esta versión.")
+    return text
+
+
+def _clean_date(value: object, field_name: str, required: bool = False) -> str:
+    text = str(value or "").strip()
+    if not text:
+        if required:
+            raise ValueError(f"Debes indicar {field_name}.")
+        return ""
+    try:
+        datetime.strptime(text, "%Y-%m-%d")
+    except ValueError as exc:
+        raise ValueError(f"{field_name} debe tener formato YYYY-MM-DD.") from exc
     return text
 
 
@@ -80,7 +95,7 @@ class WhatsAppQueue:
 
     def enqueue(self, operation: str, payload: dict[str, Any]) -> WhatsAppJob:
         operation = str(operation or "").strip()
-        if operation not in {"read_current_chat", "list_visible_chats", "send_message"}:
+        if operation not in {"read_current_chat", "read_chat_history", "list_visible_chats", "send_message"}:
             raise ValueError(f"Operación no soportada: {operation}")
         job = WhatsAppJob(id=str(uuid4()), operation=operation, payload=dict(payload or {}))
         with self._lock:
@@ -91,7 +106,7 @@ class WhatsAppQueue:
         with self._lock:
             return self._jobs.get(str(job_id))
 
-    def next(self, lease_seconds: int = 45) -> WhatsAppJob | None:
+    def next(self, lease_seconds: int = 180) -> WhatsAppJob | None:
         now = _now()
         with self._lock:
             for job in self._jobs.values():
@@ -237,6 +252,11 @@ async def wa_complete(request: Request):
         if str(body.get("message") or "") != str(expected_message or ""):
             errors.append("message_mismatch")
 
+    if job.operation == "read_chat_history":
+        expected_title = job.payload.get("chat_title")
+        if _norm(body.get("chat_title")) != _norm(expected_title):
+            errors.append("chat_title_mismatch")
+
     if errors:
         failed = queue.fail(job_id, ",".join(errors), body)
         return JSONResponse({"ok": False, "job": failed.public()}, status_code=409)
@@ -261,7 +281,7 @@ async def wa_fail(request: Request):
     return JSONResponse({"ok": True, "job": failed.public()})
 
 
-def _run_and_wait(operation: str, payload: dict[str, Any], timeout_seconds: float = 18.0) -> dict[str, Any]:
+def _run_and_wait(operation: str, payload: dict[str, Any], timeout_seconds: float = 25.0) -> dict[str, Any]:
     job = queue.enqueue(operation, payload)
     deadline = time.monotonic() + max(1.0, min(float(timeout_seconds), 30.0))
     while time.monotonic() < deadline:
@@ -288,7 +308,7 @@ def _run_and_wait(operation: str, payload: dict[str, Any], timeout_seconds: floa
         "pending": True,
         "job_id": job.id,
         "status": current.status if current else "unknown",
-        "message": "El trabajo quedó en cola. Verifica que WhatsApp Web y la pestaña del bridge estén abiertos.",
+        "message": "La lectura sigue trabajando en el navegador. Consulta whatsapp_job_status con este job_id.",
     }
 
 
@@ -303,15 +323,38 @@ def whatsapp_bridge_status() -> dict[str, Any]:
 
 
 @mcp.tool()
-def whatsapp_read_current_chat(limit: int = 40) -> dict[str, Any]:
-    """Lee los mensajes visibles/cargados del chat actualmente abierto en WhatsApp Web. No cambia de chat ni envía nada."""
-    limit = max(1, min(int(limit), 200))
-    return _run_and_wait("read_current_chat", {"limit": limit})
+def whatsapp_read_current_chat(limit: int = 200) -> dict[str, Any]:
+    """Lee el chat abierto y desplaza automáticamente el historial hacia arriba hasta reunir el límite solicitado o alcanzar el inicio disponible."""
+    limit = max(1, min(int(limit), 1500))
+    return _run_and_wait("read_current_chat", {"limit": limit}, timeout_seconds=28.0)
+
+
+@mcp.tool()
+def whatsapp_read_chat_history(
+    chat_title: str,
+    from_date: str,
+    to_date: str = "",
+    limit: int = 1000,
+) -> dict[str, Any]:
+    """Abre un chat por su título y lee automáticamente su historial entre fechas. Las fechas usan YYYY-MM-DD. Devuelve indicadores para saber si la lectura fue completa."""
+    title = str(chat_title or "").strip()
+    if not title:
+        raise ValueError("Debes indicar chat_title.")
+    start = _clean_date(from_date, "from_date", required=True)
+    end = _clean_date(to_date, "to_date", required=False)
+    if end and end < start:
+        raise ValueError("to_date no puede ser anterior a from_date.")
+    limit = max(1, min(int(limit), 1500))
+    return _run_and_wait(
+        "read_chat_history",
+        {"chat_title": title, "from_date": start, "to_date": end, "limit": limit},
+        timeout_seconds=28.0,
+    )
 
 
 @mcp.tool()
 def whatsapp_list_visible_chats(limit: int = 50) -> dict[str, Any]:
-    """Lista chats que estén visibles/cargados en la barra lateral de WhatsApp Web. No recorre ni scrapea todo el historial."""
+    """Lista chats que estén visibles/cargados en la barra lateral de WhatsApp Web."""
     limit = max(1, min(int(limit), 100))
     return _run_and_wait("list_visible_chats", {"limit": limit})
 
