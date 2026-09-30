@@ -112,14 +112,44 @@ def install(mcp) -> None:
         }
 
     @mcp.tool()
-    def whatsapp_read_current_chat(limit: int = 40) -> dict[str, Any]:
-        """Lee los mensajes actualmente cargados del chat abierto en WhatsApp Web. No cambia de chat ni envía nada."""
-        limit = max(1, min(int(limit), 200))
-        return _enqueue_and_wait("read_current_chat", {"limit": limit})
+    def whatsapp_read_current_chat(limit: int = 200) -> dict[str, Any]:
+        """Lee el chat abierto y desplaza automáticamente el historial hacia arriba hasta reunir el límite solicitado o alcanzar el inicio disponible."""
+        limit = max(1, min(int(limit), 1500))
+        return _enqueue_and_wait("read_current_chat", {"limit": limit}, timeout_seconds=28.0)
+
+    @mcp.tool()
+    def whatsapp_read_chat_history(
+        chat_title: str,
+        from_date: str,
+        to_date: str = "",
+        limit: int = 1000,
+    ) -> dict[str, Any]:
+        """Abre un chat por su título y lee automáticamente su historial entre fechas. Usa YYYY-MM-DD y devuelve indicadores para comprobar si la lectura fue completa."""
+        title = str(chat_title or "").strip()
+        start = str(from_date or "").strip()
+        end = str(to_date or "").strip()
+        if not title:
+            raise ValueError("Debes indicar chat_title.")
+        if not start:
+            raise ValueError("Debes indicar from_date con formato YYYY-MM-DD.")
+        for field_name, value in (("from_date", start), ("to_date", end)):
+            if value:
+                try:
+                    time.strptime(value, "%Y-%m-%d")
+                except ValueError as exc:
+                    raise ValueError(f"{field_name} debe tener formato YYYY-MM-DD.") from exc
+        if end and end < start:
+            raise ValueError("to_date no puede ser anterior a from_date.")
+        limit = max(1, min(int(limit), 1500))
+        return _enqueue_and_wait(
+            "read_chat_history",
+            {"chat_title": title, "from_date": start, "to_date": end, "limit": limit},
+            timeout_seconds=28.0,
+        )
 
     @mcp.tool()
     def whatsapp_list_visible_chats(limit: int = 50) -> dict[str, Any]:
-        """Lista chats actualmente visibles/cargados en la barra lateral de WhatsApp Web. No recorre todo el historial."""
+        """Lista chats actualmente visibles/cargados en la barra lateral de WhatsApp Web."""
         limit = max(1, min(int(limit), 100))
         return _enqueue_and_wait("list_visible_chats", {"limit": limit})
 
