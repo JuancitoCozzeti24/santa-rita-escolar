@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD = "0.2.0";
+  const BUILD = "0.2.1";
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   const norm = (v) => String(v || "").replace(/\s+/g, " ").trim().toLocaleLowerCase();
 
@@ -195,27 +195,46 @@
   function renderedMessageRows(root = messageRoot()) {
     return [...root.querySelectorAll("[data-id]")].filter((el) => {
       const id = String(el.getAttribute("data-id") || "").trim();
-      return id && visible(el);
+      return Boolean(id);
     });
   }
 
   function findMessageScroller(root = messageRoot()) {
     const rows = renderedMessageRows(root);
-    const seed = rows[0] || root.querySelector("[data-id]");
-    let el = seed;
-    while (el && el !== document.body) {
-      if (visible(el) && el.scrollHeight > el.clientHeight + 120) {
-        const style = getComputedStyle(el);
-        if (/auto|scroll/.test(style.overflowY || "")) return el;
+    const candidates = new Set();
+
+    for (const row of rows.slice(0, 30)) {
+      let el = row;
+      for (let i = 0; el && i < 12; i += 1, el = el.parentElement) {
+        if (el === document.body || el === document.documentElement) break;
+        if (root.contains(el)) candidates.add(el);
+        if (el === root) break;
       }
-      if (el === root) break;
-      el = el.parentElement;
     }
 
-    const candidates = [...root.querySelectorAll("div")]
-      .filter((node) => visible(node) && node.scrollHeight > node.clientHeight + 200)
-      .sort((a, b) => (b.scrollHeight - b.clientHeight) - (a.scrollHeight - a.clientHeight));
-    return candidates[0] || null;
+    const known = [
+      root.querySelector('[data-testid="conversation-panel-messages"]'),
+      root.querySelector('.copyable-area'),
+    ].filter(Boolean);
+    known.forEach((el) => candidates.add(el));
+
+    const scored = [...candidates]
+      .filter((el) => visible(el) && el.clientHeight > 150)
+      .map((el) => {
+        const style = getComputedStyle(el);
+        const overflow = /auto|scroll/.test(style.overflowY || "");
+        const scrollable = el.scrollHeight > el.clientHeight + 80;
+        const messageCount = el.querySelectorAll("[data-id]").length;
+        let score = 0;
+        if (overflow) score += 80;
+        if (scrollable) score += 70;
+        score += Math.min(messageCount, 40);
+        if (el === root) score -= 50;
+        return { el, score };
+      })
+      .sort((a, b) => b.score - a.score);
+
+    return scored[0]?.el || null;
   }
 
   function extractRenderedMessages(store, sequenceRef) {
@@ -265,6 +284,38 @@
     return newest;
   }
 
+  async function waitForHistoryGrowth(store, seq, beforeOldest, beforeSize, timeoutMs = 3500) {
+    const deadline = Date.now() + timeoutMs;
+    let bestOldest = oldestTimestamp(store);
+
+    while (Date.now() < deadline) {
+      extractRenderedMessages(store, seq);
+      const nowOldest = oldestTimestamp(store);
+      if (store.size > beforeSize) return true;
+      if (beforeOldest != null && nowOldest != null && nowOldest < beforeOldest) return true;
+      if (bestOldest == null || (nowOldest != null && nowOldest < bestOldest)) bestOldest = nowOldest;
+      await sleep(150);
+    }
+    return false;
+  }
+
+  function nudgeHistoryUp(scroller, aggressive = false) {
+    const amount = Math.max(500, Math.floor(scroller.clientHeight * (aggressive ? 2.5 : 0.9)));
+    try {
+      scroller.scrollBy({ top: -amount, left: 0, behavior: "instant" });
+    } catch (_err) {
+      scroller.scrollTop = Math.max(0, scroller.scrollTop - amount);
+    }
+    scroller.dispatchEvent(new Event("scroll", { bubbles: true }));
+    try {
+      scroller.dispatchEvent(new WheelEvent("wheel", {
+        deltaY: -amount,
+        bubbles: true,
+        cancelable: true,
+      }));
+    } catch (_err) {}
+  }
+
   async function scanHistory({ limit = 200, fromDate = "", toDate = "" } = {}) {
     const requested = Math.max(1, Math.min(Number(limit) || 200, 1500));
     const startTs = parseISODate(fromDate, false);
@@ -279,41 +330,73 @@
 
     const scroller = findMessageScroller();
     let scrolls = 0;
-    let stalled = 0;
-    let reachedHistoryTop = false;
+    let stalledRounds = 0;
+    let rescueAttempts = 0;
+    let stoppedWithoutProof = false;
     let reachedRequestedStart = startTs != null && oldestTimestamp(store) != null && oldestTimestamp(store) <= startTs;
-    const maxScrolls = startTs != null ? 180 : Math.min(180, Math.max(20, Math.ceil(requested / 12) * 3));
+    const maxScrolls = startTs != null ? 260 : Math.min(260, Math.max(40, Math.ceil(requested / 8) * 3));
 
     if (scroller && !reachedRequestedStart && store.size < requested) {
       while (scrolls < maxScrolls) {
         const beforeSize = store.size;
-        const beforeHeight = scroller.scrollHeight;
+        const beforeOldest = oldestTimestamp(store);
 
-        scroller.scrollTop = 0;
-        scroller.dispatchEvent(new Event("scroll", { bubbles: true }));
-        await sleep(scrolls < 4 ? 650 : 450);
-        extractRenderedMessages(store, seq);
+        nudgeHistoryUp(scroller, stalledRounds >= 2);
+        if (scroller.scrollTop <= 6) {
+          try {
+            scroller.scrollTop = 1;
+            scroller.dispatchEvent(new Event("scroll", { bubbles: true }));
+          } catch (_err) {}
+        }
+
+        const grew = await waitForHistoryGrowth(
+          store,
+          seq,
+          beforeOldest,
+          beforeSize,
+          stalledRounds >= 2 ? 5000 : 3000,
+        );
+
         scrolls += 1;
-
         const oldest = oldestTimestamp(store);
+
         if (startTs != null && oldest != null && oldest <= startTs) {
           reachedRequestedStart = true;
           break;
         }
         if (startTs == null && store.size >= requested) break;
 
-        const gained = store.size - beforeSize;
-        const heightChanged = Math.abs(scroller.scrollHeight - beforeHeight) > 30;
-        if (gained <= 0 && !heightChanged && scroller.scrollTop <= 4) stalled += 1;
-        else stalled = 0;
+        if (grew) {
+          stalledRounds = 0;
+          continue;
+        }
 
-        if (stalled >= 4) {
-          reachedHistoryTop = true;
+        stalledRounds += 1;
+
+        if (stalledRounds >= 3 && rescueAttempts < 3) {
+          rescueAttempts += 1;
+          try {
+            scroller.focus?.();
+            scroller.dispatchEvent(new KeyboardEvent("keydown", {
+              key: "Home",
+              code: "Home",
+              bubbles: true,
+              cancelable: true,
+            }));
+          } catch (_err) {}
+          nudgeHistoryUp(scroller, true);
+          await waitForHistoryGrowth(store, seq, oldestTimestamp(store), store.size, 5500);
+          stalledRounds = 0;
+          continue;
+        }
+
+        if (stalledRounds >= 6) {
+          stoppedWithoutProof = true;
           break;
         }
       }
     } else if (!scroller) {
-      reachedHistoryTop = true;
+      stoppedWithoutProof = true;
     }
 
     if (scroller) {
@@ -347,6 +430,10 @@
 
     const oldest = oldestTimestamp(store);
     const newest = newestTimestamp(store);
+    const completeForRequestedRange = startTs != null
+      ? reachedRequestedStart && !truncated
+      : store.size >= requested && !truncated;
+
     return {
       messages,
       history: {
@@ -355,14 +442,14 @@
         matched_range: totalMatched,
         returned: messages.length,
         scrolls,
-        reached_history_top: reachedHistoryTop,
+        rescue_attempts: rescueAttempts,
+        stalled_without_proof: stoppedWithoutProof,
+        reached_history_top: false,
         reached_requested_start: reachedRequestedStart,
         truncated,
         oldest_timestamp: oldest ? new Date(oldest).toISOString() : null,
         newest_timestamp: newest ? new Date(newest).toISOString() : null,
-        complete_for_requested_range: startTs != null
-          ? (reachedRequestedStart || reachedHistoryTop) && !truncated
-          : (reachedHistoryTop || store.size >= requested) && !truncated,
+        complete_for_requested_range: completeForRequestedRange,
       },
     };
   }
