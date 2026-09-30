@@ -38,6 +38,11 @@ mcp = FastMCP(
 )
 
 
+@mcp.custom_route("/health", methods=["GET"])
+async def health(_request: Request):
+    return JSONResponse({"ok": True, "service": "johnny-whatsapp-assistant", "version": VERSION})
+
+
 def _now() -> datetime:
     return datetime.now(timezone.utc)
 
