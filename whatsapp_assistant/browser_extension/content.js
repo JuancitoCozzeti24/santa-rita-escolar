@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const BUILD = "0.1.1";
+  const BUILD = "0.2.0";
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   const norm = (v) => String(v || "").replace(/\s+/g, " ").trim().toLocaleLowerCase();
 
@@ -12,75 +12,366 @@
     return r.width > 0 && r.height > 0 && s.visibility !== "hidden" && s.display !== "none";
   }
 
+  function cleanTitle(value) {
+    return String(value || "").replace(/\s+/g, " ").trim();
+  }
+
   function currentChatTitle() {
     const header = document.querySelector("#main header") || document.querySelector("main header");
     if (!header) return "";
 
-    const preferredSelectors = [
+    const reject = /^(informaci[oó]n del perfil|profile info)$/i;
+    const selectors = [
       '[data-testid="conversation-info-header-chat-title"]',
       '[data-testid="conversation-info-header"] span[dir="auto"]',
-      'span[dir="auto"]',
-      '[role="button"] span[dir="auto"]'
+      '[role="button"] span[dir="auto"]',
+      'span[dir="auto"]'
     ];
-    for (const selector of preferredSelectors) {
+
+    for (const selector of selectors) {
       const candidates = [...header.querySelectorAll(selector)]
         .filter(visible)
-        .map((el) => String(el.textContent || "").replace(/\s+/g, " ").trim())
-        .filter((t) => t && t.length < 180 && !/^(informaci[oó]n del perfil|profile info)$/i.test(t));
+        .map((el) => cleanTitle(el.textContent))
+        .filter((t) => t && t.length < 180 && !reject.test(t));
       if (candidates.length) return candidates[0];
     }
 
     const titled = [...header.querySelectorAll("[title]")]
       .filter(visible)
-      .map((el) => String(el.getAttribute("title") || "").trim())
-      .filter((t) => t && !/^(informaci[oó]n del perfil|profile info)$/i.test(t));
+      .map((el) => cleanTitle(el.getAttribute("title")))
+      .filter((t) => t && t.length < 180 && !reject.test(t));
     if (titled.length) return titled[0];
 
-    const spans = [...header.querySelectorAll("span")]
-      .filter(visible)
-      .map((el) => String(el.textContent || "").replace(/\s+/g, " ").trim())
-      .filter((t) => t && t.length < 180 && !/^(informaci[oó]n del perfil|profile info)$/i.test(t));
-    return spans[0] || "";
+    return "";
   }
 
-  function readMessages(limit) {
+  function chatRows() {
+    const pane = document.querySelector("#pane-side") || document.querySelector('[aria-label*="lista" i]');
+    if (!pane) return [];
+    return [...pane.querySelectorAll('[role="listitem"], [role="row"], [data-testid="cell-frame-container"]')]
+      .filter(visible);
+  }
+
+  function rowTitle(row) {
+    const titled = [...row.querySelectorAll("[title]")]
+      .filter(visible)
+      .map((el) => cleanTitle(el.getAttribute("title")))
+      .find(Boolean);
+    if (titled) return titled;
+    const auto = [...row.querySelectorAll('span[dir="auto"]')]
+      .filter(visible)
+      .map((el) => cleanTitle(el.textContent))
+      .find(Boolean);
+    return auto || "";
+  }
+
+  function matchingRows(expected) {
+    const target = norm(expected);
+    if (!target) return [];
+    const rows = chatRows().map((row) => ({ row, title: rowTitle(row) })).filter((x) => x.title);
+    const exact = rows.filter((x) => norm(x.title) === target);
+    if (exact.length) return exact;
+    return rows.filter((x) => norm(x.title).includes(target) || target.includes(norm(x.title)));
+  }
+
+  function sidebarSearchBox() {
+    const side = document.querySelector("#side");
+    if (!side) return null;
+    const boxes = [...side.querySelectorAll('[contenteditable="true"][role="textbox"], [contenteditable="true"], input[type="text"]')]
+      .filter(visible);
+    const preferred = boxes.find((el) => {
+      const hint = [
+        el.getAttribute("aria-label"),
+        el.getAttribute("placeholder"),
+        el.getAttribute("data-tab"),
+      ].filter(Boolean).join(" ").toLocaleLowerCase();
+      return /buscar|search/.test(hint);
+    });
+    return preferred || boxes[0] || null;
+  }
+
+  function replaceEditableText(el, text) {
+    el.focus();
+    if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
+      el.value = text;
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+      return;
+    }
+    const sel = window.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    range.collapse(false);
+    sel.removeAllRanges();
+    sel.addRange(range);
+    document.execCommand("selectAll", false, null);
+    document.execCommand("insertText", false, text);
+    el.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: text }));
+  }
+
+  async function waitForChat(expected, timeoutMs = 6000) {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const actual = currentChatTitle();
+      if (norm(actual) === norm(expected)) return actual;
+      await sleep(150);
+    }
+    return currentChatTitle();
+  }
+
+  async function openChatByTitle(expected) {
+    const wanted = cleanTitle(expected);
+    if (!wanted) throw new Error("Debes indicar el nombre del chat.");
+
+    const already = currentChatTitle();
+    if (norm(already) === norm(wanted)) return already;
+
+    let matches = matchingRows(wanted);
+    if (!matches.length) {
+      const search = sidebarSearchBox();
+      if (!search) throw new Error("No se encontró el buscador lateral de WhatsApp Web.");
+      replaceEditableText(search, wanted);
+      await sleep(900);
+      matches = matchingRows(wanted);
+    }
+
+    if (!matches.length) throw new Error(`No se encontró el chat "${wanted}" en WhatsApp Web.`);
+    if (matches.length > 1) {
+      const exact = matches.filter((x) => norm(x.title) === norm(wanted));
+      if (exact.length === 1) matches = exact;
+      else throw new Error(`Hay más de un chat que coincide con "${wanted}". Usa el título exacto.`);
+    }
+
+    const chosen = matches[0];
+    chosen.row.scrollIntoView({ block: "center" });
+    (chosen.row.querySelector("[title]") || chosen.row).click();
+
+    const actual = await waitForChat(chosen.title, 7000);
+    if (norm(actual) !== norm(chosen.title)) {
+      throw new Error(`No se pudo confirmar la apertura del chat. Esperado: "${chosen.title}". Actual: "${actual || "desconocido"}".`);
+    }
+
+    const search = sidebarSearchBox();
+    if (search) {
+      try { replaceEditableText(search, ""); } catch (_err) {}
+    }
+    return actual;
+  }
+
+  function parseMetaTimestamp(meta) {
+    const text = String(meta || "");
+    const m = text.match(/\[(\d{1,2}):(\d{2})\s*([ap])\.?\s*m\.?,\s*(\d{1,2})\/(\d{1,2})\/(\d{4})\]/i);
+    if (!m) return null;
+    let hour = Number(m[1]);
+    const minute = Number(m[2]);
+    const ap = m[3].toLocaleLowerCase();
+    if (ap === "p" && hour < 12) hour += 12;
+    if (ap === "a" && hour === 12) hour = 0;
+    const day = Number(m[4]);
+    const month = Number(m[5]) - 1;
+    const year = Number(m[6]);
+    const d = new Date(year, month, day, hour, minute, 0, 0);
+    return Number.isFinite(d.getTime()) ? d.getTime() : null;
+  }
+
+  function parseISODate(dateText, endOfDay = false) {
+    const m = String(dateText || "").trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!m) return null;
+    const y = Number(m[1]);
+    const mo = Number(m[2]) - 1;
+    const d = Number(m[3]);
+    const dt = endOfDay
+      ? new Date(y, mo, d, 23, 59, 59, 999)
+      : new Date(y, mo, d, 0, 0, 0, 0);
+    return Number.isFinite(dt.getTime()) ? dt.getTime() : null;
+  }
+
+  function messageRoot() {
     const root = document.querySelector("#main");
     if (!root) throw new Error("No hay un chat abierto en WhatsApp Web.");
+    return root;
+  }
 
-    const candidates = [...root.querySelectorAll("[data-id]")].filter(visible);
-    const seen = new Set();
-    const messages = [];
+  function renderedMessageRows(root = messageRoot()) {
+    return [...root.querySelectorAll("[data-id]")].filter((el) => {
+      const id = String(el.getAttribute("data-id") || "").trim();
+      return id && visible(el);
+    });
+  }
 
-    for (const row of candidates) {
+  function findMessageScroller(root = messageRoot()) {
+    const rows = renderedMessageRows(root);
+    const seed = rows[0] || root.querySelector("[data-id]");
+    let el = seed;
+    while (el && el !== document.body) {
+      if (visible(el) && el.scrollHeight > el.clientHeight + 120) {
+        const style = getComputedStyle(el);
+        if (/auto|scroll/.test(style.overflowY || "")) return el;
+      }
+      if (el === root) break;
+      el = el.parentElement;
+    }
+
+    const candidates = [...root.querySelectorAll("div")]
+      .filter((node) => visible(node) && node.scrollHeight > node.clientHeight + 200)
+      .sort((a, b) => (b.scrollHeight - b.clientHeight) - (a.scrollHeight - a.clientHeight));
+    return candidates[0] || null;
+  }
+
+  function extractRenderedMessages(store, sequenceRef) {
+    const root = messageRoot();
+    let added = 0;
+    for (const row of renderedMessageRows(root)) {
       const id = String(row.getAttribute("data-id") || "").trim();
-      if (!id || seen.has(id)) continue;
+      if (!id || store.has(id)) continue;
       const bubble = row.closest(".message-in, .message-out") || row;
-      const textNode = bubble.querySelector("[data-pre-plain-text]") || bubble;
-      const rawText = String(textNode.innerText || textNode.textContent || "").replace(/\n{3,}/g, "\n\n").trim();
-      if (!rawText) continue;
       const metaNode = bubble.querySelector("[data-pre-plain-text]");
       const meta = metaNode ? String(metaNode.getAttribute("data-pre-plain-text") || "") : "";
-      seen.add(id);
-      messages.push({
+      const textNode = metaNode || bubble;
+      const rawText = String(textNode.innerText || textNode.textContent || "")
+        .replace(/\n{3,}/g, "\n\n")
+        .trim();
+      if (!rawText) continue;
+
+      sequenceRef.value += 1;
+      store.set(id, {
         id,
         from_me: bubble.classList.contains("message-out") || /true_/.test(id),
         meta,
-        text: rawText.slice(0, 5000),
+        text: rawText.slice(0, 4000),
+        _ts: parseMetaTimestamp(meta),
+        _seq: sequenceRef.value,
       });
+      added += 1;
     }
-    return messages.slice(-Math.max(1, Math.min(Number(limit) || 40, 200)));
+    return added;
+  }
+
+  function oldestTimestamp(store) {
+    let oldest = null;
+    for (const msg of store.values()) {
+      if (msg._ts == null) continue;
+      if (oldest == null || msg._ts < oldest) oldest = msg._ts;
+    }
+    return oldest;
+  }
+
+  function newestTimestamp(store) {
+    let newest = null;
+    for (const msg of store.values()) {
+      if (msg._ts == null) continue;
+      if (newest == null || msg._ts > newest) newest = msg._ts;
+    }
+    return newest;
+  }
+
+  async function scanHistory({ limit = 200, fromDate = "", toDate = "" } = {}) {
+    const requested = Math.max(1, Math.min(Number(limit) || 200, 1500));
+    const startTs = parseISODate(fromDate, false);
+    const endTs = parseISODate(toDate, true);
+    if (fromDate && startTs == null) throw new Error("from_date debe tener formato YYYY-MM-DD.");
+    if (toDate && endTs == null) throw new Error("to_date debe tener formato YYYY-MM-DD.");
+    if (startTs != null && endTs != null && startTs > endTs) throw new Error("from_date no puede ser posterior a to_date.");
+
+    const store = new Map();
+    const seq = { value: 0 };
+    extractRenderedMessages(store, seq);
+
+    const scroller = findMessageScroller();
+    let scrolls = 0;
+    let stalled = 0;
+    let reachedHistoryTop = false;
+    let reachedRequestedStart = startTs != null && oldestTimestamp(store) != null && oldestTimestamp(store) <= startTs;
+    const maxScrolls = startTs != null ? 180 : Math.min(180, Math.max(20, Math.ceil(requested / 12) * 3));
+
+    if (scroller && !reachedRequestedStart && store.size < requested) {
+      while (scrolls < maxScrolls) {
+        const beforeSize = store.size;
+        const beforeHeight = scroller.scrollHeight;
+
+        scroller.scrollTop = 0;
+        scroller.dispatchEvent(new Event("scroll", { bubbles: true }));
+        await sleep(scrolls < 4 ? 650 : 450);
+        extractRenderedMessages(store, seq);
+        scrolls += 1;
+
+        const oldest = oldestTimestamp(store);
+        if (startTs != null && oldest != null && oldest <= startTs) {
+          reachedRequestedStart = true;
+          break;
+        }
+        if (startTs == null && store.size >= requested) break;
+
+        const gained = store.size - beforeSize;
+        const heightChanged = Math.abs(scroller.scrollHeight - beforeHeight) > 30;
+        if (gained <= 0 && !heightChanged && scroller.scrollTop <= 4) stalled += 1;
+        else stalled = 0;
+
+        if (stalled >= 4) {
+          reachedHistoryTop = true;
+          break;
+        }
+      }
+    } else if (!scroller) {
+      reachedHistoryTop = true;
+    }
+
+    if (scroller) {
+      try {
+        scroller.scrollTop = scroller.scrollHeight;
+        scroller.dispatchEvent(new Event("scroll", { bubbles: true }));
+      } catch (_err) {}
+    }
+
+    let messages = [...store.values()]
+      .filter((m) => {
+        if (startTs != null && m._ts != null && m._ts < startTs) return false;
+        if (endTs != null && m._ts != null && m._ts > endTs) return false;
+        if ((startTs != null || endTs != null) && m._ts == null) return false;
+        return true;
+      })
+      .sort((a, b) => {
+        if (a._ts != null && b._ts != null && a._ts !== b._ts) return a._ts - b._ts;
+        if (a._ts == null && b._ts != null) return 1;
+        if (a._ts != null && b._ts == null) return -1;
+        return a._seq - b._seq;
+      });
+
+    const totalMatched = messages.length;
+    let truncated = false;
+    if (messages.length > requested) {
+      messages = messages.slice(-requested);
+      truncated = true;
+    }
+    messages = messages.map(({ _ts, _seq, ...m }) => m);
+
+    const oldest = oldestTimestamp(store);
+    const newest = newestTimestamp(store);
+    return {
+      messages,
+      history: {
+        requested_limit: requested,
+        collected_unique: store.size,
+        matched_range: totalMatched,
+        returned: messages.length,
+        scrolls,
+        reached_history_top: reachedHistoryTop,
+        reached_requested_start: reachedRequestedStart,
+        truncated,
+        oldest_timestamp: oldest ? new Date(oldest).toISOString() : null,
+        newest_timestamp: newest ? new Date(newest).toISOString() : null,
+        complete_for_requested_range: startTs != null
+          ? (reachedRequestedStart || reachedHistoryTop) && !truncated
+          : (reachedHistoryTop || store.size >= requested) && !truncated,
+      },
+    };
   }
 
   function listVisibleChats(limit) {
-    const pane = document.querySelector("#pane-side") || document.querySelector('[aria-label*="lista" i]');
-    if (!pane) throw new Error("No se encontró la lista lateral de chats.");
-    const rows = [...pane.querySelectorAll('[role="listitem"], [role="row"], [data-testid="cell-frame-container"]')]
-      .filter(visible);
     const out = [];
     const seen = new Set();
-    for (const row of rows) {
-      const titleEl = row.querySelector("[title]");
-      const title = String(titleEl?.getAttribute("title") || "").trim();
+    for (const row of chatRows()) {
+      const title = rowTitle(row);
       if (!title || seen.has(norm(title))) continue;
       seen.add(norm(title));
       const text = String(row.innerText || "").replace(/\s+/g, " ").trim();
@@ -99,16 +390,7 @@
   }
 
   function setComposerText(box, text) {
-    box.focus();
-    const sel = window.getSelection();
-    const range = document.createRange();
-    range.selectNodeContents(box);
-    range.collapse(false);
-    sel.removeAllRanges();
-    sel.addRange(range);
-    document.execCommand("selectAll", false, null);
-    document.execCommand("insertText", false, text);
-    box.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: text }));
+    replaceEditableText(box, text);
   }
 
   function sendButton() {
@@ -124,16 +406,44 @@
 
   async function execute(job) {
     if (!job || !job.operation) throw new Error("Trabajo inválido.");
+
     if (job.operation === "read_current_chat") {
+      const before = currentChatTitle();
+      if (!before) throw new Error("No se pudo identificar el chat abierto.");
+      const scan = await scanHistory({ limit: job.payload?.limit });
+      const after = currentChatTitle();
+      if (norm(before) !== norm(after)) throw new Error("El chat cambió mientras se leía el historial.");
       return {
         ok: true,
         operation: job.operation,
         build: BUILD,
         url: location.href,
-        chat_title: currentChatTitle(),
-        messages: readMessages(job.payload?.limit),
+        chat_title: after,
+        ...scan,
       };
     }
+
+    if (job.operation === "read_chat_history") {
+      const actual = await openChatByTitle(job.payload?.chat_title);
+      const scan = await scanHistory({
+        limit: job.payload?.limit,
+        fromDate: job.payload?.from_date,
+        toDate: job.payload?.to_date,
+      });
+      const after = currentChatTitle();
+      if (norm(actual) !== norm(after)) throw new Error("El chat cambió mientras se leía el historial.");
+      return {
+        ok: true,
+        operation: job.operation,
+        build: BUILD,
+        url: location.href,
+        chat_title: after,
+        from_date: job.payload?.from_date || null,
+        to_date: job.payload?.to_date || null,
+        ...scan,
+      };
+    }
+
     if (job.operation === "list_visible_chats") {
       return {
         ok: true,
@@ -143,8 +453,9 @@
         chats: listVisibleChats(job.payload?.limit),
       };
     }
+
     if (job.operation === "send_message") {
-      const expected = String(job.payload?.chat_title || "").trim();
+      const expected = cleanTitle(job.payload?.chat_title);
       const message = String(job.payload?.message || "");
       const actual = currentChatTitle();
       if (!expected || norm(actual) !== norm(expected)) {
@@ -172,6 +483,7 @@
         message,
       };
     }
+
     throw new Error(`Operación no soportada: ${job.operation}`);
   }
 
