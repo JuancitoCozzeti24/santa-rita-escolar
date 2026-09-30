@@ -1,66 +1,56 @@
-# Johnny WhatsApp Assistant — v0.1.0
+# Johnny WhatsApp Assistant — v0.2.0
 
-Prototipo privado de lectura/escritura para la **sesión oficial de WhatsApp Web del propio usuario**.
+Complemento privado para trabajar con la **sesión oficial de WhatsApp Web del propio usuario**.
 
-## Alcance de esta primera versión
+## Novedades de v0.2.0
 
-- Leer los mensajes actualmente cargados del chat abierto.
-- Listar chats actualmente visibles/cargados en la barra lateral.
-- Enviar un mensaje al chat abierto únicamente cuando:
-  1. ChatGPT recibió autorización explícita (`confirmed=true`).
-  2. El título del chat abierto coincide con el `chat_title` esperado.
-  3. El bridge confirma que WhatsApp vació el cuadro de escritura tras pulsar Enviar.
-- Autenticación entre extensión y servidor con `WHATSAPP_BRIDGE_SECRET`.
-- Cola con lease para evitar que una orden quede reclamada para siempre si se cierra el navegador.
+- Corrige la identificación del chat para evitar confundir el encabezado principal con “Información del perfil”.
+- La lectura del chat abierto ya no depende únicamente de los mensajes visibles: desplaza automáticamente el historial hacia arriba.
+- Devuelve indicadores de control (`returned`, `collected_unique`, `scrolls`, `reached_history_top`, `truncated`) para no afirmar que una lectura fue completa cuando no lo fue.
+- Añade una operación de lectura por chat y rango de fechas: abre el chat por título, recorre el historial y filtra los mensajes entre `from_date` y `to_date`.
+- Al terminar una lectura extensa, vuelve al final del chat.
+- Mantiene la protección de envío: ningún mensaje se envía sin autorización explícita y sin verificar el título del chat.
 
-## Lo que todavía NO hace
-
-- No recorre automáticamente todo el historial de todos los contactos, grupos y canales.
-- No cambia todavía de chat por sí solo.
-- No descarga adjuntos, audios ni imágenes.
-- No responde de forma autónoma sin autorización.
-- No intenta iniciar sesión mediante clientes no oficiales.
-
-Estas limitaciones son deliberadas para validar primero lectura y escritura seguras sobre la interfaz oficial de WhatsApp Web.
-
-## Servidor
-
-Variables:
-
-- `WHATSAPP_BRIDGE_SECRET`: secreto largo y aleatorio compartido con la extensión.
-- `PORT`: puerto del servicio.
-- `MCP_HOST`: normalmente `0.0.0.0`.
-
-Inicio local:
-
-`python server.py`
-
-Endpoint MCP: `/mcp`
-
-Endpoints del bridge:
-
-- `GET /wa/v1/status`
-- `GET /wa/v1/next`
-- `POST /wa/v1/jobs/{job_id}/complete`
-- `POST /wa/v1/jobs/{job_id}/fail`
-
-## Herramientas MCP
+## Herramientas
 
 - `whatsapp_bridge_status`
 - `whatsapp_read_current_chat`
+- `whatsapp_read_chat_history`
 - `whatsapp_list_visible_chats`
 - `whatsapp_send_message`
 - `whatsapp_job_status`
 
-## Extensión Chrome/Edge
+## Lectura del chat abierto
+
+`whatsapp_read_current_chat(limit=500)` puede recorrer automáticamente mensajes anteriores hasta reunir el límite solicitado o detectar el inicio del historial disponible.
+
+El resultado incluye un bloque `history` que permite comprobar cuántos mensajes se recopilaron y si la lectura fue completa o truncada.
+
+## Lectura por grupo y fechas
+
+`whatsapp_read_chat_history(chat_title, from_date, to_date, limit)`
+
+- `chat_title`: título del chat o grupo.
+- `from_date`: obligatorio, formato `YYYY-MM-DD`.
+- `to_date`: opcional, formato `YYYY-MM-DD`.
+- `limit`: máximo de mensajes devueltos, hasta 1500.
+
+La extensión intenta localizar el chat en la barra lateral; si no está visible, utiliza el buscador lateral de WhatsApp Web y lo abre antes de leer.
+
+## Seguridad
+
+El servidor no recibe cookies ni credenciales de sesión de WhatsApp. La extensión actúa únicamente sobre `https://web.whatsapp.com/`.
+
+Para enviar un mensaje:
+1. ChatGPT debe haber recibido autorización explícita.
+2. El chat abierto debe coincidir con el destinatario esperado.
+3. WhatsApp debe confirmar el envío dejando vacío el cuadro de escritura.
+
+## Instalación de la extensión
 
 1. Abrir `chrome://extensions` o `edge://extensions`.
 2. Activar **Modo desarrollador**.
-3. Elegir **Cargar descomprimida** y seleccionar `browser_extension/`.
-4. En el popup guardar el endpoint del servidor y el mismo `WHATSAPP_BRIDGE_SECRET`.
-5. Abrir WhatsApp Web normalmente y vincularlo solo mediante el procedimiento oficial de WhatsApp.
-6. En la extensión pulsar **Abrir puente** y mantener esa pestaña abierta.
-
-## Seguridad v0.1
-
-El servidor nunca recibe cookies ni claves de sesión de WhatsApp. La extensión actúa sobre la pestaña oficial `https://web.whatsapp.com/`. El envío se bloquea si el nombre del chat abierto no coincide con el destinatario solicitado.
+3. Elegir **Cargar descomprimida** y seleccionar la carpeta `browser_extension/`.
+4. Guardar en el popup el endpoint del servidor y el mismo `WHATSAPP_BRIDGE_SECRET`.
+5. Abrir WhatsApp Web normalmente.
+6. Abrir la pestaña del puente y mantenerla activa mientras se use el complemento.
