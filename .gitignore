@@ -1,7 +1,0 @@
-.env
-*.pem
-__pycache__/
-*.pyc
-secrets/
-.sieroom/
-desktop_agent/.env
