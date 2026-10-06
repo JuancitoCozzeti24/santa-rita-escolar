@@ -179,8 +179,81 @@ def _patch_fastmcp_run() -> None:
     FastMCP.run = run_with_attendance
 
 
+def _patch_sieweb_hf10_abbreviation_edit() -> None:
+    """Corrige el NameError de HF10 sin alterar notas ni la estructura del registro."""
+    try:
+        from sieweb import SieWebClient
+
+        def replica_from_payload_fixed(
+            self,
+            payload,
+            *,
+            class_id=None,
+            class_period_id=None,
+            root_content_id=None,
+            id_ambito=None,
+        ):
+            preflight = getattr(self, "criteria_write_preflight", None)
+            if callable(preflight) and all(
+                value not in (None, "")
+                for value in (class_id, class_period_id, root_content_id, id_ambito)
+            ):
+                try:
+                    info = preflight(
+                        class_id=int(class_id),
+                        class_period_id=int(class_period_id),
+                        root_content_id=int(root_content_id),
+                        id_ambito=int(id_ambito),
+                    )
+                    if isinstance(info, dict):
+                        native = info.get("native_replica_context")
+                        if isinstance(native, dict):
+                            replica = dict(native)
+                            replica["replicar"] = False
+                            return replica
+                except Exception:
+                    pass
+
+            data = (
+                payload.get("json")
+                if isinstance(payload, dict) and isinstance(payload.get("json"), dict)
+                else payload
+            )
+            if not isinstance(data, dict):
+                data = {}
+
+            limite = 1
+            nra = data.get("nivelReplicaAnual")
+            if isinstance(nra, list) and nra and isinstance(nra[0], dict):
+                try:
+                    limite = int(nra[0].get("LIMITE", 1) or 1)
+                except Exception:
+                    limite = 1
+
+            nodes = self._criteria_hf10_real_nodes(data.get("resCriterios") or [])
+            id_curso = None
+            grupocod = None
+            if nodes:
+                id_curso = self._criteria_hf10_value(nodes[0], "ID_CURSO")
+                grupocod = self._criteria_hf10_value(nodes[0], "GRUPOCOD")
+
+            replica = {"replicar": False, "limiteReplica": limite}
+            if id_curso not in (None, ""):
+                replica["idCurso"] = id_curso
+            if grupocod not in (None, ""):
+                replica["grupocod"] = grupocod
+            return replica
+
+        SieWebClient._criteria_hf10_replica_from_payload = replica_from_payload_fixed
+        print("SieRoom SIEweb: hotfix HF10 de abreviaturas activo.", flush=True)
+    except Exception as exc:
+        print(f"SieRoom SIEweb: ERROR instalando hotfix HF10 de abreviaturas: {exc}", flush=True)
+        raise
+
+
 _patch_bridge_claim_compat_source()
 _patch_feedback_policy_source()
 _patch_bridge_policy()
 _patch_fastmcp_init_for_download()
 _patch_fastmcp_run()
+_patch_sieweb_hf10_abbreviation_edit()
