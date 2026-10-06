@@ -180,9 +180,9 @@ def _patch_fastmcp_run() -> None:
 
 
 def _patch_sieweb_hf10_abbreviation_edit() -> None:
-    """Corrige el NameError de HF10 sin alterar notas ni la estructura del registro."""
+    """Completa el contexto nativo HF10 sin alterar notas ni la estructura del registro."""
     try:
-        from sieweb import SieWebClient
+        from sieweb import SieWebClient, SieWebError
 
         def replica_from_payload_fixed(
             self,
@@ -193,27 +193,6 @@ def _patch_sieweb_hf10_abbreviation_edit() -> None:
             root_content_id=None,
             id_ambito=None,
         ):
-            preflight = getattr(self, "criteria_write_preflight", None)
-            if callable(preflight) and all(
-                value not in (None, "")
-                for value in (class_id, class_period_id, root_content_id, id_ambito)
-            ):
-                try:
-                    info = preflight(
-                        class_id=int(class_id),
-                        class_period_id=int(class_period_id),
-                        root_content_id=int(root_content_id),
-                        id_ambito=int(id_ambito),
-                    )
-                    if isinstance(info, dict):
-                        native = info.get("native_replica_context")
-                        if isinstance(native, dict):
-                            replica = dict(native)
-                            replica["replicar"] = False
-                            return replica
-                except Exception:
-                    pass
-
             data = (
                 payload.get("json")
                 if isinstance(payload, dict) and isinstance(payload.get("json"), dict)
@@ -231,21 +210,51 @@ def _patch_sieweb_hf10_abbreviation_edit() -> None:
                     limite = 1
 
             nodes = self._criteria_hf10_real_nodes(data.get("resCriterios") or [])
-            id_curso = None
-            grupocod = None
-            if nodes:
-                id_curso = self._criteria_hf10_value(nodes[0], "ID_CURSO")
-                grupocod = self._criteria_hf10_value(nodes[0], "GRUPOCOD")
+            first = nodes[0] if nodes else {}
+            id_curso = self._criteria_hf10_value(first, "ID_CURSO")
+            grupocod = self._criteria_hf10_value(first, "GRUPOCOD")
 
-            replica = {"replicar": False, "limiteReplica": limite}
-            if id_curso not in (None, ""):
-                replica["idCurso"] = id_curso
-            if grupocod not in (None, ""):
-                replica["grupocod"] = grupocod
-            return replica
+            class_info = {}
+            if class_period_id not in (None, "") and root_content_id not in (None, ""):
+                summary = self.get_gradebook_summary(
+                    class_period_id=int(class_period_id),
+                    root_content_id=int(root_content_id),
+                )
+                class_info = summary.get("class") or {}
+
+            periodo = class_info.get("periodo")
+            if id_curso in (None, ""):
+                id_curso = class_info.get("idCurso")
+            context = dict(getattr(self, "_last_criteria_context", {}) or {})
+            cursocod = class_info.get("cursocod") or context.get("cursocod") or context.get("CURSOCOD")
+
+            missing = []
+            for name, value in (
+                ("periodo", periodo),
+                ("idCurso", id_curso),
+                ("grupocod", grupocod),
+                ("cursocod", cursocod),
+            ):
+                if value in (None, ""):
+                    missing.append(name)
+            if missing:
+                raise SieWebError(
+                    "HF10 no pudo reconstruir el contexto nativo de edición; faltan "
+                    + ", ".join(missing)
+                    + ". No se envió nada."
+                )
+
+            return {
+                "periodo": int(periodo),
+                "idCurso": int(id_curso),
+                "grupocod": str(grupocod),
+                "cursocod": str(cursocod),
+                "limiteReplica": int(limite),
+                "replicar": False,
+            }
 
         SieWebClient._criteria_hf10_replica_from_payload = replica_from_payload_fixed
-        print("SieRoom SIEweb: hotfix HF10 de abreviaturas activo.", flush=True)
+        print("SieRoom SIEweb: hotfix HF10 de abreviaturas con contexto nativo completo activo.", flush=True)
     except Exception as exc:
         print(f"SieRoom SIEweb: ERROR instalando hotfix HF10 de abreviaturas: {exc}", flush=True)
         raise
