@@ -260,9 +260,65 @@ def _patch_sieweb_hf10_abbreviation_edit() -> None:
         raise
 
 
+def _patch_sieweb_hf11_prune_placeholders() -> None:
+    """No envía plazas vacías del editor al guardar una edición de abreviatura."""
+    try:
+        import copy
+        from sieweb import SieWebClient
+
+        original_upsert = SieWebClient.upsert_criteria
+        if getattr(original_upsert, "_sieroom_hf11_prune_placeholders", False):
+            return
+
+        def prune(nodes):
+            out = []
+            for row in nodes or []:
+                if not isinstance(row, dict):
+                    continue
+                item = copy.deepcopy(row)
+                children = item.get("children")
+                if isinstance(children, list):
+                    item["children"] = prune(children)
+                cid = item.get("ID_CONTENIDO", item.get("idContenido"))
+                ccid = item.get("ID_CLASE_CONTENIDO", item.get("idClaseContenido"))
+                exists = item.get("flExiste", item.get("FLEXISTE"))
+                desc = str(item.get("DESCRIPCION", item.get("descripcion", "")) or "").strip()
+                is_empty_slot = (
+                    exists is False
+                    and cid in (None, "", 0, "0")
+                    and ccid in (None, "", 0, "0")
+                    and not desc
+                )
+                if not is_empty_slot:
+                    out.append(item)
+            return out
+
+        @functools.wraps(original_upsert)
+        def upsert_pruned(self, *, class_id, records, replica):
+            is_tree = isinstance(records, list) and any(
+                isinstance(row, dict) and isinstance(row.get("children"), list)
+                for row in records
+            )
+            safe_records = prune(records) if is_tree else records
+            return original_upsert(
+                self,
+                class_id=class_id,
+                records=safe_records,
+                replica=replica,
+            )
+
+        setattr(upsert_pruned, "_sieroom_hf11_prune_placeholders", True)
+        SieWebClient.upsert_criteria = upsert_pruned
+        print("SieRoom SIEweb: HF11 poda plazas vacías no persistidas antes de editar abreviaturas.", flush=True)
+    except Exception as exc:
+        print(f"SieRoom SIEweb: ERROR instalando HF11 de plazas vacías: {exc}", flush=True)
+        raise
+
+
 _patch_bridge_claim_compat_source()
 _patch_feedback_policy_source()
 _patch_bridge_policy()
 _patch_fastmcp_init_for_download()
 _patch_fastmcp_run()
 _patch_sieweb_hf10_abbreviation_edit()
+_patch_sieweb_hf11_prune_placeholders()
