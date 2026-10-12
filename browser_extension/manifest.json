@@ -18,6 +18,7 @@
         "https://classroom.google.com/*"
       ],
       "js": [
+        "classroom_private_composer_hotfix.js",
         "content.js",
         "delete_private_comment.js"
       ],
@@ -28,5 +29,5 @@
     "default_title": "SieRoom Classroom Bridge",
     "default_popup": "popup.html"
   },
-  "version_name": "0.8.7-HF4-GRADE-TARGET-DEDUP-SINGLE-PASS-R6.2"
+  "version_name": "0.8.7-R6.3-PRIVATE-COMPOSER-STOP-QUEUE"
 }
