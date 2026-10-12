@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "SieRoom Classroom Bridge",
-  "version": "0.8.7",
+  "version": "0.8.8",
   "description": "Puente local SieRoom con cuenta docente y entrega destino verificadas para leer, publicar o eliminar comentarios privados, calificar y devolver en Classroom.",
   "permissions": [
     "storage",
@@ -18,6 +18,7 @@
         "https://classroom.google.com/*"
       ],
       "js": [
+        "classroom_private_composer_hotfix.js",
         "content.js",
         "delete_private_comment.js"
       ],
@@ -28,5 +29,5 @@
     "default_title": "SieRoom Classroom Bridge",
     "default_popup": "popup.html"
   },
-  "version_name": "0.8.7-HF4-GRADE-TARGET-DEDUP-SINGLE-PASS-R6.2"
+  "version_name": "0.8.8-HF-PRIVATE-COMPOSER-R6.3"
 }
