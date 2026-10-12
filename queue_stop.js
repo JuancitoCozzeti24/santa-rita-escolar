@@ -135,11 +135,12 @@
 
     let normalCancelled = 0;
     let deleteCancelled = 0;
-    let finalRemaining = null;
+    let normalRemaining = null;
+    let deleteRemaining = null;
 
     try {
-      // Libera cualquier claim vigente para que pueda ser recogido y marcado como
-      // fallido/cancelado por esta operación. No reintenta trabajos fallidos antiguos.
+      // Libera cualquier claim normal vigente para que pueda ser recogido y marcado
+      // como fallido por esta operación. No reintenta fallos antiguos.
       await bridgeFetch("/bridge/v1/reset", {
         method: "POST",
         body: JSON.stringify({ retry_failed: false }),
@@ -149,12 +150,19 @@
       deleteCancelled = await drainDeleteQueue();
 
       const st = await bridgeFetch("/bridge/v1/status");
-      finalRemaining = Number(st.data?.queue?.work_remaining || 0);
+      normalRemaining = Number(st.data?.queue?.work_remaining || 0);
+      const dst = await deleteApi("/bridge/v1/delete/status");
+      deleteRemaining = Number(dst?.queue?.work_remaining || 0);
+      const totalRemaining = normalRemaining + deleteRemaining;
 
-      statusEl.textContent = `COLA DETENIDA · pendientes: ${finalRemaining} · cancelados ahora: ${normalCancelled + deleteCancelled}.`;
-      statusEl.className = finalRemaining === 0 ? "ok" : "bad";
-      log(`DETENER COLA terminado. Normales cancelados: ${normalCancelled}; borrados cancelados: ${deleteCancelled}; pendientes: ${finalRemaining}.`);
-      log("La cola permanecerá detenida. Para volver a procesar trabajos usa RESET / REINTENTAR TODO.");
+      statusEl.textContent = `COLA DETENIDA · pendientes: ${totalRemaining} · cancelados ahora: ${normalCancelled + deleteCancelled}.`;
+      statusEl.className = totalRemaining === 0 ? "ok" : "bad";
+      log(`DETENER COLA terminado. Normales cancelados: ${normalCancelled}; borrados cancelados: ${deleteCancelled}; pendientes normales: ${normalRemaining}; pendientes de borrado: ${deleteRemaining}.`);
+      if (totalRemaining === 0) {
+        log("COLA EN CERO confirmada. Para volver a procesar trabajos usa RESET / REINTENTAR TODO.");
+      } else {
+        log("Queda una operación ya reclamada/en curso. No se tomarán trabajos nuevos; espera a que finalice y vuelve a pulsar DETENER COLA.");
+      }
     } catch (e) {
       const message = String(e?.message || e);
       statusEl.textContent = `COLA DETENIDA, pero no pude confirmar cero pendientes: ${message}`;
