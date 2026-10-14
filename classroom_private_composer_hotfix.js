@@ -1,6 +1,6 @@
 (() => {
-  if (window.__SIEROOM_PRIVATE_COMPOSER_HF_R65__) return;
-  window.__SIEROOM_PRIVATE_COMPOSER_HF_R65__ = true;
+  if (window.__SIEROOM_PRIVATE_COMPOSER_HF_R66__) return;
+  window.__SIEROOM_PRIVATE_COMPOSER_HF_R66__ = true;
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const norm = (s) => String(s || "")
@@ -31,23 +31,46 @@
   const isSubmissionPage = () =>
     /\/submissions\/by-status\/and-sort-last-name\/student\//.test(location.pathname);
 
+  const nativeDocumentQSA = Document.prototype.querySelectorAll;
+  const nativeDocumentQS = Document.prototype.querySelector;
+  const nativeElementQSA = Element.prototype.querySelectorAll;
+  const nativeFragmentQSA = DocumentFragment.prototype.querySelectorAll;
+
+  function nativeQueryAll(scope, selector) {
+    try {
+      if (scope instanceof Document) return [...nativeDocumentQSA.call(scope, selector)];
+      if (scope instanceof DocumentFragment) return [...nativeFragmentQSA.call(scope, selector)];
+      if (scope instanceof Element) return [...nativeElementQSA.call(scope, selector)];
+    } catch (_) {}
+    return [];
+  }
+
   function deepQueryAll(selector, root = document) {
     const out = [];
-    const seen = new Set();
+    const seenElements = new Set();
+    const seenScopes = new Set();
+
+    const add = (el) => {
+      if (el && !seenElements.has(el)) {
+        seenElements.add(el);
+        out.push(el);
+      }
+    };
 
     const walk = (scope) => {
-      let matches = [];
-      let all = [];
-      try { matches = [...scope.querySelectorAll(selector)]; } catch (_) {}
-      for (const el of matches) {
-        if (!seen.has(el)) {
-          seen.add(el);
-          out.push(el);
-        }
-      }
-      try { all = [...scope.querySelectorAll("*")]; } catch (_) {}
+      if (!scope || seenScopes.has(scope)) return;
+      seenScopes.add(scope);
+
+      nativeQueryAll(scope, selector).forEach(add);
+      const all = nativeQueryAll(scope, "*");
       for (const el of all) {
         if (el.shadowRoot) walk(el.shadowRoot);
+        if (el instanceof HTMLIFrameElement || el instanceof HTMLFrameElement) {
+          try {
+            const childDoc = el.contentDocument;
+            if (childDoc) walk(childDoc);
+          } catch (_) {}
+        }
       }
     };
 
@@ -55,14 +78,36 @@
     return out;
   }
 
+  try {
+    Object.defineProperty(document, "querySelectorAll", {
+      configurable: true,
+      value(selector) { return deepQueryAll(selector, document); }
+    });
+    Object.defineProperty(document, "querySelector", {
+      configurable: true,
+      value(selector) { return deepQueryAll(selector, document)[0] || null; }
+    });
+    document.documentElement.setAttribute("data-sieroom-deep-dom", "r6.6");
+  } catch (_) {
+    try {
+      document.querySelectorAll = (selector) => deepQueryAll(selector, document);
+      document.querySelector = (selector) => deepQueryAll(selector, document)[0] || null;
+    } catch (_) {}
+  }
+
   const parentLike = (el) => {
     if (!el) return null;
     if (el.parentElement) return el.parentElement;
     const root = el.getRootNode?.();
-    return root && root.host instanceof Element ? root.host : null;
+    if (root && root.host instanceof Element) return root.host;
+    try {
+      const frame = el.ownerDocument?.defaultView?.frameElement;
+      if (frame instanceof Element) return frame;
+    } catch (_) {}
+    return null;
   };
 
-  const ancestors = (el, max = 14) => {
+  const ancestors = (el, max = 18) => {
     const out = [];
     let cur = parentLike(el);
     for (let i = 0; cur && i < max; i++, cur = parentLike(cur)) {
@@ -156,7 +201,7 @@
     });
   };
 
-  function markPrivateComposer(el, evidence = "r6.5") {
+  function markPrivateComposer(el, evidence = "r6.6") {
     if (!isLikelyCommentEditable(el)) return false;
     const m = meta(el);
     if (!m.includes("coment") && !m.includes("comment")) {
@@ -166,7 +211,7 @@
     return true;
   }
 
-  function markPrivateLauncher(el, evidence = "r6.5-launcher") {
+  function markPrivateLauncher(el, evidence = "r6.6-launcher") {
     if (!isLauncher(el)) return false;
     const m = meta(el);
     if (!m.includes("privad") && !m.includes("private")) {
@@ -178,19 +223,19 @@
 
   function repairAround(anchor) {
     if (!anchor || !visible(anchor)) return false;
-    for (const root of ancestors(anchor, 14)) {
+    for (const root of ancestors(anchor, 18)) {
       const editables = deepQueryAll('textarea,[role="textbox"],[contenteditable="true"]', root)
         .filter((el) => isLikelyCommentEditable(el) && near(el, anchor));
-      if (editables.length === 1) return markPrivateComposer(editables[0], "r6.5-anchor");
+      if (editables.length === 1) return markPrivateComposer(editables[0], "r6.6-anchor");
       if (editables.length > 1) {
         const explicit = editables.filter((el) => isPrivateText(meta(el)));
-        if (explicit.length === 1) return markPrivateComposer(explicit[0], "r6.5-anchor-explicit");
+        if (explicit.length === 1) return markPrivateComposer(explicit[0], "r6.6-anchor-explicit");
       }
 
       const launchers = deepQueryAll('button,[role="button"],[aria-label],[data-placeholder]', root)
         .filter((el) => isLauncher(el) && near(el, anchor));
       if (launchers.length === 1) {
-        markPrivateLauncher(launchers[0], "r6.5-anchor-launcher");
+        markPrivateLauncher(launchers[0], "r6.6-anchor-launcher");
         return true;
       }
     }
@@ -214,6 +259,19 @@
     });
   }
 
+  function findSafeGenericCommentControls() {
+    return deepQueryAll(
+      'button,[role="button"],[role="tab"],[aria-label],[title],[data-tooltip]'
+    ).filter((el) => {
+      if (!visible(el) || isHelpControl(el) || isEditable(el)) return false;
+      const m = meta(el);
+      if (!(m.includes("coment") || m.includes("comment"))) return false;
+      const r = el.getBoundingClientRect();
+      if (r.left + r.width / 2 < window.innerWidth * 0.45) return false;
+      return true;
+    });
+  }
+
   function hasVisiblePrivateComposer() {
     return deepQueryAll('textarea,[role="textbox"],[contenteditable="true"]')
       .some((el) => isLikelyCommentEditable(el) && isPrivateText(meta(el)));
@@ -222,42 +280,47 @@
   let lastPanelClickAt = 0;
   let lastPanelClickUrl = "";
 
-  async function tryOpenPrivatePanel() {
-    if (!isSubmissionPage() || hasVisiblePrivateComposer()) return false;
-
-    const controls = findVisiblePrivatePanelControls();
+  async function clickRankedControl(controls, generic = false) {
     if (!controls.length) return false;
-
     const ranked = controls.map((el) => {
       const m = meta(el);
       let score = 0;
-      if (m === "comentarios privados" || m === "private comments") score += 100;
-      if (m.includes("comentarios privados") || m.includes("private comments")) score += 80;
-      if (m.includes("comentario privado") || m.includes("private comment")) score += 50;
+      if (m === "comentarios privados" || m === "private comments") score += 120;
+      if (m.includes("comentarios privados") || m.includes("private comments")) score += 100;
+      if (m.includes("comentario privado") || m.includes("private comment")) score += 80;
+      if (generic && (m.includes("coment") || m.includes("comment"))) score += 35;
       const role = norm(el.getAttribute("role"));
       if (el.tagName === "BUTTON" || role === "button" || role === "tab") score += 25;
       const r = el.getBoundingClientRect();
-      if (r.left + r.width / 2 >= window.innerWidth * 0.45) score += 15;
+      if (r.left + r.width / 2 >= window.innerWidth * 0.45) score += 20;
       return { el, score };
     }).sort((a, b) => b.score - a.score);
 
-    if (!ranked[0] || ranked[0].score < 90) return false;
+    const minimum = generic ? 70 : 100;
+    if (!ranked[0] || ranked[0].score < minimum) return false;
     if (ranked[1] && ranked[1].score === ranked[0].score && ranked[1].el !== ranked[0].el) return false;
 
     const now = Date.now();
     if (lastPanelClickUrl === location.href && now - lastPanelClickAt < 3500) return false;
-
     lastPanelClickAt = now;
     lastPanelClickUrl = location.href;
     try {
       ranked[0].el.scrollIntoView({ block: "nearest", inline: "nearest" });
       ranked[0].el.click();
-      document.documentElement.setAttribute("data-sieroom-private-panel-opened", "r6.5");
-      await sleep(180);
+      document.documentElement.setAttribute("data-sieroom-private-panel-opened", generic ? "r6.6-generic" : "r6.6-private");
+      await sleep(220);
       return true;
     } catch (_) {
       return false;
     }
+  }
+
+  async function tryOpenPrivatePanel() {
+    if (!isSubmissionPage() || hasVisiblePrivateComposer()) return false;
+    if (await clickRankedControl(findVisiblePrivatePanelControls(), false)) return true;
+    const generic = findSafeGenericCommentControls();
+    if (generic.length === 1) return clickRankedControl(generic, true);
+    return false;
   }
 
   function repairUnlabelledEmptyThread() {
@@ -268,29 +331,29 @@
     if (!editables.length) return false;
 
     const explicit = editables.filter((el) => isPrivateText(meta(el)));
-    if (explicit.length === 1) return markPrivateComposer(explicit[0], "r6.5-explicit");
+    if (explicit.length === 1) return markPrivateComposer(explicit[0], "r6.6-explicit");
 
     const commentish = editables.filter((el) => {
       const m = meta(el);
       return m.includes("coment") || m.includes("comment");
     });
-    if (commentish.length === 1) return markPrivateComposer(commentish[0], "r6.5-commentish");
+    if (commentish.length === 1) return markPrivateComposer(commentish[0], "r6.6-commentish");
 
     const withSend = editables.filter(explicitSendNear);
-    if (withSend.length === 1) return markPrivateComposer(withSend[0], "r6.5-send-near");
+    if (withSend.length === 1) return markPrivateComposer(withSend[0], "r6.6-send-near");
 
     const rightSide = editables.filter((el) => {
       const r = el.getBoundingClientRect();
       return r.left + r.width / 2 >= window.innerWidth * 0.5;
     });
-    if (rightSide.length === 1) return markPrivateComposer(rightSide[0], "r6.5-single-right-editor");
+    if (rightSide.length === 1) return markPrivateComposer(rightSide[0], "r6.6-single-right-editor");
 
     return false;
   }
 
   async function repair() {
     if (!isSubmissionPage()) return;
-    document.documentElement.setAttribute("data-sieroom-private-hf", "r6.5");
+    document.documentElement.setAttribute("data-sieroom-private-hf", "r6.6");
 
     const anchors = deepQueryAll(
       '[aria-label],[role="heading"],h1,h2,h3,h4,[title],[data-tooltip]'
