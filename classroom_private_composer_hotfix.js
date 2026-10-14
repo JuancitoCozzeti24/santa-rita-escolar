@@ -1,6 +1,6 @@
 (() => {
-  if (window.__SIEROOM_PRIVATE_COMPOSER_HF_R66__) return;
-  window.__SIEROOM_PRIVATE_COMPOSER_HF_R66__ = true;
+  if (window.__SIEROOM_PRIVATE_COMPOSER_HF_R67__) return;
+  window.__SIEROOM_PRIVATE_COMPOSER_HF_R67__ = true;
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const norm = (s) => String(s || "")
@@ -24,15 +24,14 @@
     el?.getAttribute?.("title"),
     el?.getAttribute?.("data-tooltip"),
     el?.getAttribute?.("aria-description"),
-    el?.innerText && el.innerText.length < 220 ? el.innerText : "",
-    el?.textContent && el.textContent.length < 220 ? el.textContent : "",
+    el?.innerText && el.innerText.length < 240 ? el.innerText : "",
+    el?.textContent && el.textContent.length < 240 ? el.textContent : "",
   ].filter(Boolean).join(" "));
 
   const isSubmissionPage = () =>
     /\/submissions\/by-status\/and-sort-last-name\/student\//.test(location.pathname);
 
   const nativeDocumentQSA = Document.prototype.querySelectorAll;
-  const nativeDocumentQS = Document.prototype.querySelector;
   const nativeElementQSA = Element.prototype.querySelectorAll;
   const nativeFragmentQSA = DocumentFragment.prototype.querySelectorAll;
 
@@ -49,31 +48,25 @@
     const out = [];
     const seenElements = new Set();
     const seenScopes = new Set();
-
     const add = (el) => {
       if (el && !seenElements.has(el)) {
         seenElements.add(el);
         out.push(el);
       }
     };
-
     const walk = (scope) => {
       if (!scope || seenScopes.has(scope)) return;
       seenScopes.add(scope);
-
       nativeQueryAll(scope, selector).forEach(add);
-      const all = nativeQueryAll(scope, "*");
-      for (const el of all) {
+      for (const el of nativeQueryAll(scope, "*")) {
         if (el.shadowRoot) walk(el.shadowRoot);
         if (el instanceof HTMLIFrameElement || el instanceof HTMLFrameElement) {
           try {
-            const childDoc = el.contentDocument;
-            if (childDoc) walk(childDoc);
+            if (el.contentDocument) walk(el.contentDocument);
           } catch (_) {}
         }
       }
     };
-
     walk(root);
     return out;
   }
@@ -87,13 +80,8 @@
       configurable: true,
       value(selector) { return deepQueryAll(selector, document)[0] || null; }
     });
-    document.documentElement.setAttribute("data-sieroom-deep-dom", "r6.6");
-  } catch (_) {
-    try {
-      document.querySelectorAll = (selector) => deepQueryAll(selector, document);
-      document.querySelector = (selector) => deepQueryAll(selector, document)[0] || null;
-    } catch (_) {}
-  }
+    document.documentElement.setAttribute("data-sieroom-deep-dom", "r6.7");
+  } catch (_) {}
 
   const parentLike = (el) => {
     if (!el) return null;
@@ -126,22 +114,31 @@
     ].some((x) => m.includes(norm(x)));
   };
 
+  const isGradeOrSearch = (el) => {
+    const m = meta(el);
+    const type = norm(el?.getAttribute?.("type"));
+    if (type === "number" || type === "search") return true;
+    return [
+      "buscar", "search", "calificacion", "calificación", "grade",
+      "puntos", "points", "rubrica", "rúbrica", "criterion", "criterio",
+      "nota /", "grade /"
+    ].some((x) => m.includes(norm(x)));
+  };
+
   const isEditable = (el) => {
     if (!el || !(el instanceof Element) || !visible(el)) return false;
     if (el instanceof HTMLTextAreaElement) return !el.disabled && !el.readOnly;
-    if (el instanceof HTMLInputElement) return false;
+    if (el instanceof HTMLInputElement) {
+      const type = norm(el.type || "text");
+      return !el.disabled && !el.readOnly && ["text", "", "tel"].includes(type);
+    }
     return el.getAttribute("contenteditable") === "true" || el.getAttribute("role") === "textbox";
   };
 
   const isLikelyCommentEditable = (el) => {
-    if (!isEditable(el) || isHelpControl(el)) return false;
+    if (!isEditable(el) || isHelpControl(el) || isGradeOrSearch(el)) return false;
     const r = el.getBoundingClientRect();
-    if (r.width < 140 || r.height < 22) return false;
-    const m = meta(el);
-    if ([
-      "buscar", "search", "calificacion", "calificación", "grade",
-      "puntos", "points", "rubrica", "rúbrica", "criterion", "criterio"
-    ].some((x) => m.includes(norm(x)))) return false;
+    if (r.width < 120 || r.height < 18) return false;
     return true;
   };
 
@@ -187,7 +184,10 @@
   const isSendControl = (el) => {
     if (!visible(el) || isHelpControl(el)) return false;
     const m = meta(el);
-    return ["enviar", "publicar", "send", "post"].some((x) => m.includes(norm(x)));
+    return [
+      "enviar", "publicar", "send", "post",
+      "publicar comentario", "send comment", "post comment"
+    ].some((x) => m.includes(norm(x)));
   };
 
   const explicitSendNear = (el) => {
@@ -197,11 +197,11 @@
       const br = b.getBoundingClientRect();
       const dy = Math.abs((br.top + br.height / 2) - (er.top + er.height / 2));
       const dx = Math.abs((br.left + br.width / 2) - (er.left + er.width / 2));
-      return dy <= 260 && dx <= 620;
+      return dy <= 240 && dx <= 560;
     });
   };
 
-  function markPrivateComposer(el, evidence = "r6.6") {
+  function markPrivateComposer(el, evidence = "r6.7") {
     if (!isLikelyCommentEditable(el)) return false;
     const m = meta(el);
     if (!m.includes("coment") && !m.includes("comment")) {
@@ -211,7 +211,7 @@
     return true;
   }
 
-  function markPrivateLauncher(el, evidence = "r6.6-launcher") {
+  function markPrivateLauncher(el, evidence = "r6.7-launcher") {
     if (!isLauncher(el)) return false;
     const m = meta(el);
     if (!m.includes("privad") && !m.includes("private")) {
@@ -224,18 +224,20 @@
   function repairAround(anchor) {
     if (!anchor || !visible(anchor)) return false;
     for (const root of ancestors(anchor, 18)) {
-      const editables = deepQueryAll('textarea,[role="textbox"],[contenteditable="true"]', root)
+      const editables = deepQueryAll('textarea,input,[role="textbox"],[contenteditable="true"]', root)
         .filter((el) => isLikelyCommentEditable(el) && near(el, anchor));
-      if (editables.length === 1) return markPrivateComposer(editables[0], "r6.6-anchor");
+      if (editables.length === 1) return markPrivateComposer(editables[0], "r6.7-anchor");
       if (editables.length > 1) {
         const explicit = editables.filter((el) => isPrivateText(meta(el)));
-        if (explicit.length === 1) return markPrivateComposer(explicit[0], "r6.6-anchor-explicit");
+        if (explicit.length === 1) return markPrivateComposer(explicit[0], "r6.7-anchor-explicit");
+        const withSend = editables.filter(explicitSendNear);
+        if (withSend.length === 1) return markPrivateComposer(withSend[0], "r6.7-anchor-send");
       }
 
       const launchers = deepQueryAll('button,[role="button"],[aria-label],[data-placeholder]', root)
         .filter((el) => isLauncher(el) && near(el, anchor));
       if (launchers.length === 1) {
-        markPrivateLauncher(launchers[0], "r6.6-anchor-launcher");
+        markPrivateLauncher(launchers[0], "r6.7-anchor-launcher");
         return true;
       }
     }
@@ -250,11 +252,8 @@
       const m = meta(el);
       if (!isPrivateText(m)) return false;
       const role = norm(el.getAttribute("role"));
-      return el.tagName === "BUTTON" ||
-        role === "button" ||
-        role === "tab" ||
-        Boolean(el.getAttribute("aria-label")) ||
-        Boolean(el.getAttribute("title")) ||
+      return el.tagName === "BUTTON" || role === "button" || role === "tab" ||
+        Boolean(el.getAttribute("aria-label")) || Boolean(el.getAttribute("title")) ||
         Boolean(el.getAttribute("data-tooltip"));
     });
   }
@@ -273,7 +272,7 @@
   }
 
   function hasVisiblePrivateComposer() {
-    return deepQueryAll('textarea,[role="textbox"],[contenteditable="true"]')
+    return deepQueryAll('textarea,input,[role="textbox"],[contenteditable="true"]')
       .some((el) => isLikelyCommentEditable(el) && isPrivateText(meta(el)));
   }
 
@@ -307,7 +306,10 @@
     try {
       ranked[0].el.scrollIntoView({ block: "nearest", inline: "nearest" });
       ranked[0].el.click();
-      document.documentElement.setAttribute("data-sieroom-private-panel-opened", generic ? "r6.6-generic" : "r6.6-private");
+      document.documentElement.setAttribute(
+        "data-sieroom-private-panel-opened",
+        generic ? "r6.7-generic" : "r6.7-private"
+      );
       await sleep(220);
       return true;
     } catch (_) {
@@ -326,34 +328,34 @@
   function repairUnlabelledEmptyThread() {
     if (!isSubmissionPage()) return false;
 
-    const editables = deepQueryAll('textarea,[role="textbox"],[contenteditable="true"]')
+    const editables = deepQueryAll('textarea,input,[role="textbox"],[contenteditable="true"]')
       .filter(isLikelyCommentEditable);
     if (!editables.length) return false;
 
     const explicit = editables.filter((el) => isPrivateText(meta(el)));
-    if (explicit.length === 1) return markPrivateComposer(explicit[0], "r6.6-explicit");
+    if (explicit.length === 1) return markPrivateComposer(explicit[0], "r6.7-explicit");
 
     const commentish = editables.filter((el) => {
       const m = meta(el);
       return m.includes("coment") || m.includes("comment");
     });
-    if (commentish.length === 1) return markPrivateComposer(commentish[0], "r6.6-commentish");
+    if (commentish.length === 1) return markPrivateComposer(commentish[0], "r6.7-commentish");
 
     const withSend = editables.filter(explicitSendNear);
-    if (withSend.length === 1) return markPrivateComposer(withSend[0], "r6.6-send-near");
+    if (withSend.length === 1) return markPrivateComposer(withSend[0], "r6.7-send-near");
 
-    const rightSide = editables.filter((el) => {
+    const rightWide = editables.filter((el) => {
       const r = el.getBoundingClientRect();
-      return r.left + r.width / 2 >= window.innerWidth * 0.5;
+      return r.left + r.width / 2 >= window.innerWidth * 0.5 && r.width >= 180;
     });
-    if (rightSide.length === 1) return markPrivateComposer(rightSide[0], "r6.6-single-right-editor");
+    if (rightWide.length === 1) return markPrivateComposer(rightWide[0], "r6.7-single-right-wide-editor");
 
     return false;
   }
 
   async function repair() {
     if (!isSubmissionPage()) return;
-    document.documentElement.setAttribute("data-sieroom-private-hf", "r6.6");
+    document.documentElement.setAttribute("data-sieroom-private-hf", "r6.7");
 
     const anchors = deepQueryAll(
       '[aria-label],[role="heading"],h1,h2,h3,h4,[title],[data-tooltip]'
@@ -384,9 +386,10 @@
   };
 
   repair().catch(() => {});
-  setTimeout(() => repair().catch(() => {}), 500);
-  setTimeout(() => repair().catch(() => {}), 1500);
-  setTimeout(() => repair().catch(() => {}), 3000);
+  setTimeout(() => repair().catch(() => {}), 450);
+  setTimeout(() => repair().catch(() => {}), 1200);
+  setTimeout(() => repair().catch(() => {}), 2600);
+  setTimeout(() => repair().catch(() => {}), 5200);
 
   const observer = new MutationObserver(scheduleRepair);
   observer.observe(document.documentElement, {
@@ -395,7 +398,7 @@
     attributes: true,
     attributeFilter: [
       "aria-label", "placeholder", "data-placeholder", "contenteditable",
-      "role", "title", "data-tooltip", "aria-expanded", "aria-selected"
+      "role", "title", "data-tooltip", "aria-expanded", "aria-selected", "type"
     ]
   });
 })();
