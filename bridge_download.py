@@ -7,8 +7,8 @@ from zipfile import ZIP_DEFLATED, ZipFile
 from starlette.responses import Response
 
 
-DOWNLOAD_PATH = "/downloads/SieRoom-Classroom-Bridge-0.8.7-R6.4-TRIPLE-CONTRACT.zip"
-ARCHIVE_NAME = "SieRoom-Classroom-Bridge-0.8.7-R6.4-TRIPLE-CONTRACT.zip"
+DOWNLOAD_PATH = "/downloads/SieRoom-Classroom-Bridge-0.8.7-R6.5-TRIPLE-CONTRACT.zip"
+ARCHIVE_NAME = "SieRoom-Classroom-Bridge-0.8.7-R6.5-TRIPLE-CONTRACT.zip"
 
 
 def _build_zip() -> bytes:
@@ -21,7 +21,7 @@ def _build_zip() -> bytes:
         for path in sorted(root.rglob("*")):
             if not path.is_file():
                 continue
-            arcname = Path("SieRoom_Classroom_Bridge_0.8.7_R6.4_TRIPLE_CONTRACT") / path.relative_to(root)
+            arcname = Path("SieRoom_Classroom_Bridge_0.8.7_R6.5_TRIPLE_CONTRACT") / path.relative_to(root)
             zf.write(path, arcname.as_posix())
     return buffer.getvalue()
 
