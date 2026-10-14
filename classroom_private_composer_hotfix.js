@@ -1,6 +1,6 @@
 (() => {
-  if (window.__SIEROOM_PRIVATE_COMPOSER_HF_R63__) return;
-  window.__SIEROOM_PRIVATE_COMPOSER_HF_R63__ = true;
+  if (window.__SIEROOM_PRIVATE_COMPOSER_HF_R64__) return;
+  window.__SIEROOM_PRIVATE_COMPOSER_HF_R64__ = true;
 
   const norm = (s) => String(s || "")
     .normalize("NFD")
@@ -21,9 +21,12 @@
     el?.getAttribute?.("placeholder"),
     el?.getAttribute?.("data-placeholder"),
     el?.getAttribute?.("title"),
+    el?.getAttribute?.("aria-description"),
     el?.innerText && el.innerText.length < 160 ? el.innerText : "",
     el?.textContent && el.textContent.length < 160 ? el.textContent : "",
   ].filter(Boolean).join(" "));
+
+  const isSubmissionPage = () => /\/submissions\/by-status\/and-sort-last-name\/student\//.test(location.pathname);
 
   const isPostedPrivateCommentAnchor = (el) => {
     const m = meta(el);
@@ -53,6 +56,16 @@
       return !el.disabled && !el.readOnly && ["text", "search", ""].includes(t);
     }
     return el.getAttribute("contenteditable") === "true" || el.getAttribute("role") === "textbox";
+  };
+
+  const isLikelyCommentEditable = (el) => {
+    if (!isEditable(el) || isHelpControl(el)) return false;
+    if (el instanceof HTMLInputElement) return false;
+    const r = el.getBoundingClientRect();
+    if (r.width < 140 || r.height < 24) return false;
+    const m = meta(el);
+    if (["buscar", "search", "calificacion", "calificación", "grade", "puntos", "points"].some((x) => m.includes(norm(x)))) return false;
+    return true;
   };
 
   const isLauncher = (el) => {
@@ -86,13 +99,27 @@
     return out;
   };
 
-  function markPrivateComposer(el) {
-    if (!isEditable(el) || isHelpControl(el)) return;
+  const explicitSendNear = (el) => {
+    const er = el.getBoundingClientRect();
+    const buttons = [...document.querySelectorAll('button,[role="button"]')].filter(visible);
+    return buttons.some((b) => {
+      if (isHelpControl(b)) return false;
+      const m = meta(b);
+      if (!["enviar", "publicar", "send", "post"].some((x) => m.includes(x))) return false;
+      const br = b.getBoundingClientRect();
+      const dy = Math.abs((br.top + br.height / 2) - (er.top + er.height / 2));
+      const dx = Math.abs((br.left + br.width / 2) - (er.left + er.width / 2));
+      return dy <= 240 && dx <= 560;
+    });
+  };
+
+  function markPrivateComposer(el, evidence = "r6.4") {
+    if (!isLikelyCommentEditable(el)) return;
     const m = meta(el);
     if (!m.includes("coment") && !m.includes("comment")) {
       el.setAttribute("data-placeholder", "Comentario privado");
     }
-    el.setAttribute("data-sieroom-private-composer", "r6.3");
+    el.setAttribute("data-sieroom-private-composer", evidence);
   }
 
   function markPrivateLauncher(el) {
@@ -101,7 +128,7 @@
     if (!m.includes("privad") && !m.includes("private")) {
       el.setAttribute("data-placeholder", "Añade un comentario privado");
     }
-    el.setAttribute("data-sieroom-private-launcher", "r6.3");
+    el.setAttribute("data-sieroom-private-launcher", "r6.4");
   }
 
   function repairAround(anchor) {
@@ -109,9 +136,9 @@
     const roots = ancestors(anchor, 10);
     for (const root of roots) {
       const editables = [...root.querySelectorAll('textarea,input,[role="textbox"],[contenteditable="true"]')]
-        .filter((el) => isEditable(el) && !isHelpControl(el) && near(el, anchor));
+        .filter((el) => isLikelyCommentEditable(el) && near(el, anchor));
       if (editables.length) {
-        editables.forEach(markPrivateComposer);
+        editables.forEach((el) => markPrivateComposer(el, "r6.4-anchor"));
         return;
       }
 
@@ -124,17 +151,47 @@
     }
   }
 
+  function repairUnlabelledEmptyThread() {
+    if (!isSubmissionPage()) return;
+
+    const editables = [...document.querySelectorAll('textarea,[role="textbox"],[contenteditable="true"]')]
+      .filter(isLikelyCommentEditable);
+    if (!editables.length) return;
+
+    const explicit = editables.filter((el) => {
+      const m = meta(el);
+      return m.includes("coment") || m.includes("comment") || m.includes("privad") || m.includes("private");
+    });
+    if (explicit.length === 1) {
+      markPrivateComposer(explicit[0], "r6.4-explicit");
+      return;
+    }
+
+    const withSend = editables.filter(explicitSendNear);
+    if (withSend.length === 1) {
+      markPrivateComposer(withSend[0], "r6.4-send-near");
+      return;
+    }
+
+    const rightSide = editables.filter((el) => {
+      const r = el.getBoundingClientRect();
+      return r.left + r.width / 2 >= window.innerWidth * 0.5;
+    });
+    if (rightSide.length === 1) {
+      markPrivateComposer(rightSide[0], "r6.4-single-right-editor");
+    }
+  }
+
   function repair() {
     const labelledPrivate = [...document.querySelectorAll('[aria-label],[role="heading"],h1,h2,h3,h4')]
       .filter((el) => visible(el) && isPrivateHeading(el));
     for (const heading of labelledPrivate) repairAround(heading);
 
-    // Classroom puede ocultar el título "Comentarios privados" cuando el hilo ya
-    // existe. El aria-label "Comentario publicado por …" sirve como ancla inequívoca
-    // dentro de esa misma región sin confundirla con "Ayuda y comentarios".
     const posted = [...document.querySelectorAll('[aria-label]')]
       .filter((el) => visible(el) && isPostedPrivateCommentAnchor(el));
     for (const anchor of posted) repairAround(anchor);
+
+    if (!labelledPrivate.length && !posted.length) repairUnlabelledEmptyThread();
   }
 
   let scheduled = false;
