@@ -1,6 +1,6 @@
 (() => {
-  if (window.__SIEROOM_PRIVATE_COMPOSER_HF_R67__) return;
-  window.__SIEROOM_PRIVATE_COMPOSER_HF_R67__ = true;
+  if (window.__SIEROOM_PRIVATE_COMPOSER_HF_R68__) return;
+  window.__SIEROOM_PRIVATE_COMPOSER_HF_R68__ = true;
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const norm = (s) => String(s || "")
@@ -80,7 +80,7 @@
       configurable: true,
       value(selector) { return deepQueryAll(selector, document)[0] || null; }
     });
-    document.documentElement.setAttribute("data-sieroom-deep-dom", "r6.7");
+    document.documentElement.setAttribute("data-sieroom-deep-dom", "r6.8");
   } catch (_) {}
 
   const parentLike = (el) => {
@@ -121,7 +121,7 @@
     return [
       "buscar", "search", "calificacion", "calificación", "grade",
       "puntos", "points", "rubrica", "rúbrica", "criterion", "criterio",
-      "nota /", "grade /"
+      "nota", "puntuacion", "points", "grade /"
     ].some((x) => m.includes(norm(x)));
   };
 
@@ -132,7 +132,9 @@
       const type = norm(el.type || "text");
       return !el.disabled && !el.readOnly && ["text", "", "tel"].includes(type);
     }
-    return el.getAttribute("contenteditable") === "true" || el.getAttribute("role") === "textbox";
+    const ce = el.getAttribute("contenteditable");
+    return (ce !== null && ["", "true", "plaintext-only"].includes(norm(ce))) ||
+      el.getAttribute("role") === "textbox";
   };
 
   const isLikelyCommentEditable = (el) => {
@@ -201,7 +203,7 @@
     });
   };
 
-  function markPrivateComposer(el, evidence = "r6.7") {
+  function markPrivateComposer(el, evidence = "r6.8") {
     if (!isLikelyCommentEditable(el)) return false;
     const m = meta(el);
     if (!m.includes("coment") && !m.includes("comment")) {
@@ -211,7 +213,7 @@
     return true;
   }
 
-  function markPrivateLauncher(el, evidence = "r6.7-launcher") {
+  function markPrivateLauncher(el, evidence = "r6.8-launcher") {
     if (!isLauncher(el)) return false;
     const m = meta(el);
     if (!m.includes("privad") && !m.includes("private")) {
@@ -224,20 +226,20 @@
   function repairAround(anchor) {
     if (!anchor || !visible(anchor)) return false;
     for (const root of ancestors(anchor, 18)) {
-      const editables = deepQueryAll('textarea,input,[role="textbox"],[contenteditable="true"]', root)
+      const editables = deepQueryAll('textarea,input,[role="textbox"],[contenteditable]', root)
         .filter((el) => isLikelyCommentEditable(el) && near(el, anchor));
-      if (editables.length === 1) return markPrivateComposer(editables[0], "r6.7-anchor");
+      if (editables.length === 1) return markPrivateComposer(editables[0], "r6.8-anchor");
       if (editables.length > 1) {
         const explicit = editables.filter((el) => isPrivateText(meta(el)));
-        if (explicit.length === 1) return markPrivateComposer(explicit[0], "r6.7-anchor-explicit");
+        if (explicit.length === 1) return markPrivateComposer(explicit[0], "r6.8-anchor-explicit");
         const withSend = editables.filter(explicitSendNear);
-        if (withSend.length === 1) return markPrivateComposer(withSend[0], "r6.7-anchor-send");
+        if (withSend.length === 1) return markPrivateComposer(withSend[0], "r6.8-anchor-send");
       }
 
       const launchers = deepQueryAll('button,[role="button"],[aria-label],[data-placeholder]', root)
         .filter((el) => isLauncher(el) && near(el, anchor));
       if (launchers.length === 1) {
-        markPrivateLauncher(launchers[0], "r6.7-anchor-launcher");
+        markPrivateLauncher(launchers[0], "r6.8-anchor-launcher");
         return true;
       }
     }
@@ -272,7 +274,7 @@
   }
 
   function hasVisiblePrivateComposer() {
-    return deepQueryAll('textarea,input,[role="textbox"],[contenteditable="true"]')
+    return deepQueryAll('textarea,input,[role="textbox"],[contenteditable]')
       .some((el) => isLikelyCommentEditable(el) && isPrivateText(meta(el)));
   }
 
@@ -308,7 +310,7 @@
       ranked[0].el.click();
       document.documentElement.setAttribute(
         "data-sieroom-private-panel-opened",
-        generic ? "r6.7-generic" : "r6.7-private"
+        generic ? "r6.8-generic" : "r6.8-private"
       );
       await sleep(220);
       return true;
@@ -328,34 +330,28 @@
   function repairUnlabelledEmptyThread() {
     if (!isSubmissionPage()) return false;
 
-    const editables = deepQueryAll('textarea,input,[role="textbox"],[contenteditable="true"]')
+    const editables = deepQueryAll('textarea,input,[role="textbox"],[contenteditable]')
       .filter(isLikelyCommentEditable);
     if (!editables.length) return false;
 
     const explicit = editables.filter((el) => isPrivateText(meta(el)));
-    if (explicit.length === 1) return markPrivateComposer(explicit[0], "r6.7-explicit");
+    if (explicit.length === 1) return markPrivateComposer(explicit[0], "r6.8-explicit");
 
     const commentish = editables.filter((el) => {
       const m = meta(el);
       return m.includes("coment") || m.includes("comment");
     });
-    if (commentish.length === 1) return markPrivateComposer(commentish[0], "r6.7-commentish");
+    if (commentish.length === 1) return markPrivateComposer(commentish[0], "r6.8-commentish");
 
     const withSend = editables.filter(explicitSendNear);
-    if (withSend.length === 1) return markPrivateComposer(withSend[0], "r6.7-send-near");
-
-    const rightWide = editables.filter((el) => {
-      const r = el.getBoundingClientRect();
-      return r.left + r.width / 2 >= window.innerWidth * 0.5 && r.width >= 180;
-    });
-    if (rightWide.length === 1) return markPrivateComposer(rightWide[0], "r6.7-single-right-wide-editor");
+    if (withSend.length === 1) return markPrivateComposer(withSend[0], "r6.8-send-near");
 
     return false;
   }
 
   async function repair() {
     if (!isSubmissionPage()) return;
-    document.documentElement.setAttribute("data-sieroom-private-hf", "r6.7");
+    document.documentElement.setAttribute("data-sieroom-private-hf", "r6.8");
 
     const anchors = deepQueryAll(
       '[aria-label],[role="heading"],h1,h2,h3,h4,[title],[data-tooltip]'
