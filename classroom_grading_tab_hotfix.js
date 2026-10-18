@@ -1,6 +1,6 @@
 (() => {
-  if (window.__SIEROOM_GRADING_TAB_HF_R67__) return;
-  window.__SIEROOM_GRADING_TAB_HF_R67__ = true;
+  if (window.__SIEROOM_GRADING_TAB_HF_R68__) return;
+  window.__SIEROOM_GRADING_TAB_HF_R68__ = true;
 
   const norm = (s) => String(s || "")
     .normalize("NFD")
@@ -157,7 +157,7 @@
     try {
       target.scrollIntoView({ block: "nearest", inline: "nearest" });
       target.click();
-      document.documentElement.setAttribute("data-sieroom-grading-panel-opened", "r6.7");
+      document.documentElement.setAttribute("data-sieroom-grading-panel-opened", "r6.8");
       document.documentElement.setAttribute("data-sieroom-grading-panel-evidence", evidence);
       return true;
     } catch (_) {
