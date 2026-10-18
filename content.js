@@ -24,7 +24,9 @@
       const t = norm(el.type || "text");
       return !el.disabled && !el.readOnly && ["text", "search", "number", "tel", ""].includes(t);
     }
-    return el.getAttribute("contenteditable") === "true" || el.getAttribute("role") === "textbox";
+    const ce = el.getAttribute("contenteditable");
+    return (ce !== null && ["", "true", "plaintext-only"].includes(norm(ce))) ||
+      el.getAttribute("role") === "textbox";
   };
 
   const meta = (el) => norm([
@@ -40,7 +42,16 @@
 
   const isPrivateLabelText = (text) => {
     const t = norm(text);
-    return t.includes("comentarios privados") || t.includes("private comments");
+    return t.includes("comentarios privados") || t.includes("private comments") ||
+      t.includes("ningun comentario privado") || t.includes("no private comments");
+  };
+
+  // La caja de nota nunca puede ser usada como editor de retroalimentación.
+  const isPrivateEditable = (el) => {
+    if (!isEditable(el)) return false;
+    if (el instanceof HTMLInputElement && ["number", "search"].includes(norm(el.type))) return false;
+    const m = meta(el);
+    return !["modificar nota", "calificacion", "puntuacion", "grade", "points", "nota /", "buscar", "search"].some((part) => m.includes(part));
   };
 
   const isCommentComposerText = (text) => {
@@ -94,7 +105,7 @@
   }
 
   function scoreCandidate(el, label) {
-    if (!visible(el)) return -9999;
+    if (!visible(el) || (isEditable(el) && !isPrivateEditable(el))) return -9999;
     const m = meta(el);
     if (!isCommentComposerText(m)) return -9999;
 
@@ -116,7 +127,7 @@
 
   function composerCandidates(label) {
     const selector = [
-      "textarea", "input", '[role="textbox"]', '[contenteditable="true"]',
+      "textarea", "input", '[role="textbox"]', '[contenteditable]',
       "[aria-label]", "[placeholder]", "[data-placeholder]", "[aria-description]"
     ].join(",");
 
@@ -128,11 +139,11 @@
   }
 
   function nearbyEditableCandidates(label, anchor) {
-    const selector = 'textarea,input,[role="textbox"],[contenteditable="true"]';
+    const selector = 'textarea,input,[role="textbox"],[contenteditable]';
     const lr = label?.getBoundingClientRect?.();
     const ar = anchor?.getBoundingClientRect?.();
     return [...document.querySelectorAll(selector)]
-      .filter((el) => visible(el) && isEditable(el))
+      .filter((el) => visible(el) && isPrivateEditable(el))
       .map((el) => {
         const er = el.getBoundingClientRect();
         let score = 0;
@@ -200,7 +211,7 @@
   }
 
   function bestPrivateRegion(label, composer) {
-    if (!composer || !visible(composer) || !isEditable(composer)) return null;
+    if (!composer || !visible(composer) || !isPrivateEditable(composer)) return null;
     const composerAncestors = new Set(ancestorChain(composer, 16));
     if (label) {
       for (const el of ancestorChain(label, 16)) {
@@ -240,7 +251,7 @@
 
   async function findOrActivateComposer(label) {
     let candidates = composerCandidates(label);
-    let editable = candidates.find((x) => isEditable(x.el));
+    let editable = candidates.find((x) => isPrivateEditable(x.el));
     if (editable) return editable.el;
 
     // Classroom a veces muestra un contenedor "Añade un comentario…" que solo crea
@@ -254,10 +265,10 @@
         await sleep(250);
 
         const active = document.activeElement;
-        if (visible(active) && isEditable(active)) return active;
+        if (visible(active) && isPrivateEditable(active)) return active;
 
         candidates = composerCandidates(label);
-        editable = candidates.find((x) => isEditable(x.el));
+        editable = candidates.find((x) => isPrivateEditable(x.el));
         if (editable) return editable.el;
 
         // Algunos editores de Classroom no conservan aria-label/placeholder en el
@@ -410,7 +421,7 @@
     }
     const label = privateCommentLabel();
     if (!label) return null;
-    const composer = composerCandidates(label).find((item) => isEditable(item.el))?.el || null;
+    const composer = composerCandidates(label).find((item) => isPrivateEditable(item.el))?.el || null;
     if (!composer) return null;
     const scoped = bestPrivateRegion(label, composer);
     return scoped ? { label, composer, ...scoped } : null;
@@ -440,9 +451,9 @@
   function directPrivateComposer() {
     // Classroom puede ocultar el encabezado "Comentarios privados" pero mantener
     // el editor con aria-label como "Añade un comentario privado…".
-    const selector = 'textarea,input,[role="textbox"],[contenteditable="true"]';
+    const selector = 'textarea,input,[role="textbox"],[contenteditable]';
     const candidates = [...document.querySelectorAll(selector)]
-      .filter((el) => visible(el) && isEditable(el))
+      .filter((el) => visible(el) && isPrivateEditable(el))
       .map((el) => {
         const m = meta(el);
         let score = 0;
@@ -660,7 +671,7 @@
   }
 
   function targetStudentContainers(targetStudentId) {
-    const selector = 'input,textarea,[role="textbox"],[contenteditable="true"]';
+    const selector = 'input,textarea,[role="textbox"],[contenteditable]';
     const targetLinks = [...document.querySelectorAll('a[href*="/student/"]')]
       .filter((a) => studentIdFromClassroomUrl(a.href || a.getAttribute("href")) === targetStudentId);
 
@@ -735,7 +746,7 @@
   }
 
   function targetRowGradeCandidates(targetStudentId) {
-    const selector = 'input,textarea,[role="textbox"],[contenteditable="true"]';
+    const selector = 'input,textarea,[role="textbox"],[contenteditable]';
     const targetLinks = [...document.querySelectorAll('a[href*="/student/"]')]
       .filter((a) => studentIdFromClassroomUrl(a.href || a.getAttribute("href")) === targetStudentId)
       .filter((a) => visible(a));
@@ -779,7 +790,7 @@
   }
 
   function activeDetailGradeCandidates(targetStudentId) {
-    const selector = 'input,textarea,[role="textbox"],[contenteditable="true"]';
+    const selector = 'input,textarea,[role="textbox"],[contenteditable]';
 
     return [...document.querySelectorAll(selector)]
       .filter((el) => visible(el) && isEditable(el))
@@ -1165,7 +1176,8 @@
     const t = norm(text);
     if (!t) return true;
     return [
-      "comentarios privados", "private comments", "anade un comentario",
+      "comentarios privados", "private comments", "ningun comentario privado",
+      "no private comments", "anade un comentario",
       "agrega un comentario", "escribe un comentario", "add a comment",
       "write a comment", "enviar", "send", "publicar", "post",
       "instrucciones", "trabajo de los alumnos", "more_vert",
