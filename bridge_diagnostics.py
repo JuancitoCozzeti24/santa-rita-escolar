@@ -1,6 +1,7 @@
 """Read-only Bridge negotiation and HTTP diagnostics; never claims queued work."""
 from __future__ import annotations
 import os
+import asyncio
 import requests
 from starlette.responses import JSONResponse
 from bridge import ClassroomBridgeQueue
@@ -77,6 +78,6 @@ def install(mcp):
         return JSONResponse(result, status_code=200 if result["compatible"] else 409)
 
     @mcp.tool()
-    def bridge_connection_diagnostics() -> dict:
+    async def bridge_connection_diagnostics() -> dict:
         """Comprueba conexión HTTP, autorización y contrato Bridge sin reclamar trabajos ni modificar Classroom."""
-        return run_diagnostics()
+        return await asyncio.to_thread(run_diagnostics)

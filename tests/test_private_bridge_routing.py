@@ -115,3 +115,9 @@ def test_scoped_read_and_grade_return_contract_with_synthetic_jobs(monkeypatch):
                 'browser_followup_done':True,'comment':{'ok':True},'content_build':'0.8.7-HF5-COMMENT-ACK',
                 'target_student_id':'s','current_student_id':'s','browser_grade_applied':True,'browser_grade':15,'browser_returned':True}
         assert c.post(f'/bridge/v1/jobs/{post.id}/complete',headers=h,json=result).json()['job']['status']=='completed'
+
+
+def test_diagnostics_never_blocks_the_mcp_event_loop():
+    import private_entry
+    tool = private_entry.mcp._tool_manager.get_tool("bridge_connection_diagnostics")
+    assert tool.is_async is True
