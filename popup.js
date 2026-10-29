@@ -5,7 +5,7 @@ const msg = document.getElementById("msg");
 const DEFAULT_TEACHER_EMAIL = "jbringas@santaritadecasia.edu.pe";
 
 (async () => {
-  const data = await chrome.storage.local.get(["endpoint", "teacherEmail", "secret"]);
+  const data = await SieRoomConnection.config();
   if (data.endpoint) endpoint.value = data.endpoint;
   if (data.teacherEmail) {
     teacherEmail.value = data.teacherEmail;
@@ -21,7 +21,7 @@ function validEmail(v) {
 }
 
 async function save() {
-  const ep = endpoint.value.trim().replace(/\/$/, "");
+  const ep = SieRoomConnection.normalizeEndpoint(endpoint.value);
   const email = teacherEmail.value.trim().toLowerCase();
   const sec = secret.value.trim();
 
@@ -74,19 +74,8 @@ document.getElementById("save").addEventListener("click", async () => {
     const { ep, email, sec } = await save();
     if (!sec) throw new Error("Falta el secreto.");
 
-    const r = await fetch(`${ep}/bridge/v1/status`, {
-      headers: { "X-SieRoom-Bridge-Secret": sec },
-      cache: "no-store"
-    });
-    const data = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+    const data = await SieRoomConnection.check(ep, sec);
     const extensionVersion = chrome.runtime.getManifest().version;
-    if (String(data.version || "") !== extensionVersion) {
-      throw new Error(
-        `Versiones distintas: servidor ${data.version || "desconocida"} · ` +
-        `extensión ${extensionVersion}. Espera el despliegue antes de procesar.`
-      );
-    }
 
     const account = await checkClassroomAccount(email);
     msg.textContent =

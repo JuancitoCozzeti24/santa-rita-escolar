@@ -21,9 +21,9 @@
   }
 
   async function cfg() {
-    const data = await chrome.storage.local.get(["endpoint", "teacherEmail", "secret"]);
+    const data = await SieRoomConnection.config();
     return {
-      endpoint: String(data.endpoint || "https://santa-rita-escolar-tcpb.onrender.com").replace(/\/$/, ""),
+      endpoint: data.endpoint,
       teacherEmail: String(data.teacherEmail || "").trim().toLowerCase(),
       secret: String(data.secret || "")
     };

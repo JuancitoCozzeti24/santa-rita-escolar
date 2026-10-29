@@ -10,7 +10,7 @@
   ],
   "host_permissions": [
     "https://classroom.google.com/*",
-    "https://santa-rita-escolar-tcpb.onrender.com/*"
+    "https://sieroom-src.onrender.com/*"
   ],
   "content_scripts": [
     {
@@ -30,5 +30,5 @@
     "default_title": "SieRoom Classroom Bridge",
     "default_popup": "popup.html"
   },
-  "version_name": "0.8.7-R6.8-EMPTY-PRIVATE-EDITOR"
+  "version_name": "0.8.7-R6.8-SRC-1"
 }

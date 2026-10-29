@@ -1,0 +1,22 @@
+SieRoom Classroom Bridge 0.8.7 · R6.8 · SRC-1
+
+Actualización conservando configuración:
+1. En brave://extensions, ubica la extensión existente y cierra su pestaña Bridge.
+2. Sustituye los archivos de SU CARPETA ACTUAL por el contenido de este paquete.
+   No elimines la extensión ni cambies la ruta de la carpeta: así conserva su ID,
+   el correo docente y el secreto almacenados. Guarda una copia de esa carpeta antes.
+3. Pulsa Recargar en la tarjeta de la extensión. Si Brave solicita aprobar el
+   permiso del nuevo servidor, apruébalo. Recarga también la pestaña de Classroom.
+4. Abre la extensión y pulsa Guardar y probar. El servidor se migrará solo a
+   https://sieroom-src.onrender.com. Debe confirmar conexión, versión 0.8.7 y
+   cuenta jbringas@santaritadecasia.edu.pe.
+5. Solo después, usa Iniciar puente para procesar los trabajos que autorices.
+
+No uses RESET / REINTENTAR TODO para instalar ni probar.
+Si no sabes cuál es la carpeta actual: activa Modo de desarrollador, abre
+Detalles de la extensión y consulta la ubicación de la extensión descomprimida.
+No pulses Quitar ni cargues otra copia si deseas conservar la configuración.
+
+La edición mantiene el protocolo 0.8.7 y el contrato R6.2/R6.8. SRC-1 identifica
+la reparación del transporte institucional; no cambia los selectores de Classroom.
+El ZIP no contiene secretos ni la ruta privada MCP.

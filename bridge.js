@@ -46,9 +46,9 @@ function log(msg) {
 }
 
 async function cfg() {
-  const data = await chrome.storage.local.get(["endpoint", "teacherEmail", "secret"]);
+  const data = await SieRoomConnection.config();
   return {
-    endpoint: String(data.endpoint || "https://santa-rita-escolar-tcpb.onrender.com").replace(/\/$/, ""),
+    endpoint: data.endpoint,
     teacherEmail: String(data.teacherEmail || DEFAULT_TEACHER_EMAIL).trim().toLowerCase(),
     secret: String(data.secret || "")
   };
@@ -148,10 +148,7 @@ async function bridgeFetch(path, options = {}) {
     "post_private_comment,read_private_comments,verified_private_comment_read_v4,student_scoped_private_comment_read,browser_grade_return,teacher_account_guard,target_submission_guard,grade_target_guard_v1"
   );
   if (options.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
-  const r = await fetch(`${c.endpoint}${path}`, { ...options, headers, cache: "no-store" });
-  const data = await r.json().catch(() => ({}));
-  if (!r.ok && r.status !== 207) throw new Error(data.error || `HTTP ${r.status}`);
-  return { status: r.status, data };
+  return SieRoomConnection.request(c.endpoint, path, { ...options, headers });
 }
 
 function workRemaining(queue = {}) {
@@ -615,7 +612,7 @@ async function poll(force = false) {
       return;
     }
 
-    const st = await bridgeFetch("/bridge/v1/status");
+    const st = { data: await SieRoomConnection.check(c.endpoint, c.secret) };
     const extensionVersion = chrome.runtime.getManifest().version;
     if (String(st.data?.version || "") !== extensionVersion) {
       throw new Error(

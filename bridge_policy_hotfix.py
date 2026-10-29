@@ -348,6 +348,13 @@ def install_achievement_levels_tool() -> None:
     FastMCP.run = run_with_achievement_levels
 
 
-_patch_sieweb_achievement_route_source()
+# Bridge guards must not depend on an unrelated historical SIEweb source patch.
 install()
-install_achievement_levels_tool()
+try:
+    _patch_sieweb_achievement_route_source()
+except RuntimeError:
+    # Preserve current SIEweb code when its source no longer matches the patch.
+    # Do not install the optional achievement-level tool after a failed preflight.
+    print("SieRoom: parche opcional SIEweb omitido; contrato triple Bridge activo.", flush=True)
+else:
+    install_achievement_levels_tool()

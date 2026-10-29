@@ -495,7 +495,9 @@ def test_v081_teacher_email_guard_is_present_in_all_extension_surfaces():
     bridge_js = (ROOT / "browser_extension" / "bridge.js").read_text(encoding="utf-8")
     content_js = (ROOT / "browser_extension" / "content.js").read_text(encoding="utf-8")
     assert 'id="teacherEmail"' in popup_html
-    assert 'chrome.storage.local.get(["endpoint", "teacherEmail", "secret"])' in popup_js
+    assert "SieRoomConnection.config()" in popup_js
+    connection_js = (ROOT / "browser_extension" / "connection.js").read_text(encoding="utf-8")
+    assert 'chrome.storage.local.get(["endpoint", "teacherEmail", "secret"])' in connection_js
     assert 'u.searchParams.set("authuser", email)' in bridge_js
     assert "SIEROOM_CHECK_ACCOUNT" in bridge_js
     assert "SIEROOM_CHECK_ACCOUNT" in content_js
@@ -673,7 +675,7 @@ def test_v084_bridge_has_single_tab_leader_and_process_now_does_not_cancel_activ
     assert "if (busy)" in bridge_js
     assert "if (busy && force) resetGeneration += 1" not in bridge_js
     assert "Versión incompatible" in bridge_js
-    assert "Versiones distintas" in popup_js
+    assert "Versiones distintas" in (ROOT / "connection.js").read_text(encoding="utf-8")
     assert 'chrome.tabs.query({ url: bridgeUrl + "*" })' in popup_js
     assert "claim_seconds: int = 300" in queue_py
 
