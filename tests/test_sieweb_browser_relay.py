@@ -46,6 +46,40 @@ class VerifiedBrowserRelayTests(unittest.TestCase):
         self.assertEqual(out.get("result", {}).get("json", {}).get("estado"), 1)
         self.assertEqual(self.bridge.status()["pending_requests"], 0)
 
+    def test_long_poll_wakes_when_new_job_is_queued(self):
+        self.bridge.pulse(verified=True)
+        claimed = {}
+        def waiter():
+            claimed["job"] = self.bridge.wait_next_job(2.5)
+        consumer = threading.Thread(target=waiter)
+        consumer.start()
+        time.sleep(.05)
+        result = {}
+        def producer():
+            try:
+                result["value"] = self.bridge.request(
+                    "GET", "/lms/api/HyoMensajeria/obtMensajes",
+                    params={"idCarpeta": 1}
+                )
+            except Exception as exc:
+                result["error"] = str(exc)
+        requester = threading.Thread(target=producer)
+        requester.start()
+        consumer.join(timeout=1)
+        self.assertFalse(consumer.is_alive(), "Wake should not wait 2.5s")
+        self.assertIsNotNone(claimed.get("job"))
+        self.assertTrue(
+            self.bridge.complete(claimed["job"]["id"], status_code=200,
+                                 data={"json":{"estado":1}})
+        )
+        requester.join(timeout=2)
+        self.assertFalse(requester.is_alive())
+        self.assertEqual(result.get("value", {}).get("json", {}).get("estado"), 1)
+
+    def test_no_job_long_poll_returns_empty(self):
+        self.bridge.pulse(verified=True)
+        self.assertIsNone(self.bridge.wait_next_job(.01))
+
     def test_does_not_repeat_claimed_write(self):
         self.bridge.pulse(verified=True)
         # The queue has a single job and never reissues an ambiguous POST.
