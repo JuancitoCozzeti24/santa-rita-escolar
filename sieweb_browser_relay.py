@@ -156,7 +156,8 @@ class VerifiedBrowserRelay:
         return self.next_job()
 
     def complete(
-        self, job_id: str, *, status_code: int, data: Any = None, error: str = ""
+        self, job_id: str, *, status_code: int, data: Any = None, error: str = "",
+        upstream_status: Any = None, content_type: str = "", redirected: bool = False,
     ) -> bool:
         with self._lock:
             j = self._jobs.get(str(job_id))
@@ -175,11 +176,27 @@ class VerifiedBrowserRelay:
                     "origin_changed",
                     "browser_result_missing",
                     "browser_execution_failed",
+                    "auth_required",
+                    "redirected",
+                    "not_found",
+                    "upstream_server_error",
+                    "non_json_response",
                 }
                 safe_reason = str(error) if str(error) in safe_codes else "unspecified"
+                try:
+                    observed_status = int(upstream_status)
+                except (TypeError, ValueError):
+                    observed_status = 0
+                if not 100 <= observed_status <= 599:
+                    observed_status = int(status_code)
+                safe_content_type = re.sub(
+                    r"[^a-z0-9.+/-]", "", str(content_type).lower().split(";", 1)[0]
+                )[:80] or "unknown"
+                redirect_hint = "; redirected=yes" if redirected is True else ""
                 j.error = (
-                    f"SieWeb respondió HTTP {int(status_code)}; "
-                    f"razón segura={safe_reason}. "
+                    f"SieWeb respondió HTTP {observed_status}, "
+                    f"content-type={safe_content_type}; "
+                    f"razón segura={safe_reason}{redirect_hint}. "
                     "La operación no se considera confirmada."
                 )
             elif error:
@@ -233,6 +250,9 @@ def install(mcp: Any) -> None:
                 status_code=int(obj.get("status_code", 0)),
                 data=obj.get("data"),
                 error=str(obj.get("error") or "")[:100],
+                upstream_status=obj.get("upstream_status"),
+                content_type=str(obj.get("content_type") or "")[:120],
+                redirected=obj.get("redirected") is True,
             )
         except (ValueError, TypeError, AttributeError):
             success = False

@@ -109,7 +109,26 @@
     try {
       const response = await fetch(uri.toString(), options);
       const ct = (response.headers.get("content-type") || "").toLowerCase();
-      if (!ct.includes("json")) return {status_code: 502, error: "unexpected_content_type"};
+      if (!ct.includes("json")) {
+        const contentType = ct.split(";")[0].replace(/[^a-z0-9.+/-]/g, "").slice(0, 80) || "unknown";
+        const upstreamStatus = Number(response.status);
+        const reason = response.redirected || (upstreamStatus >= 300 && upstreamStatus < 400)
+          ? "redirected"
+          : upstreamStatus === 401 || upstreamStatus === 403
+            ? "auth_required"
+            : upstreamStatus === 404
+              ? "not_found"
+              : upstreamStatus >= 500
+                ? "upstream_server_error"
+                : "non_json_response";
+        return {
+          status_code: 502,
+          error: reason,
+          upstream_status: Number.isInteger(upstreamStatus) ? upstreamStatus : 0,
+          content_type: contentType,
+          redirected: response.redirected === true
+        };
+      }
       const data = await response.json();
       // Never return auth endpoints or raw tokens to the Bridge.
       if (!data || typeof data !== "object" || Array.isArray(data)) {

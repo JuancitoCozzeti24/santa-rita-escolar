@@ -133,6 +133,61 @@ class VerifiedBrowserRelayTests(unittest.TestCase):
         t.join(timeout=2)
         self.assertIn("unexpected_content_type", result.get("error", ""))
 
+    def test_non_json_response_reports_safe_upstream_metadata(self):
+        self.bridge.pulse(verified=True)
+        result = {}
+        def run():
+            try:
+                self.bridge.request("GET", "/lms/api/HyoMensajeria/obtMensajes")
+            except SieWebRelayError as exc:
+                result["error"] = str(exc)
+        t = threading.Thread(target=run)
+        t.start()
+        job = None
+        for _ in range(100):
+            job = self.bridge.next_job()
+            if job:
+                break
+            time.sleep(.01)
+        self.assertIsNotNone(job)
+        self.assertTrue(self.bridge.complete(
+            job["id"], status_code=502, error="non_json_response",
+            upstream_status=200, content_type="text/html; charset=UTF-8"
+        ))
+        t.join(timeout=2)
+        self.assertIn("HTTP 200", result.get("error", ""))
+        self.assertIn("content-type=text/html", result.get("error", ""))
+        self.assertIn("non_json_response", result.get("error", ""))
+        self.assertNotIn("charset", result.get("error", ""))
+
+    def test_untrusted_content_type_is_sanitized(self):
+        self.bridge.pulse(verified=True)
+        result = {}
+        def run():
+            try:
+                self.bridge.request("GET", "/lms/api/HyoMensajeria/obtMensajes")
+            except SieWebRelayError as exc:
+                result["error"] = str(exc)
+        t = threading.Thread(target=run)
+        t.start()
+        job = None
+        for _ in range(100):
+            job = self.bridge.next_job()
+            if job:
+                break
+            time.sleep(.01)
+        self.assertIsNotNone(job)
+        self.assertTrue(self.bridge.complete(
+            job["id"], status_code=502, error="auth_required",
+            upstream_status=302, content_type="text/html; token=do-not-leak",
+            redirected=True
+        ))
+        t.join(timeout=2)
+        self.assertIn("HTTP 302", result.get("error", ""))
+        self.assertIn("content-type=text/html", result.get("error", ""))
+        self.assertIn("redirected=yes", result.get("error", ""))
+        self.assertNotIn("do-not-leak", result.get("error", ""))
+
     def test_unknown_error_cannot_inject_content(self):
         self.bridge.pulse(verified=True)
         result = {}
