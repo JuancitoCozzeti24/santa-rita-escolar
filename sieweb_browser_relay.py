@@ -88,7 +88,8 @@ class VerifiedBrowserRelay:
         path = str(path)
         if method not in {"GET", "POST", "PUT"}:
             raise SieWebRelayError("Método no admitido por el puente de SieWeb.")
-        if (not path.startswith("/lms/api/") or "?" in path or "#" in path
+        if (not path.startswith("/lms/api/") or path.startswith("/lms/api/login/")
+                or "?" in path or "#" in path
                 or "\\" in path or "//" in path or ".." in path):
             raise SieWebRelayError("Ruta de API de SieWeb no permitida.")
         return method, path
