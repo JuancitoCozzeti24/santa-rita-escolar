@@ -34,6 +34,13 @@ class AcademicDispatchNonblockingTests(unittest.IsolatedAsyncioTestCase):
         ))
         self.assertIn("import asyncio", (root / "config.py").read_text(encoding="utf-8"))
 
+    def test_extension_uses_network_longpoll_not_throttled_timer(self):
+        root = Path(__file__).resolve().parents[1]
+        code = (root / "browser_extension" / "sieweb_bridge.js").read_text(encoding="utf-8")
+        self.assertIn('"/bridge/v1/sieweb/wait"', code)
+        self.assertIn("runLongPoll()", code)
+        self.assertNotIn("setInterval(poll", code)
+
     async def test_browser_can_complete_request_while_sync_client_waits(self):
         relay = VerifiedBrowserRelay()
         relay.pulse(verified=True)
