@@ -31,7 +31,7 @@ async function save() {
 }
 
 async function checkClassroomAccount(email) {
-  const tabs = await chrome.tabs.query({ url: "https://classroom.google.com/*" });
+  const tabs = await chrome.tabs.query({url: "https://classroom.google.com/*"});
   if (!tabs.length) {
     return {
       state: "missing",
@@ -39,34 +39,61 @@ async function checkClassroomAccount(email) {
     };
   }
 
-  // Preferimos una pestaña activa de Classroom.
-  const tab = tabs.find(t => t.active) || tabs[0];
-  try {
-    const r = await chrome.tabs.sendMessage(tab.id, {
-      type: "SIEROOM_CHECK_ACCOUNT",
-      expectedEmail: email
-    });
-    if (!r) return { state: "unknown", message: "No pude verificar todavía la cuenta de Classroom." };
-    if (r.ok === true) {
-      return { state: "ok", message: `Cuenta de Classroom confirmada: ${email}` };
+  // Verification does not depend on an injected or stale content script.
+  // Check all visible Classroom tabs, not only the first/active one.
+  const ordered = [...tabs]
+    .filter(tab => Number.isInteger(tab.id))
+    .sort((a,b) => Number(Boolean(b.active)) - Number(Boolean(a.active)));
+  const mismatches = new Set();
+  let unableToInspect = false;
+  let loading = false;
+  for (const tab of ordered.slice(0, 12)) {
+    for (let retry = 0; retry < 3; retry++) {
+      try {
+        const execution = await chrome.scripting.executeScript({
+          target: {tabId: tab.id},
+          func: probeClassroomActiveAccount,
+          args: [email]
+        });
+        const result = execution?.[0]?.result;
+        if (result?.ok === true) {
+          return {
+            state: "ok",
+            message: `Cuenta de Classroom verificada automáticamente: ${email}.`
+          };
+        }
+        if (result?.ok === false) {
+          for (const found of result.detectedEmails || []) mismatches.add(found);
+          break;
+        }
+        if (result?.reason === "classroom_loading" && retry < 2) {
+          loading = true;
+          await new Promise(resolve => setTimeout(resolve, 180));
+          continue;
+        }
+        break;
+      } catch (_) {
+        // Missing host access or a tab that navigated. Never claim success.
+        unableToInspect = true;
+        break;
+      }
     }
-    if (r.ok === false) {
-      const detected = (r.detectedEmails || []).join(", ") || "otra cuenta";
-      return {
-        state: "mismatch",
-        message: `CUENTA INCORRECTA. Se esperaba ${email}; Classroom muestra ${detected}.`
-      };
-    }
+  }
+
+  if (mismatches.size) {
     return {
-      state: "unknown",
-      message: `Servidor correcto, pero no pude confirmar la cuenta activa. El Bridge no procesará nada hasta verla de forma explícita en Classroom.`
-    };
-  } catch (_) {
-    return {
-      state: "unknown",
-      message: `Classroom está abierto, pero el verificador aún no respondió. Recarga la pestaña de Classroom.`
+      state: "mismatch",
+      message: `No se encontró la cuenta docente ${email} en las pestañas verificables. Cuentas activas detectadas: ${[...mismatches].join(", ")}.`
     };
   }
+  return {
+    state: "unknown",
+    message: unableToInspect
+      ? "No se pudo inspeccionar el control de cuenta de Classroom. Comprueba que la extensión tenga permiso para classroom.google.com."
+      : loading
+        ? "Classroom todavía está cargando el control de cuenta; vuelve a pulsar Guardar y probar cuando termine."
+        : "No se ve el correo de la cuenta activa en el encabezado de Classroom. No se asumirá otra cuenta ni se publicarán notas sin verificarla."
+  };
 }
 
 document.getElementById("save").addEventListener("click", async () => {

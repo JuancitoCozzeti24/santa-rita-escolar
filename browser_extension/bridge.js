@@ -75,6 +75,29 @@ async function checkAccountOnTab(tabId, expectedEmail, generation = resetGenerat
   if (!expectedEmail) throw new Error("Falta configurar el correo docente de Classroom.");
   assertGeneration(generation);
 
+  // Direct browser probe works even when Classroom was open before the
+  // extension was installed/reloaded. It never trusts authuser or other accounts.
+  try {
+    const inspected = await chrome.scripting.executeScript({
+      target: {tabId},
+      func: probeClassroomActiveAccount,
+      args: [expectedEmail]
+    });
+    const direct = inspected?.[0]?.result;
+    if (direct?.ok === true) return direct;
+    if (direct?.ok === false) {
+      const detected = (direct.detectedEmails || []).join(", ") || "otra cuenta";
+      throw new AccountMismatchError(
+        `Cuenta incorrecta en Classroom. Esperada: ${expectedEmail}. Detectada: ${detected}.`,
+        direct
+      );
+    }
+  } catch (e) {
+    if (e instanceof AccountMismatchError) throw e;
+    // If direct probing is unavailable, the existing strict content guard
+    // remains a fallback. It may re-inject without requiring a manual reload.
+  }
+
   let result = null;
   try {
     result = await sendToContent(tabId, {
@@ -82,7 +105,7 @@ async function checkAccountOnTab(tabId, expectedEmail, generation = resetGenerat
       expectedEmail
     }, 4, generation);
   } catch (_) {
-    return { ok: null, reason: "content_script_not_ready", detectedEmails: [] };
+    return {ok: null, reason: "account_not_verifiable", detectedEmails: []};
   }
 
   if (result?.ok === false) {
