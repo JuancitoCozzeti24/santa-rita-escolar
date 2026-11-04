@@ -45,6 +45,8 @@ class SieWebClient:
         self._user_code = settings.sieweb_user.upper() if settings.sieweb_user else ""
         self._tab_id = str(uuid.uuid4())
         self._logged_in = False
+        # Sesión oficial ya verificada por correo en la pestaña del docente.
+        self._browser_relay_mode = False
         self._criteria_course_cache: dict[tuple[int, int], str] = {}
         self._last_criteria_context: dict[str, Any] = {}
 
@@ -144,6 +146,35 @@ class SieWebClient:
 
     def login(self) -> dict[str, Any]:
         """Inicia sesión y devuelve un resumen seguro, sin tokens ni contraseña."""
+        from sieweb_browser_relay import relay, SieWebRelayError
+        if relay.is_ready():
+            # Prueba de lectura real: la página visible no basta para acreditar
+            # una sesión API vigente. Las credenciales quedan en el navegador.
+            try:
+                relay.request(
+                    "GET", "/lms/api/HyoMensajeria/obtMensajes",
+                    params={"search": "", "idCarpeta": 1},
+                )
+            except SieWebRelayError as exc:
+                raise SieWebError(
+                    "La pestaña de SieWeb está abierta, pero la sesión API no "
+                    "pudo verificarse: " + str(exc)
+                ) from exc
+            self._browser_relay_mode = True
+            self._logged_in = True
+            return {
+                "ok": True,
+                "modo": "navegador_verificado_por_codigo",
+                "sesion_api_verificada": True,
+                "credenciales_en_servidor": False,
+            }
+        if self._browser_relay_mode:
+            raise SieWebError(
+                "La sesión SIEweb verificada en el navegador se desconectó. "
+                "Abre SIEweb, ingresa el código en su ventana oficial y deja "
+                "abierta la pestaña de SieRoom Bridge actualizada."
+            )
+
         if not self.has_login_credentials:
             raise SieWebError(
                 "Faltan SIEWEB_USER y SIEWEB_PASSWORD en el archivo .env. "
@@ -260,6 +291,13 @@ class SieWebClient:
         params: dict[str, Any] | None = None,
         json: dict[str, Any] | list[Any] | None = None,
     ) -> dict[str, Any]:
+        from sieweb_browser_relay import relay, SieWebRelayError
+        if relay.is_ready() or self._browser_relay_mode:
+            self._browser_relay_mode = True
+            try:
+                return relay.request(method, path, params=params, payload=json)
+            except SieWebRelayError as exc:
+                raise SieWebError(str(exc)) from exc
         self._ensure_auth()
         response = self._request_once(method, path, params=params, json=json)
 

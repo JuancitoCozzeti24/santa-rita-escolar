@@ -1,4 +1,4 @@
-SieRoom Classroom Bridge 0.8.7 · R6.8 · SRC-1
+SieRoom Classroom Bridge 0.8.7 · R6.9 · SRC · SIEweb
 
 Actualización conservando configuración:
 1. En brave://extensions, ubica la extensión existente y cierra su pestaña Bridge.
@@ -20,3 +20,20 @@ No pulses Quitar ni cargues otra copia si deseas conservar la configuración.
 La edición mantiene el protocolo 0.8.7 y el contrato R6.2/R6.8. SRC-1 identifica
 la reparación del transporte institucional; no cambia los selectores de Classroom.
 El ZIP no contiene secretos ni la ruta privada MCP.
+
+
+NUEVA CONEXIÓN CON SIEWEB (CÓDIGO POR CORREO)
+6. Abre https://santaritadecasia.sieweb.com.pe/sistema/login e inicia
+   sesión normalmente con tu usuario, contraseña y el código que SIEweb
+   envía a tu correo. Introduce el código SOLO en la página oficial.
+7. Deja abierta una pestaña de la intranet de SIEweb y una pestaña de
+   SieRoom Bridge (desde el botón de la extensión, «Iniciar puente»).
+8. En la pestaña Bridge comprueba el estado adicional «SIEweb: sesión
+   docente verificada en el navegador». Ahora ChatGPT podrá consultar
+   SIEweb mediante esa sesión; NO compartas tu código ni contraseña.
+
+La extensión recibe un nuevo permiso limitado al dominio institucional
+santaritadecasia.sieweb.com.pe. Debes aprobarlo al pulsar Recargar.
+La sesión de SIEweb NO se copia al servidor: las peticiones se ejecutan
+localmente en la pestaña que tú autenticaste. Si cierras esa pestaña,
+la conexión a SIEweb se suspende hasta que vuelvas a iniciar sesión.
