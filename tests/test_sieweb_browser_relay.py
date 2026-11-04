@@ -111,6 +111,51 @@ class VerifiedBrowserRelayTests(unittest.TestCase):
                 with self.assertRaises(SieWebRelayError):
                     self.bridge._validate_request("GET", path)
 
+    def test_safe_bridge_diagnostic_codes_without_raw_error(self):
+        self.bridge.pulse(verified=True)
+        result = {}
+        def run():
+            try:
+                self.bridge.request("GET", "/lms/api/HyoMensajeria/obtMensajes")
+            except SieWebRelayError as exc:
+                result["error"] = str(exc)
+        t = threading.Thread(target=run)
+        t.start()
+        job = None
+        for _ in range(100):
+            job = self.bridge.next_job()
+            if job:
+                break
+            time.sleep(.01)
+        self.assertIsNotNone(job)
+        self.assertTrue(self.bridge.complete(job["id"], status_code=502,
+                                             error="unexpected_content_type"))
+        t.join(timeout=2)
+        self.assertIn("unexpected_content_type", result.get("error", ""))
+
+    def test_unknown_error_cannot_inject_content(self):
+        self.bridge.pulse(verified=True)
+        result = {}
+        def run():
+            try:
+                self.bridge.request("GET", "/lms/api/HyoMensajeria/obtMensajes")
+            except SieWebRelayError as exc:
+                result["error"] = str(exc)
+        t = threading.Thread(target=run)
+        t.start()
+        job = None
+        for _ in range(100):
+            job = self.bridge.next_job()
+            if job:
+                break
+            time.sleep(.01)
+        self.assertIsNotNone(job)
+        self.assertTrue(self.bridge.complete(job["id"], status_code=502,
+                                             error="secret=123456"))
+        t.join(timeout=2)
+        self.assertNotIn("123456", result.get("error", ""))
+        self.assertIn("unspecified", result.get("error", ""))
+
     def test_failed_http_status_cannot_return_success(self):
         self.bridge.pulse(verified=True)
         result = {}
