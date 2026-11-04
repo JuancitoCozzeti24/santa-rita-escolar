@@ -10,7 +10,8 @@
   ],
   "host_permissions": [
     "https://classroom.google.com/*",
-    "https://sieroom-src.onrender.com/*"
+    "https://sieroom-src.onrender.com/*",
+    "https://santaritadecasia.sieweb.com.pe/*"
   ],
   "content_scripts": [
     {
@@ -30,5 +31,5 @@
     "default_title": "SieRoom Classroom Bridge",
     "default_popup": "popup.html"
   },
-  "version_name": "0.8.7-R6.8-SRC-1"
+  "version_name": "0.8.7-R6.9.2-SRC-CLASSROOM-AUTO-VERIFY"
 }
