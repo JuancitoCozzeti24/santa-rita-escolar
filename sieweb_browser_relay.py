@@ -7,6 +7,7 @@ Las rutas HTTP quedan protegidas por PrivatePathGate y el secreto Bridge.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 import threading
@@ -49,12 +50,14 @@ class RelayJob:
 
 
 class VerifiedBrowserRelay:
-    PULSE_MAX_AGE_SECONDS = 12.0
+    # Chrome suspends background tab timers; the HTTP long poll refreshes every 18s.
+    PULSE_MAX_AGE_SECONDS = 45.0
     JOB_TIMEOUT_SECONDS = 38.0
     MAX_RETRIES = 1
 
     def __init__(self) -> None:
         self._lock = threading.RLock()
+        self._work_event = threading.Event()
         self._jobs: dict[str, RelayJob] = {}
         self._last_verified_pulse = 0.0
         self._browser_error = ""
@@ -113,6 +116,7 @@ class VerifiedBrowserRelay:
         )
         with self._lock:
             self._jobs[job.id] = job
+            self._work_event.set()
         try:
             if not job.done.wait(self.JOB_TIMEOUT_SECONDS):
                 raise SieWebRelayError(
@@ -140,6 +144,16 @@ class VerifiedBrowserRelay:
                 j.attempts += 1
                 return j.public()
         return None
+
+    def wait_next_job(self, timeout_seconds: float = 18.0) -> dict[str, Any] | None:
+        """No timer on the browser side: wake immediately when a job is queued."""
+        # Clearing before next_job closes the lost-wakeup window.
+        self._work_event.clear()
+        immediate = self.next_job()
+        if immediate:
+            return immediate
+        self._work_event.wait(min(max(float(timeout_seconds), 0), 22.0))
+        return self.next_job()
 
     def complete(
         self, job_id: str, *, status_code: int, data: Any = None, error: str = ""
@@ -186,6 +200,12 @@ def install(mcp: Any) -> None:
     @mcp.custom_route("/bridge/v1/sieweb/next", methods=["GET"])
     async def next_job(_request: Request) -> JSONResponse:
         return JSONResponse({"ok": True, "job": relay.next_job()})
+
+    @mcp.custom_route("/bridge/v1/sieweb/wait", methods=["GET"])
+    async def wait_next_job(_request: Request) -> JSONResponse:
+        # Blocking wait is deliberately in a worker thread, never on ASGI loop.
+        job = await asyncio.to_thread(relay.wait_next_job, 18.0)
+        return JSONResponse({"ok": True, "job": job})
 
     @mcp.custom_route("/bridge/v1/sieweb/result", methods=["POST"])
     async def complete(request: Request) -> JSONResponse:
