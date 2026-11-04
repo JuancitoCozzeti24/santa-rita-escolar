@@ -30,6 +30,10 @@ from whatsapp_bridge_client import install as install_whatsapp_bridge
 install_bitacora(mcp)
 install_whatsapp_bridge(mcp)
 
+# Puente de sesión SIEweb ya verificada por correo en el navegador docente.
+from sieweb_browser_relay import install as install_sieweb_browser_relay
+install_sieweb_browser_relay(mcp)
+
 
 PRIVATE_FEEDBACK_POLICY = """
 POLÍTICA PREDETERMINADA DE RETROALIMENTACIÓN PRIVADA EN CLASSROOM:
