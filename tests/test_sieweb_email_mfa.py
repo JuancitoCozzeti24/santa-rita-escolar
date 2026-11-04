@@ -4,6 +4,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from sieweb import SieWebClient, SieWebError
+from sieweb_browser_relay import relay
 
 
 class SieWebMFAChallengeTests(unittest.TestCase):
@@ -40,10 +41,13 @@ class SieWebMFAChallengeTests(unittest.TestCase):
                 "codigo": "873641",
             }
         }
-        with patch.object(type(client), "has_login_credentials", new_callable=lambda: property(lambda _: True)):
-            with patch.object(client.session, "post", return_value=response):
-                with self.assertRaises(SieWebError) as error:
-                    client.login()
+        # Isolate legacy first-step login: no verified browser is available
+        # in this unit test, so the original security-code challenge applies.
+        with patch.object(relay, "is_ready", return_value=False):
+            with patch.object(type(client), "has_login_credentials", new_callable=lambda: property(lambda _: True)):
+                with patch.object(client.session, "post", return_value=response):
+                    with self.assertRaises(SieWebError) as error:
+                        client.login()
         self.assertIn("código de seguridad", str(error.exception))
         self.assertNotIn("873641", str(error.exception))
         self.assertFalse(client._logged_in)
