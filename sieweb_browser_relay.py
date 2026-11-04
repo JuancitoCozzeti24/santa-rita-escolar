@@ -163,9 +163,23 @@ class VerifiedBrowserRelay:
             if not j or not j.claimed_at or j.done.is_set():
                 return False
             if not 200 <= int(status_code) < 300:
-                # No incluir respuesta cruda; puede llevar datos sensibles.
+                # Only fixed extension-defined error identifiers are permitted.
+                # Never forward arbitrary error text: it can contain auth details.
+                safe_codes = {
+                    "unexpected_content_type",
+                    "non_object_response",
+                    "auth_material_in_response",
+                    "site_request_failed",
+                    "path_not_allowed",
+                    "method_not_allowed",
+                    "origin_changed",
+                    "browser_result_missing",
+                    "browser_execution_failed",
+                }
+                safe_reason = str(error) if str(error) in safe_codes else "unspecified"
                 j.error = (
-                    f"SieWeb respondió HTTP {int(status_code)} al ejecutar una petición. "
+                    f"SieWeb respondió HTTP {int(status_code)}; "
+                    f"razón segura={safe_reason}. "
                     "La operación no se considera confirmada."
                 )
             elif error:
