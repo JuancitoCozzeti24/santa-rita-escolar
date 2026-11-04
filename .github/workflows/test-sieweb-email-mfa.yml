@@ -10,6 +10,7 @@ on:
       - server.py
       - sieweb_browser_relay.py
       - browser_extension/**
+      - tests/test_classroom_account_autodetect.mjs
       - tests/test_sieweb_email_mfa.py
       - tests/test_sieweb_browser_relay.py
       - tests/test_sieweb_async_dispatch.py
@@ -22,6 +23,7 @@ on:
       - sieweb_browser_relay.py
       - server.py
       - browser_extension/**
+      - tests/test_classroom_account_autodetect.mjs
       - tests/test_sieweb_browser_relay.py
   workflow_dispatch:
 
@@ -47,7 +49,13 @@ jobs:
           python -m unittest discover -s tests -p 'test_sieweb_browser_relay.py' -v
           python -m unittest discover -s tests -p 'test_sieweb_async_dispatch.py' -v
       - name: Check extension script syntax
-        run: node --check browser_extension/sieweb_bridge.js
+        run: |
+          node --check browser_extension/sieweb_bridge.js
+          node --check browser_extension/classroom_account_probe.js
+          node --check browser_extension/popup.js
+          node --check browser_extension/bridge.js
+      - name: Classroom automatic account detection regression
+        run: node --test tests/test_classroom_account_autodetect.mjs
       - name: Package updated extension
         uses: actions/upload-artifact@v4
         with:
