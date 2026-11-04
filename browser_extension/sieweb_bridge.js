@@ -160,11 +160,14 @@
     return result.data;
   }
 
+  let lastRequestWasVerified = false;
+
   async function poll() {
-    if (busy) return;
+    if (busy) return false;
     busy = true;
+    lastRequestWasVerified = false;
     try {
-      if (!await isLeader()) return;
+      if (!await isLeader()) return false;
       const tabId = await getVerifiedTab();
       const verified = Number.isInteger(tabId);
       await request("/bridge/v1/sieweb/pulse", {
@@ -176,11 +179,14 @@
       });
       if (!verified) {
         statusEl.textContent = "SIEweb: abre tu sesión oficial e ingresa el código recibido por correo.";
-        return;
+        return false;
       }
+      lastRequestWasVerified = true;
       statusEl.textContent = "SIEweb: sesión docente verificada en el navegador.";
-      const next = await request("/bridge/v1/sieweb/next");
-      if (!next.job) return;
+      // HTTP long polling, not setInterval: Chrome throttles background tab
+      // timers to approximately 60 seconds, longer than an MCP tool timeout.
+      const next = await request("/bridge/v1/sieweb/wait");
+      if (!next.job) return true;
       const job = next.job;
       let result;
       try {
@@ -194,16 +200,37 @@
       } catch (_) {
         result = {status_code: 503, error: "browser_execution_failed"};
       }
+      // A claimed job is never replayed; report even failed calls once.
       await request("/bridge/v1/sieweb/result", {
         method: "POST",
         body: JSON.stringify({job_id:job.id, ...result}),
       });
+      if (result.status_code >= 400) {
+        statusEl.textContent = "SIEweb: sesión visible; la API respondió " +
+          (result.error || ("HTTP " + result.status_code)) +
+          ". Comprueba que la pestaña oficial continúe autenticada.";
+      }
+      return true;
     } catch (e) {
       lastError = String(e?.message || "Error de conexión");
       statusEl.textContent = "SIEweb: puente no disponible. " + lastError.slice(0,130);
-    } finally { busy = false; }
+      return false;
+    } finally {
+      busy = false;
+    }
   }
 
-  setInterval(poll, 1800);
-  poll();
+  async function runLongPoll() {
+    for (;;) {
+      const healthy = await poll();
+      if (!healthy) {
+        // No authenticated tab or temporary offline: throttle retries.
+        await new Promise(resolve => setTimeout(resolve, 5000));
+      }
+      // When healthy, each 18s long poll refreshes the authenticated pulse.
+      // Avoid setInterval here: timers in hidden tabs are heavily throttled.
+    }
+  }
+
+  runLongPoll();
 })();
