@@ -87,6 +87,61 @@ class SieWebClient:
         self._set_authenticated_headers()
         return True
 
+    @staticmethod
+    def _safe_login_response_shape(outer: Any) -> dict[str, Any]:
+        """Describe el desafío de autenticación SIN mostrar sus datos secretos.
+
+        Útil si SieWeb exige una verificación por correo antes de emitir el
+        token. Nunca incluye contraseñas, direcciones, códigos, cookies ni JWT.
+        """
+        def keys(value: Any) -> list[str]:
+            if not isinstance(value, dict):
+                return []
+            return sorted(
+                k for k in value.keys()
+                if isinstance(k, str) and re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{0,63}", k)
+            )[:30]
+
+        payload = outer.get("json") if isinstance(outer, dict) else None
+        messages: list[str] = []
+
+        def scan(value: Any, depth: int = 0) -> None:
+            if depth > 3 or len(messages) >= 12:
+                return
+            if isinstance(value, dict):
+                for k, v in list(value.items())[:30]:
+                    key = str(k).lower()
+                    if any(s in key for s in (
+                        "token", "pass", "clave", "secret", "codigo",
+                        "code", "correo", "email", "usuario", "user",
+                    )):
+                        # Los valores pueden contener códigos o información privada.
+                        continue
+                    scan(v, depth + 1)
+            elif isinstance(value, list):
+                for item in value[:10]:
+                    scan(item, depth + 1)
+            elif isinstance(value, str):
+                # Solo se inspecciona en memoria; el texto nunca se devuelve.
+                messages.append(value[:400].lower())
+
+        scan(outer)
+        message_text = " ".join(messages)
+        return {
+            "response_type": type(outer).__name__,
+            "outer_keys": keys(outer),
+            "payload_type": type(payload).__name__,
+            "payload_keys": keys(payload),
+            "email_code_challenge_hint": (
+                ("verific" in message_text or "seguridad" in message_text or
+                 "otp" in message_text or "dos factores" in message_text or
+                 "segundo factor" in message_text)
+                and ("código" in message_text or "codigo" in message_text or
+                     "correo" in message_text or "email" in message_text or
+                     "otp" in message_text)
+            ),
+        }
+
     def login(self) -> dict[str, Any]:
         """Inicia sesión y devuelve un resumen seguro, sin tokens ni contraseña."""
         if not self.has_login_credentials:
@@ -116,12 +171,25 @@ class SieWebClient:
         except ValueError as exc:
             raise SieWebError("SieWeb no devolvió JSON al iniciar sesión.") from exc
 
-        data = outer.get("json") or {}
+        data = outer.get("json") if isinstance(outer, dict) else None
+        if not isinstance(data, dict):
+            data = {}
         token = data.get("token") or ""
         if not token:
+            # No confundir autenticación de segundo factor con clave errónea.
+            # Diagnóstico de forma solamente: no filtrar el código ni el correo.
+            shape = self._safe_login_response_shape(outer)
+            if shape["email_code_challenge_hint"]:
+                raise SieWebError(
+                    "SieWeb requiere verificar el código de seguridad enviado "
+                    "por correo antes de emitir un token de sesión. El conector "
+                    "todavía no ha completado el segundo factor. "
+                    "Diagnóstico seguro: " + json.dumps(shape, ensure_ascii=False)
+                )
             raise SieWebError(
-                "SieWeb respondió al login, pero no devolvió el token esperado. "
-                "Verifica usuario/contraseña."
+                "SieWeb no emitió un token en el primer paso. Puede ser "
+                "verificación adicional o un error de autenticación. "
+                "Diagnóstico seguro: " + json.dumps(shape, ensure_ascii=False)
             )
 
         info = data.get("infoColegio") or {}
