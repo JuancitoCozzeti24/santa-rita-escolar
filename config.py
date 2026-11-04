@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import functools
 import json
 import os
@@ -114,9 +115,16 @@ def _install_bitacora_academics_compat() -> None:
             original_fn = fn
 
             @functools.wraps(original_fn)
-            def sieweb_academics_with_bitacora(
+            async def sieweb_academics_with_bitacora(
                 action: str, payload_json: str = "{}", confirmed: bool = False
             ) -> str:
+                """Nunca bloquear el loop ASGI esperando al Bridge en el navegador.
+
+                SieWebClient usa un relay síncrono con threading.Event.wait().
+                Si FastMCP lo invoca en el event loop, el propio Bridge no puede
+                reclamar ni completar la petición y el trabajo caduca. Mover
+                toda la acción académica a un hilo preserva el contrato MCP.
+                """
                 act = str(action or "").strip().lower()
                 bitacora_actions = {
                     "bitacora_policy",
@@ -129,11 +137,15 @@ def _install_bitacora_academics_compat() -> None:
                     "bitacora_append_academic",
                 }
                 if act not in bitacora_actions:
-                    return original_fn(action, payload_json, confirmed)
+                    return await asyncio.to_thread(
+                        original_fn, action, payload_json, confirmed
+                    )
 
                 from bitacora import _parse_payload, dispatch
 
-                result = dispatch(act, _parse_payload(payload_json), confirmed)
+                result = await asyncio.to_thread(
+                    dispatch, act, _parse_payload(payload_json), confirmed
+                )
                 result["compatibility_route"] = "sieweb_academics"
                 return json.dumps(result, ensure_ascii=False, default=str)
 
