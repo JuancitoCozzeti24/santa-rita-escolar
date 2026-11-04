@@ -1,4 +1,4 @@
-SieRoom Classroom Bridge 0.8.7 · R6.9 · SRC · SIEweb
+SieRoom Classroom Bridge 0.8.7 · R6.9.3 · SRC · SIEweb
 
 Actualización conservando configuración:
 1. En brave://extensions, ubica la extensión existente y cierra su pestaña Bridge.
@@ -22,7 +22,7 @@ la reparación del transporte institucional; no cambia los selectores de Classro
 El ZIP no contiene secretos ni la ruta privada MCP.
 
 
-NUEVA CONEXIÓN CON SIEWEB (CÓDIGO POR CORREO)
+R6.9.3 conserva el protocolo 0.8.7 y añade diagnóstico seguro para respuestas SIEweb no JSON. El diagnóstico transmite solo estado HTTP, tipo de contenido saneado y señal de redirección; nunca el cuerpo, cookies ni tokens.\n\nNUEVA CONEXIÓN CON SIEWEB (CÓDIGO POR CORREO)
 6. Abre https://santaritadecasia.sieweb.com.pe/sistema/login e inicia
    sesión normalmente con tu usuario, contraseña y el código que SIEweb
    envía a tu correo. Introduce el código SOLO en la página oficial.
