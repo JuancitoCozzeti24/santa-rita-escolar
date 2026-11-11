@@ -6,6 +6,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from feedback_contract import should_validate, validate_structured_feedback
+
 
 def _patch_sieweb_achievement_route_source() -> None:
     """Extiende SOLO save_grades_verified para nivelEva=1 con guardas explícitas.
@@ -93,6 +95,16 @@ def install() -> None:
         operation = str(kwargs.get("operation") or "post_private_comment").strip().lower()
         grade = kwargs.get("grade")
         comment = str(kwargs.get("comment") or "").strip()
+
+        # Contrato pedagógico R7: evitar la publicación de evaluaciones con formato
+        # incompleto o nota inconsistente, sin cambiar operaciones de lectura.
+        if operation == "post_private_comment" and should_validate(comment, grade):
+            violations = validate_structured_feedback(comment, grade)
+            if violations:
+                raise ValueError(
+                    "Contrato de retroalimentación Matemática R7: comentario no encolado. "
+                    + " ".join(violations)
+                )
 
         if operation == "post_private_comment" and grade is not None:
             if not comment:

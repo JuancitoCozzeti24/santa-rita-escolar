@@ -35,28 +35,9 @@ from sieweb_browser_relay import install as install_sieweb_browser_relay
 install_sieweb_browser_relay(mcp)
 
 
-PRIVATE_FEEDBACK_POLICY = """
-POLÍTICA PREDETERMINADA DE RETROALIMENTACIÓN PRIVADA EN CLASSROOM:
-1. Antes de publicar un comentario privado, SieRoom debe comprobar la entrega. Si ya existe cualquier comentario privado, queda prohibido publicar otro, aunque el texto sea distinto. La escritura solo puede continuar cuando la lectura verificada devuelve exactamente cero comentarios existentes.
-2. Salvo que el docente pida expresamente otro formato, la retroalimentación debe redactarse usando solo el primer nombre del estudiante y esta estructura:
+from feedback_contract import POLICY_VERSION, DEFAULT_TEMPLATE, RULES, INSTRUCTIONS
 
-{Nombre},
-He revisado tu trabajo de manera detallada, y he podido observar lo siguiente:
-
-LO QUE HICISTE BIEN:
-{explicar de forma concreta qué resolvió correctamente}
-
-LO QUE DEBES CORREGIR:
-{explicar con detalle qué hizo mal, por qué está mal y cómo debe corregirlo}
-
-SUGERENCIAS:
-{recomendaciones concretas para evitar repetir los errores y reforzar el aprendizaje}
-
-Tu calificación es {nota} - ({nivel A/B/C})
-
-La parte de corrección debe ser suficientemente detallada para que el estudiante entienda el error y el procedimiento correcto. No inventar errores ni aciertos que no se hayan verificado en la evidencia entregada.
-3. SieRoom puede eliminar comentarios privados mediante el navegador local, pero es una acción destructiva. Solo se permite cuando el docente autoriza explícitamente el borrado y el comentario se identifica de forma exacta. Si hay ambigüedad, si el texto cambió, si la cuenta docente no se verifica o si Classroom no ofrece la acción Eliminar para ese comentario, no se borra nada.
-""".strip()
+PRIVATE_FEEDBACK_POLICY = INSTRUCTIONS
 
 
 # FastMCP v1 expone las instrucciones del servidor a los clientes. Añadimos la
@@ -76,30 +57,20 @@ except Exception as exc:
 
 @mcp.tool()
 def classroom_feedback_policy() -> dict[str, object]:
-    """Devuelve la política predeterminada para comentarios privados, duplicados y borrado seguro."""
+    """Política oficial R7 de Matemática: modelo por ejercicio, capacidades y verificación de formato."""
     return {
-        "private_comment_existing_guard": "strict",
-        "write_allowed_only_when_existing_comment_count": 0,
-        "duplicate_or_second_comment_allowed": False,
+        "policy_version": POLICY_VERSION,
+        "scope": ["Matemática 2.º A", "Matemática 2.º B", "Matemática 5.º A", "Matemática 5.º B"],
+        "private_comment_existing_guard": "teacher_owned_structured_feedback",
+        "duplicate_structured_teacher_feedback_allowed": False,
         "delete_private_comment": True,
         "delete_requires_explicit_confirmation": True,
         "delete_requires_exact_comment_identity": True,
-        "default_template": (
-            "{Nombre},\n"
-            "He revisado tu trabajo de manera detallada, y he podido observar lo siguiente:\n\n"
-            "LO QUE HICISTE BIEN:\n{aciertos}\n\n"
-            "LO QUE DEBES CORREGIR:\n{errores y corrección detallada}\n\n"
-            "SUGERENCIAS:\n{recomendaciones}\n\n"
-            "Tu calificación es {nota} - ({nivel A/B/C})"
-        ),
-        "rules": [
-            "Usar solo el primer nombre del estudiante salvo indicación contraria.",
-            "No inventar aciertos ni errores no verificados en la entrega.",
-            "Explicar cada error con suficiente detalle para enseñar el procedimiento correcto.",
-            "Para borrar, verificar cuenta docente, entrega exacta y comentario exacto; ante cualquier ambigüedad no borrar.",
-        ],
+        "default_template": DEFAULT_TEMPLATE,
+        "rules": RULES,
+        "structural_validation": "Preflight antes de encolar comentarios evaluativos: secciones, ejercicios numerados, nota X/20 coherente y cuatro capacidades justificadas.",
+        "important_limitation": "El preflight verifica estructura, no la veracidad del análisis: hay que leer cada archivo y ejercicio.",
     }
-
 
 # ---------------------------------------------------------------------------
 # Cola separada para BORRADO de comentarios privados.
