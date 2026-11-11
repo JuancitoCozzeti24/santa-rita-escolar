@@ -45,18 +45,19 @@ RULES = [
 
 INSTRUCTIONS = (
     "POLÍTICA DOCENTE PERMANENTE DE RETROALIMENTACIÓN MATEMÁTICA SIERoom "
-    f"({POLICY_VERSION}). En toda revisión evaluativa de Classroom, aplica literalmente "
-    "los títulos y el orden de DEFAULT_TEMPLATE. La longitud del comentario debe "
-    "corresponder a la cantidad de ejercicios reales: si el examen contiene 20, "
-    "explica los 20 de manera individual y extensa. Incluye nota cuantitativa /20 "
-    "y cuatro capacidades de la competencia con letra y justificación propias. "
-    "No omitas análisis por ejercicio, no inventes evidencia, no copies las "
-    "respuestas ni calificación de un estudiante a otro. Consulta "
-    "classroom_feedback_policy para recuperar la plantilla y las reglas completas. "
-    "Antes de escribir, el puente valida automáticamente la estructura de una "
-    "retroalimentación evaluativa y la concordancia de su nota /20."
+    f"({POLICY_VERSION}). En toda revisión evaluativa de Classroom, aplica "
+    "la siguiente plantilla completa, extendiendo un apartado numerado a "
+    "CADA ejercicio efectivamente evaluado. Si el instrumento contiene "
+    "20 ejercicios, comenta los 20 individualmente, sin copiar ejemplos "
+    "ni atribuir resultados no observados. El puente revisa estructura "
+    "y concordancia de nota, pero el docente debe verificar matemática y archivos."
+    "\n\nPLANTILLA OBLIGATORIA:\n"
+    + DEFAULT_TEMPLATE
+    + "\n\nREGLAS OBLIGATORIAS:\n"
+    + "\n".join(f"{index + 1}. {rule}" for index, rule in enumerate(RULES))
+    + "\nConsulta classroom_feedback_policy cuando necesites recuperar "
+      "el contrato completo antes de publicar."
 )
-
 
 def _plain(value: str) -> str:
     """Normalizar únicamente para comprobar encabezados, no para editar el comentario."""
