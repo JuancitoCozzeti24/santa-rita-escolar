@@ -2,7 +2,7 @@
 import unittest
 from feedback_contract import validate_structured_feedback, should_validate, POLICY_VERSION
 
-VALID = """Ana Paula, revisé tus cuatro páginas de EXA FINAL RPREC, 2.º A, y valoré veinte ejercicios con crédito parcial.
+VALID = """Estudiante de prueba, revisé dos páginas de un examen de ejemplo y valoré dos ejercicios con crédito parcial.
 
 *LO QUE HICISTE BIEN*
 Identificas desigualdades y varias correspondencias de funciones.

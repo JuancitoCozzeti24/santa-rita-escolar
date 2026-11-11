@@ -54,6 +54,14 @@ def _patch_feedback_policy_source() -> None:
     path = Path(__file__).with_name("server.py")
     try:
         text = path.read_text(encoding="utf-8")
+        # El contrato R7 sustituye íntegramente la política antigua. No buscar
+        # en este caso marcadores de R6.9 ni reescribir sus instrucciones.
+        if (
+            "from feedback_contract import POLICY_VERSION, DEFAULT_TEMPLATE, RULES, INSTRUCTIONS" in text
+            and "PRIVATE_FEEDBACK_POLICY = INSTRUCTIONS" in text
+        ):
+            print("SieRoom Bridge: política R7 detectada; parche histórico R6.9 omitido sin alterar la nueva regla.", flush=True)
+            return
         changed = False
         old_rule = (
             "1. Antes de publicar un comentario privado, SieRoom debe comprobar la entrega. "
