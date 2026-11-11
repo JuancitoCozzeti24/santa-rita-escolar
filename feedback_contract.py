@@ -29,7 +29,7 @@ Calificación por capacidades:
 
 RULES = [
     "Esta es la plantilla predeterminada obligatoria de retroalimentación de Matemática 2.º A/B y 5.º A/B; solo cambia si el docente pide expresamente otro formato.",
-    "Usar nombre de trato real del estudiante; conservar nombres compuestos como Ana Paula. Personalizar tarea, sección, páginas y ejercicios solo si están verificados.",
+    "Usar el nombre de trato real del estudiante, incluidos nombres compuestos cuando corresponda. Personalizar tarea, sección, páginas y ejercicios solo si están verificados.",
     "Revisar de manera individual TODOS los ejercicios esperados, en orden. Si un ejercicio no aparece, señalar falta de evidencia sin inventar procedimiento.",
     "Cada ejercicio requiere observación verificable, acierto/error/omisión y explicación didáctica de la operación, regla, representación o corrección pertinente.",
     "Bajo LO QUE DEBES MEJORAR puede explicarse también un ejercicio correcto, indicando sus aciertos y cómo justificarlo mejor; no fabricar fallas.",
@@ -38,7 +38,7 @@ RULES = [
     "Evaluar cada capacidad por su propia evidencia, sin convertir automáticamente la nota global en A/B/C idéntica para todas. A=15–20, B=11–14, C=0–10 son solo los rangos generales.",
     "Mantener tono pedagógico, respetuoso, minucioso y no infantilizante; explicar operaciones, desigualdades, unidades, límites y justificaciones cuando correspondan.",
     "No inventar archivos, contenido, resultados ni criterios. Si una imagen es ilegible o un archivo es de otra tarea, no afirmar que se revisó ese ejercicio.",
-    "No reutilizar las soluciones, la nota 15/20 ni las calificaciones A/A/B/A del ejemplo de Ana Paula para otros estudiantes.",
+    "No reutilizar soluciones, notas ni calificaciones del ejemplo de otro estudiante; cada revisión es individual.",
     "Antes de publicar, verificar curso, tarea, estudiante, evidencia, escala /20, coherencia del comentario y duplicados; después, confirmar publicación real.",
     "Los comentarios administrativos sin calificación no son retroalimentaciones evaluativas y no están sujetos al formato completo.",
 ]
